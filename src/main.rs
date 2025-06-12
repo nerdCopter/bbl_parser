@@ -1,0 +1,822 @@
+mod bbl_format;
+
+use anyhow::{Context, Result};
+use clap::{Arg, Command};
+use glob::glob;
+use std::collections::HashMap;
+use std::path::Path;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
+
+#[derive(Debug, Clone)]
+struct FieldDefinition {
+    name: String,
+    signed: bool,
+    predictor: u8,
+    encoding: u8,
+}
+
+#[derive(Debug)]
+struct FrameDefinition {
+    fields: Vec<FieldDefinition>,
+    field_names: Vec<String>,
+    count: usize,
+}
+
+impl FrameDefinition {
+    fn new() -> Self {
+        Self {
+            fields: Vec::new(),
+            field_names: Vec::new(),
+            count: 0,
+        }
+    }
+    
+    fn from_field_names(names: Vec<String>) -> Self {
+        let fields = names.iter().map(|name| FieldDefinition {
+            name: name.clone(),
+            signed: false,
+            predictor: 0,
+            encoding: 0,
+        }).collect();
+        let count = names.len();
+        Self {
+            fields,
+            field_names: names,
+            count,
+        }
+    }
+    
+    fn update_signed(&mut self, signed_data: &[bool]) {
+        for (i, field) in self.fields.iter_mut().enumerate() {
+            if i < signed_data.len() {
+                field.signed = signed_data[i];
+            }
+        }
+    }
+
+    fn update_predictors(&mut self, predictors: &[u8]) {
+        for (i, field) in self.fields.iter_mut().enumerate() {
+            if i < predictors.len() {
+                field.predictor = predictors[i];
+            }
+        }
+    }
+
+    fn update_encoding(&mut self, encodings: &[u8]) {
+        for (i, field) in self.fields.iter_mut().enumerate() {
+            if i < encodings.len() {
+                field.encoding = encodings[i];
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct BBLHeader {
+    firmware_revision: String,
+    board_info: String,
+    craft_name: String,
+    data_version: u8,
+    looptime: u32,
+    i_frame_def: FrameDefinition,
+    p_frame_def: FrameDefinition, 
+    s_frame_def: FrameDefinition,
+    g_frame_def: FrameDefinition,
+    h_frame_def: FrameDefinition,
+    sysconfig: HashMap<String, i32>,
+    all_headers: Vec<String>,
+}
+
+#[derive(Debug)]
+struct FrameStats {
+    i_frames: u32,
+    p_frames: u32,
+    h_frames: u32,
+    g_frames: u32,
+    e_frames: u32,
+    s_frames: u32,
+    total_frames: u32,
+    total_bytes: u64,
+    start_time_us: u64,
+    end_time_us: u64,
+    failed_frames: u32,
+    missing_iterations: u64,
+}
+
+impl Default for FrameStats {
+    fn default() -> Self {
+        Self {
+            i_frames: 0,
+            p_frames: 0,
+            h_frames: 0,
+            g_frames: 0,
+            e_frames: 0,
+            s_frames: 0,
+            total_frames: 0,
+            total_bytes: 0,
+            start_time_us: 0,
+            end_time_us: 0,
+            failed_frames: 0,
+            missing_iterations: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DecodedFrame {
+    frame_type: char,
+    timestamp_us: u64,
+    loop_iteration: u32,
+    data: HashMap<String, i32>,
+}
+
+#[derive(Debug)]
+struct BBLLog {
+    log_number: usize,
+    total_logs: usize,
+    header: BBLHeader,
+    stats: FrameStats,
+    frames: Vec<DecodedFrame>,
+}
+
+fn main() -> Result<()> {
+    let matches = Command::new("BBL Parser")
+        .version("1.0")
+        .about("Parse and analyze Betaflight/EmuFlight BBL blackbox log files using JavaScript reference implementation")
+        .arg(
+            Arg::new("files")
+                .help("BBL files to parse (supports globbing)")
+                .required(true)
+                .num_args(1..)
+                .index(1),
+        )
+        .arg(
+            Arg::new("debug")
+                .long("debug")
+                .help("Enable debug output and detailed parsing information")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("csv")
+                .long("csv")
+                .help("Export decoded frame data to CSV files")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
+
+    let debug = matches.get_flag("debug");
+    let export_csv = matches.get_flag("csv");
+    let file_patterns: Vec<&String> = matches.get_many::<String>("files").unwrap().collect();
+    
+    let mut processed_files = 0;
+
+    // Collect all valid file paths
+    let mut valid_paths = Vec::new();
+    for pattern in &file_patterns {
+        let paths: Vec<_> = if pattern.contains('*') || pattern.contains('?') {
+            glob(pattern)
+                .with_context(|| format!("Invalid glob pattern: {}", pattern))?
+                .collect::<Result<Vec<_>, _>>()
+                .with_context(|| format!("Error expanding glob pattern: {}", pattern))?
+        } else {
+            vec![Path::new(pattern).to_path_buf()]
+        };
+
+        for path in paths {
+            if !path.exists() {
+                eprintln!("Warning: File does not exist: {:?}", path);
+                continue;
+            }
+            if path.extension().map_or(true, |ext| ext.to_ascii_lowercase() != "bbl") {
+                eprintln!("Warning: Skipping non-BBL file: {:?}", path);
+                continue;
+            }
+            valid_paths.push(path);
+        }
+    }
+
+    // Process files
+    for (index, path) in valid_paths.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        println!("Processing: {}", filename);
+        
+        let logs = parse_bbl_file(&path, debug)?;
+        
+        if debug {
+            println!("\n=== DEBUG INFORMATION ===");
+            display_debug_info(&logs);
+        }
+        
+        for log in &logs {
+            display_log_info(log);
+        }
+        
+        if export_csv {
+            export_logs_to_csv(&logs, &path)?;
+        }
+        
+        processed_files += 1;
+    }
+
+    if processed_files == 0 {
+        eprintln!("No files were successfully processed.");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn parse_bbl_file(file_path: &Path, debug: bool) -> Result<Vec<BBLLog>> {
+    if debug {
+        println!("=== PARSING BBL FILE ===");
+        let metadata = std::fs::metadata(file_path)?;
+        println!("File size: {} bytes ({:.2} MB)", metadata.len(), metadata.len() as f64 / 1024.0 / 1024.0);
+    }
+    
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+    
+    // Parse headers
+    let header = parse_headers(&mut reader, debug)?;
+    
+    if debug {
+        println!("Headers parsed successfully. Found {} total headers", header.all_headers.len());
+        println!("I-frame fields: {}", header.i_frame_def.count);
+        println!("P-frame fields: {}", header.p_frame_def.count);
+        println!("S-frame fields: {}", header.s_frame_def.count);
+    }
+    
+    // Parse binary frame data
+    let mut binary_data = Vec::new();
+    reader.read_to_end(&mut binary_data)?;
+    
+    let (stats, frames) = parse_frames(&binary_data, &header, debug)?;
+    
+    let log = BBLLog {
+        log_number: 1,
+        total_logs: 1,
+        header,
+        stats,
+        frames,
+    };
+    
+    Ok(vec![log])
+}
+
+fn parse_headers(reader: &mut BufReader<File>, debug: bool) -> Result<BBLHeader> {
+    let mut all_headers = Vec::new();
+    let mut firmware_revision = String::new();
+    let mut board_info = String::new();
+    let mut craft_name = String::new();
+    let mut data_version = 2u8;
+    let mut looptime = 0u32;
+    let sysconfig = HashMap::new();
+    
+    // Initialize frame definitions
+    let mut i_frame_def = FrameDefinition::new();
+    let mut p_frame_def = FrameDefinition::new();
+    let mut s_frame_def = FrameDefinition::new();
+    let g_frame_def = FrameDefinition::new();
+    let h_frame_def = FrameDefinition::new();
+    
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                if !line.starts_with("H ") {
+                    break; // End of headers - binary data follows
+                }
+                
+                let line = line.trim();
+                all_headers.push(line.to_string());
+                
+                // Parse specific headers following JavaScript reference
+                if line.starts_with("H Firmware revision:") {
+                    firmware_revision = line.strip_prefix("H Firmware revision:").unwrap_or("").trim().to_string();
+                } else if line.starts_with("H Board information:") {
+                    board_info = line.strip_prefix("H Board information:").unwrap_or("").trim().to_string();
+                } else if line.starts_with("H Craft name:") {
+                    craft_name = line.strip_prefix("H Craft name:").unwrap_or("").trim().to_string();
+                } else if line.starts_with("H Data version:") {
+                    if let Ok(version) = line.strip_prefix("H Data version:").unwrap_or("2").trim().parse() {
+                        data_version = version;
+                    }
+                } else if line.starts_with("H looptime:") {
+                    if let Ok(lt) = line.strip_prefix("H looptime:").unwrap_or("0").trim().parse() {
+                        looptime = lt;
+                    }
+                } else if line.starts_with("H Field I name:") {
+                    // Parse I frame field names
+                    if let Some(field_str) = line.strip_prefix("H Field I name:") {
+                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                        i_frame_def = FrameDefinition::from_field_names(names);
+                    }
+                } else if line.starts_with("H Field P name:") {
+                    // Parse P frame field names
+                    if let Some(field_str) = line.strip_prefix("H Field P name:") {
+                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                        p_frame_def = FrameDefinition::from_field_names(names);
+                    }
+                } else if line.starts_with("H Field S name:") {
+                    // Parse S frame field names
+                    if let Some(field_str) = line.strip_prefix("H Field S name:") {
+                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                        s_frame_def = FrameDefinition::from_field_names(names);
+                    }
+                } else if line.starts_with("H Field I signed:") {
+                    // Parse I frame signed data
+                    if let Some(signed_str) = line.strip_prefix("H Field I signed:") {
+                        let signed_data = parse_signed_data(signed_str);
+                        i_frame_def.update_signed(&signed_data);
+                    }
+                } else if line.starts_with("H Field I predictor:") {
+                    // Parse I frame predictors
+                    if let Some(pred_str) = line.strip_prefix("H Field I predictor:") {
+                        let predictors = parse_numeric_data(pred_str);
+                        i_frame_def.update_predictors(&predictors);
+                    }
+                } else if line.starts_with("H Field I encoding:") {
+                    // Parse I frame encodings
+                    if let Some(enc_str) = line.strip_prefix("H Field I encoding:") {
+                        let encodings = parse_numeric_data(enc_str);
+                        i_frame_def.update_encoding(&encodings);
+                    }
+                } else if line.starts_with("H Field P predictor:") {
+                    // Parse P frame predictors
+                    if let Some(pred_str) = line.strip_prefix("H Field P predictor:") {
+                        let predictors = parse_numeric_data(pred_str);
+                        // P frames inherit field names from I frames but have their own predictors
+                        if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
+                            p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
+                        }
+                        p_frame_def.update_predictors(&predictors);
+                    }
+                } else if line.starts_with("H Field P encoding:") {
+                    // Parse P frame encodings
+                    if let Some(enc_str) = line.strip_prefix("H Field P encoding:") {
+                        let encodings = parse_numeric_data(enc_str);
+                        // P frames inherit field names from I frames but have their own encodings
+                        if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
+                            p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
+                        }
+                        p_frame_def.update_encoding(&encodings);
+                    }
+                } else if line.starts_with("H Field S signed:") {
+                    // Parse S frame signed data
+                    if let Some(signed_str) = line.strip_prefix("H Field S signed:") {
+                        let signed_data = parse_signed_data(signed_str);
+                        s_frame_def.update_signed(&signed_data);
+                    }
+                } else if line.starts_with("H Field S predictor:") {
+                    // Parse S frame predictors
+                    if let Some(pred_str) = line.strip_prefix("H Field S predictor:") {
+                        let predictors = parse_numeric_data(pred_str);
+                        s_frame_def.update_predictors(&predictors);
+                    }
+                } else if line.starts_with("H Field S encoding:") {
+                    // Parse S frame encodings
+                    if let Some(enc_str) = line.strip_prefix("H Field S encoding:") {
+                        let encodings = parse_numeric_data(enc_str);
+                        s_frame_def.update_encoding(&encodings);
+                    }
+                }
+            }
+            Err(_) => break, // Hit binary data
+        }
+    }
+    
+    if debug {
+        println!("Parsed headers: Firmware={}, Board={}, Craft={}", 
+                 firmware_revision, board_info, craft_name);
+        println!("Data version: {}, Looptime: {}", data_version, looptime);
+    }
+    
+    Ok(BBLHeader {
+        firmware_revision,
+        board_info,
+        craft_name,
+        data_version,
+        looptime,
+        i_frame_def,
+        p_frame_def,
+        s_frame_def,
+        g_frame_def,
+        h_frame_def,
+        sysconfig,
+        all_headers,
+    })
+}
+
+fn display_debug_info(logs: &[BBLLog]) {
+    if let Some(log) = logs.first() {
+        println!("\n=== BBL FILE HEADERS ===");
+        println!("Total headers: {}", log.header.all_headers.len());
+        
+        // Show key configuration
+        println!("\nKey Configuration:");
+        for header in &log.header.all_headers {
+            if header.contains("Firmware revision:") ||
+               header.contains("Board information:") ||
+               header.contains("Craft name:") ||
+               header.contains("looptime:") {
+                println!("{}", header);
+            }
+        }
+        
+        println!("I-frame fields: {}", log.header.i_frame_def.count);
+        println!("P-frame fields: {}", log.header.p_frame_def.count);
+        println!("S-frame fields: {}", log.header.s_frame_def.count);
+    }
+}
+
+fn display_log_info(log: &BBLLog) {
+    let stats = &log.stats;
+    let header = &log.header;
+    
+    println!("\nLog {} of {}, frames: {}", 
+             log.log_number, log.total_logs, stats.total_frames);
+    
+    // Display firmware info
+    if !header.firmware_revision.is_empty() {
+        println!("Firmware: {}", header.firmware_revision);
+    }
+    if !header.board_info.is_empty() {
+        println!("Board: {}", header.board_info);
+    }
+    if !header.craft_name.is_empty() {
+        println!("Craft: {}", header.craft_name);
+    }
+    
+    // Display statistics
+    println!("\nStatistics");
+    println!("Looptime        {:4} avg", header.looptime);
+    println!("I frames   {:6}", stats.i_frames);
+    println!("P frames   {:6}", stats.p_frames);
+    if stats.h_frames > 0 {
+        println!("H frames   {:6}", stats.h_frames);
+    }
+    if stats.g_frames > 0 {
+        println!("G frames   {:6}", stats.g_frames);
+    }
+    if stats.e_frames > 0 {
+        println!("E frames   {:6}", stats.e_frames);
+    }
+    if stats.s_frames > 0 {
+        println!("S frames   {:6}", stats.s_frames);
+    }
+    println!("Frames     {:6}", stats.total_frames);
+}
+
+fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
+    let base_name = bbl_path.file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    
+    for log in logs {
+        if log.frames.is_empty() {
+            println!("Log {} has no frames to export", log.log_number);
+            continue;
+        }
+        
+        let csv_filename = format!("{}.csv", base_name);
+        println!("Would export log {} to: {}", log.log_number, csv_filename);
+    }
+    
+    Ok(())
+}
+
+fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>)> {
+    let mut stats = FrameStats::default();
+    let mut frames = Vec::new();
+    
+    if debug {
+        println!("Binary data size: {} bytes", binary_data.len());
+        if !binary_data.is_empty() {
+            println!("First 16 bytes: {:02X?}", &binary_data[..16.min(binary_data.len())]);
+        }
+    }
+    
+    if binary_data.is_empty() {
+        return Ok((stats, frames));
+    }
+    
+    // Use the bbl_format module for proper frame parsing following JavaScript reference
+    let mut stream = bbl_format::BBLDataStream::new(binary_data);
+    
+    // Main frame parsing loop following flightlog_parser.js logic
+    while !stream.eof {
+        let frame_start_pos = stream.pos;
+        
+        match stream.read_byte() {
+            Ok(frame_type_byte) => {
+                let frame_type = match frame_type_byte as char {
+                    'I' => 'I',
+                    'P' => 'P', 
+                    'H' => 'H',
+                    'G' => 'G',
+                    'E' => 'E',
+                    'S' => 'S',
+                    _ => {
+                        if debug && stats.failed_frames < 5 {
+                            println!("Unknown frame type byte 0x{:02X} ('{:?}') at offset {}", 
+                                   frame_type_byte, frame_type_byte as char, frame_start_pos);
+                        }
+                        stats.failed_frames += 1;
+                        continue;
+                    }
+                };
+                
+                if debug && stats.total_frames < 10 {
+                    println!("Found frame type '{}' at offset {}", frame_type, frame_start_pos);
+                }
+                
+                // Parse frame data based on type and header definitions
+                let frame_data = match frame_type {
+                    'I' => {
+                        if header.i_frame_def.count > 0 {
+                            parse_i_frame(&mut stream, &header.i_frame_def, debug)?
+                        } else {
+                            HashMap::new()
+                        }
+                    },
+                    'P' => {
+                        if header.p_frame_def.count > 0 {
+                            parse_p_frame(&mut stream, &header.i_frame_def, &header.p_frame_def, debug)?
+                        } else {
+                            HashMap::new()
+                        }
+                    },
+                    'S' => {
+                        if header.s_frame_def.count > 0 {
+                            parse_s_frame(&mut stream, &header.s_frame_def, debug)?
+                        } else {
+                            HashMap::new()
+                        }
+                    },
+                    'G' | 'H' | 'E' => {
+                        // For now, just skip these frame types
+                        skip_frame(&mut stream, frame_type, debug)?;
+                        HashMap::new()
+                    },
+                    _ => HashMap::new(),
+                };
+                
+                match frame_type {
+                    'I' => stats.i_frames += 1,
+                    'P' => stats.p_frames += 1,
+                    'H' => stats.h_frames += 1,
+                    'G' => stats.g_frames += 1,
+                    'E' => stats.e_frames += 1,
+                    'S' => stats.s_frames += 1,
+                    _ => stats.failed_frames += 1,
+                }
+                
+                stats.total_frames += 1;
+                
+                // Create decoded frame
+                let decoded_frame = DecodedFrame {
+                    frame_type,
+                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                    data: frame_data,
+                };
+                frames.push(decoded_frame);
+                
+            }
+            Err(_) => break,
+        }
+        
+        // Safety limit to avoid infinite loops
+        if stats.total_frames > 100000 || stats.failed_frames > 1000 {
+            if debug {
+                println!("Hit safety limit - stopping frame parsing");
+            }
+            break;
+        }
+    }
+    
+    stats.total_bytes = binary_data.len() as u64;
+    
+    if debug {
+        println!("Parsed {} frames: {} I, {} P, {} H, {} G, {} E, {} S",
+                 stats.total_frames, stats.i_frames, stats.p_frames,
+                 stats.h_frames, stats.g_frames, stats.e_frames, stats.s_frames);
+        println!("Failed to parse: {} frames", stats.failed_frames);
+    }
+    
+    Ok((stats, frames))
+}
+
+fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
+    let mut data = HashMap::new();
+    
+    if debug {
+        println!("Parsing I-frame with {} fields", frame_def.count);
+    }
+    
+    // Parse each field according to the frame definition
+    for field in &frame_def.fields {
+        let value = match field.encoding {
+            0 => stream.read_signed_vb()?,      // SIGNED_VB
+            1 => stream.read_unsigned_vb()? as i32, // UNSIGNED_VB  
+            3 => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32), // NEG_14BIT
+            9 => 0,                             // NULL encoding
+            _ => {
+                if debug {
+                    println!("Unsupported encoding {} for field {}", field.encoding, field.name);
+                }
+                0
+            }
+        };
+        
+        data.insert(field.name.clone(), value);
+    }
+    
+    Ok(data)
+}
+
+fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefinition, p_frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
+    let mut data = HashMap::new();
+    
+    if debug {
+        println!("Parsing P-frame with {} fields", i_frame_def.count);
+    }
+    
+    // P frames use I frame field definitions but P frame encoding/predictors
+    let mut field_index = 0;
+    while field_index < i_frame_def.count {
+        if field_index >= p_frame_def.fields.len() {
+            break;
+        }
+        
+        let encoding = p_frame_def.fields[field_index].encoding;
+        
+        match encoding {
+            0 => {
+                // SIGNED_VB
+                let value = stream.read_signed_vb()?;
+                data.insert(i_frame_def.field_names[field_index].clone(), value);
+                field_index += 1;
+            },
+            1 => {
+                // UNSIGNED_VB  
+                let value = stream.read_unsigned_vb()? as i32;
+                data.insert(i_frame_def.field_names[field_index].clone(), value);
+                field_index += 1;
+            },
+            3 => {
+                // NEG_14BIT
+                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32);
+                data.insert(i_frame_def.field_names[field_index].clone(), value);
+                field_index += 1;
+            },
+            6 => {
+                // TAG8_8SVB - determine how many fields use this encoding
+                let mut group_count = 1;
+                for j in (field_index + 1)..(field_index + 8).min(p_frame_def.fields.len()) {
+                    if p_frame_def.fields[j].encoding != 6 {
+                        break;
+                    }
+                    group_count += 1;
+                }
+                
+                let mut values = vec![0i32; group_count];
+                stream.read_tag8_8svb(&mut values, group_count)?;
+                
+                for j in 0..group_count {
+                    if field_index + j < i_frame_def.field_names.len() {
+                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
+                    }
+                }
+                field_index += group_count;
+            },
+            7 => {
+                // TAG2_3S32 - reads 3 values
+                let mut values = [0i32; 3];
+                stream.read_tag2_3s32(&mut values)?;
+                
+                for j in 0..3 {
+                    if field_index + j < i_frame_def.field_names.len() {
+                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
+                    }
+                }
+                field_index += 3;
+            },
+            8 => {
+                // TAG8_4S16 - reads 4 values
+                let mut values = [0i32; 4];
+                stream.read_tag8_4s16_v2(&mut values)?;
+                
+                for j in 0..4 {
+                    if field_index + j < i_frame_def.field_names.len() {
+                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
+                    }
+                }
+                field_index += 4;
+            },
+            9 => {
+                // NULL - no data to read
+                data.insert(i_frame_def.field_names[field_index].clone(), 0);
+                field_index += 1;
+            },
+            _ => {
+                if debug {
+                    println!("Unsupported P-frame encoding {} for field {}", encoding, 
+                           i_frame_def.field_names.get(field_index).unwrap_or(&"unknown".to_string()));
+                }
+                // Skip unknown encoding
+                field_index += 1;
+            }
+        }
+    }
+    
+    Ok(data)
+}
+
+fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
+    let mut data = HashMap::new();
+    
+    if debug {
+        println!("Parsing S-frame with {} fields", frame_def.count);
+    }
+    
+    // Parse each field according to the frame definition
+    for field in &frame_def.fields {
+        let value = match field.encoding {
+            0 => stream.read_signed_vb()?,
+            1 => stream.read_unsigned_vb()? as i32,
+            3 => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            7 => {
+                // TAG2_3S32
+                let mut values = [0i32; 3];
+                stream.read_tag2_3s32(&mut values)?;
+                values[0]
+            },
+            9 => 0, // NULL
+            _ => {
+                if debug {
+                    println!("Unsupported S-frame encoding {} for field {}", field.encoding, field.name);
+                }
+                0
+            }
+        };
+        
+        data.insert(field.name.clone(), value);
+    }
+    
+    Ok(data)
+}
+
+fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
+    if debug {
+        println!("Skipping {} frame", frame_type);
+    }
+    
+    // Skip frame by reading a few bytes - this is a simple heuristic
+    // In a full implementation, we'd parse these properly too
+    match frame_type {
+        'E' => {
+            // Event frames - read event type and some data
+            let _event_type = stream.read_byte()?;
+            // Read up to 16 bytes of event data
+            for _ in 0..16 {
+                if stream.eof { break; }
+                let _ = stream.read_byte();
+            }
+        },
+        'G' | 'H' => {
+            // GPS frames - read several fields
+            for _ in 0..7 {
+                if stream.eof { break; }
+                let _ = stream.read_unsigned_vb();
+            }
+        },
+        _ => {
+            // Unknown frame type - read a few bytes
+            for _ in 0..8 {
+                if stream.eof { break; }
+                let _ = stream.read_byte();
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn parse_signed_data(signed_data: &str) -> Vec<bool> {
+    signed_data.split(',')
+        .map(|s| s.trim() == "1")
+        .collect()
+}
+
+fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
+    numeric_data.split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect()
+}
