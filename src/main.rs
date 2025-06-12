@@ -14,7 +14,7 @@ struct FieldDefinition {
     encoding: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FrameDefinition {
     fields: Vec<FieldDefinition>,
     field_names: Vec<String>,
@@ -121,7 +121,7 @@ impl Default for FrameStats {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DecodedFrame {
     frame_type: char,
     timestamp_us: u64,
@@ -135,7 +135,15 @@ struct BBLLog {
     total_logs: usize,
     header: BBLHeader,
     stats: FrameStats,
-    frames: Vec<DecodedFrame>,
+    sample_frames: Vec<DecodedFrame>, // Only store a few sample frames, not all
+}
+
+// Frame history for prediction during parsing
+struct FrameHistory {
+    current_frame: Vec<i32>,
+    previous_frame: Vec<i32>,
+    previous2_frame: Vec<i32>,
+    valid: bool,
 }
 
 fn main() -> Result<()> {
@@ -311,7 +319,7 @@ fn parse_single_log(log_data: &[u8], log_number: usize, total_logs: usize, debug
         total_logs,
         header,
         stats,
-        frames,
+        sample_frames: frames,
     };
     
     Ok(log)
@@ -571,8 +579,8 @@ fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
         .unwrap_or("unknown");
     
     for log in logs {
-        if log.frames.is_empty() {
-            println!("Log {} has no frames to export", log.log_number);
+        if log.sample_frames.is_empty() {
+            println!("Log {} has no sample frames to show", log.log_number);
             continue;
         }
         
@@ -582,12 +590,12 @@ fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
             format!("{}.csv", base_name)
         };
         
-        println!("Would export log {} to: {} ({} frames with {} frame types)", 
-                log.log_number, csv_filename, log.frames.len(),
-                log.frames.iter().map(|f| f.frame_type).collect::<std::collections::HashSet<_>>().len());
+        println!("Would export log {} to: {} ({} total frames with {} frame types)", 
+                log.log_number, csv_filename, log.stats.total_frames,
+                log.sample_frames.iter().map(|f| f.frame_type).collect::<std::collections::HashSet<_>>().len());
         
-        // Show sample of frame data
-        if let Some(first_frame) = log.frames.first() {
+        // Show sample of frame data from the stored samples
+        if let Some(first_frame) = log.sample_frames.first() {
             println!("  Sample frame: type={}, time={}μs, iteration={}, fields={}", 
                     first_frame.frame_type, first_frame.timestamp_us, 
                     first_frame.loop_iteration, first_frame.data.len());
@@ -599,7 +607,7 @@ fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
 
 fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>)> {
     let mut stats = FrameStats::default();
-    let mut frames = Vec::new();
+    let mut sample_frames = Vec::new();
     
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -609,13 +617,20 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
     }
     
     if binary_data.is_empty() {
-        return Ok((stats, frames));
+        return Ok((stats, sample_frames));
     }
     
-    // Use the bbl_format module for proper frame parsing following JavaScript reference
+    // Initialize frame history for proper P-frame parsing
+    let mut frame_history = FrameHistory {
+        current_frame: vec![0; header.i_frame_def.count],
+        previous_frame: vec![0; header.i_frame_def.count],
+        previous2_frame: vec![0; header.i_frame_def.count],
+        valid: false,
+    };
+    
     let mut stream = bbl_format::BBLDataStream::new(binary_data);
     
-    // Main frame parsing loop following flightlog_parser.js logic
+    // Main frame parsing loop - process frames as a stream, don't store all
     while !stream.eof {
         let frame_start_pos = stream.pos;
         
@@ -642,45 +657,101 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     println!("Found frame type '{}' at offset {}", frame_type, frame_start_pos);
                 }
                 
-                // Parse frame data based on type and header definitions
-                let frame_data = match frame_type {
+                // Parse frame using proper streaming logic
+                let mut frame_data = HashMap::new();
+                let mut parsing_success = false;
+                
+                match frame_type {
                     'I' => {
                         if header.i_frame_def.count > 0 {
-                            parse_i_frame(&mut stream, &header.i_frame_def, debug)?
-                        } else {
-                            HashMap::new()
+                            // I-frames reset the prediction history
+                            frame_history.current_frame.fill(0);
+                            
+                            if let Ok(_) = bbl_format::parse_frame_data(
+                                &mut stream,
+                                &header.i_frame_def,
+                                &mut frame_history.current_frame,
+                                None, // I-frames don't use prediction
+                                None,
+                                0,
+                                false, // Not raw
+                                header.data_version,
+                                &header.sysconfig,
+                            ) {
+                                // Copy parsed data to frame_data HashMap
+                                for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
+                                    if i < frame_history.current_frame.len() {
+                                        frame_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                    }
+                                }
+                                
+                                // Update history for future P-frames
+                                frame_history.previous2_frame.copy_from_slice(&frame_history.previous_frame);
+                                frame_history.previous_frame.copy_from_slice(&frame_history.current_frame);
+                                frame_history.valid = true;
+                                parsing_success = true;
+                                stats.i_frames += 1;
+                            }
                         }
                     },
                     'P' => {
-                        if header.p_frame_def.count > 0 {
-                            parse_p_frame(&mut stream, &header.i_frame_def, &header.p_frame_def, debug)?
+                        if header.p_frame_def.count > 0 && frame_history.valid {
+                            frame_history.current_frame.fill(0);
+                            
+                            if let Ok(_) = bbl_format::parse_frame_data(
+                                &mut stream,
+                                &header.p_frame_def,
+                                &mut frame_history.current_frame,
+                                Some(&frame_history.previous_frame),
+                                Some(&frame_history.previous2_frame),
+                                0, // TODO: Calculate skipped frames properly
+                                false, // Not raw
+                                header.data_version,
+                                &header.sysconfig,
+                            ) {
+                                // Copy parsed data using I-frame field names (P-frames use I-frame structure)
+                                for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
+                                    if i < frame_history.current_frame.len() {
+                                        frame_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                    }
+                                }
+                                
+                                // Update history
+                                frame_history.previous2_frame.copy_from_slice(&frame_history.previous_frame);
+                                frame_history.previous_frame.copy_from_slice(&frame_history.current_frame);
+                                parsing_success = true;
+                                stats.p_frames += 1;
+                            }
                         } else {
-                            HashMap::new()
+                            // Skip P-frame if we don't have valid I-frame history
+                            skip_frame(&mut stream, frame_type, debug)?;
+                            stats.failed_frames += 1;
                         }
                     },
                     'S' => {
                         if header.s_frame_def.count > 0 {
-                            parse_s_frame(&mut stream, &header.s_frame_def, debug)?
-                        } else {
-                            HashMap::new()
+                            if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug) {
+                                frame_data = data;
+                                parsing_success = true;
+                                stats.s_frames += 1;
+                            }
                         }
                     },
                     'G' | 'H' | 'E' => {
-                        // For now, just skip these frame types
                         skip_frame(&mut stream, frame_type, debug)?;
-                        HashMap::new()
+                        match frame_type {
+                            'G' => stats.g_frames += 1,
+                            'H' => stats.h_frames += 1,
+                            'E' => stats.e_frames += 1,
+                            _ => {}
+                        }
+                        parsing_success = true;
                     },
-                    _ => HashMap::new(),
+                    _ => {}
                 };
                 
-                match frame_type {
-                    'I' => stats.i_frames += 1,
-                    'P' => stats.p_frames += 1,
-                    'H' => stats.h_frames += 1,
-                    'G' => stats.g_frames += 1,
-                    'E' => stats.e_frames += 1,
-                    'S' => stats.s_frames += 1,
-                    _ => stats.failed_frames += 1,
+                if !parsing_success {
+                    stats.failed_frames += 1;
                 }
                 
                 stats.total_frames += 1;
@@ -688,23 +759,42 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                 // Show progress for large files  
                 if debug && stats.total_frames % 50000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
+                } else if stats.total_frames % 100000 == 0 {
+                    println!("Parsed {} frames so far...", stats.total_frames);
                 }
                 
-                // Create decoded frame
-                let decoded_frame = DecodedFrame {
-                    frame_type,
-                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
-                    data: frame_data,
-                };
-                frames.push(decoded_frame);
+                // Store only a few sample frames for display purposes
+                if parsing_success && sample_frames.len() < 10 {
+                    // Extract timing before moving frame_data
+                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
+                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    
+                    let decoded_frame = DecodedFrame {
+                        frame_type,
+                        timestamp_us,
+                        loop_iteration,
+                        data: frame_data.clone(),
+                    };
+                    sample_frames.push(decoded_frame);
+                }
+                
+                // Update timing from first and last valid frames with time data
+                if parsing_success {
+                    if let Some(time_us) = frame_data.get("time") {
+                        let time_val = *time_us as u64;
+                        if stats.start_time_us == 0 {
+                            stats.start_time_us = time_val;
+                        }
+                        stats.end_time_us = time_val;
+                    }
+                }
                 
             }
             Err(_) => break,
         }
         
-        // Safety limit to avoid infinite loops
-        if stats.total_frames > 500000 || stats.failed_frames > 5000 {
+        // More aggressive safety limits to prevent hanging
+        if stats.total_frames > 1000000 || stats.failed_frames > 10000 {
             if debug {
                 println!("Hit safety limit - stopping frame parsing");
             }
@@ -721,9 +811,10 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
     
-    Ok((stats, frames))
+    Ok((stats, sample_frames))
 }
 
+#[allow(dead_code)]
 fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
     
@@ -736,104 +827,13 @@ fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
             bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
-                    println!("Unsupported encoding {} for field {}", field.encoding, field.name);
+                    println!("Unsupported I-frame encoding {} for field {}", field.encoding, field.name);
                 }
                 0
             }
         };
         
         data.insert(field.name.clone(), value);
-    }
-    
-    Ok(data)
-}
-
-fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefinition, p_frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-    
-    // P frames use I frame field definitions but P frame encoding/predictors
-    let mut field_index = 0;
-    while field_index < i_frame_def.count {
-        if field_index >= p_frame_def.fields.len() {
-            break;
-        }
-        
-        let encoding = p_frame_def.fields[field_index].encoding;
-        
-        match encoding {
-            bbl_format::ENCODING_SIGNED_VB => {
-                let value = stream.read_signed_vb()?;
-                data.insert(i_frame_def.field_names[field_index].clone(), value);
-                field_index += 1;
-            },
-            bbl_format::ENCODING_UNSIGNED_VB => {
-                let value = stream.read_unsigned_vb()? as i32;
-                data.insert(i_frame_def.field_names[field_index].clone(), value);
-                field_index += 1;
-            },
-            bbl_format::ENCODING_NEG_14BIT => {
-                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32);
-                data.insert(i_frame_def.field_names[field_index].clone(), value);
-                field_index += 1;
-            },
-            bbl_format::ENCODING_TAG8_8SVB => {
-                // TAG8_8SVB - determine how many fields use this encoding
-                let mut group_count = 1;
-                for j in (field_index + 1)..(field_index + 8).min(p_frame_def.fields.len()) {
-                    if p_frame_def.fields[j].encoding != bbl_format::ENCODING_TAG8_8SVB {
-                        break;
-                    }
-                    group_count += 1;
-                }
-                
-                let mut values = vec![0i32; group_count];
-                stream.read_tag8_8svb(&mut values, group_count)?;
-                
-                for j in 0..group_count {
-                    if field_index + j < i_frame_def.field_names.len() {
-                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
-                    }
-                }
-                field_index += group_count;
-            },
-            bbl_format::ENCODING_TAG2_3S32 => {
-                // TAG2_3S32 - reads 3 values
-                let mut values = [0i32; 3];
-                stream.read_tag2_3s32(&mut values)?;
-                
-                for j in 0..3 {
-                    if field_index + j < i_frame_def.field_names.len() {
-                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
-                    }
-                }
-                field_index += 3;
-            },
-            bbl_format::ENCODING_TAG8_4S16 => {
-                // TAG8_4S16 - reads 4 values
-                let mut values = [0i32; 4];
-                stream.read_tag8_4s16_v2(&mut values)?;
-                
-                for j in 0..4 {
-                    if field_index + j < i_frame_def.field_names.len() {
-                        data.insert(i_frame_def.field_names[field_index + j].clone(), values[j]);
-                    }
-                }
-                field_index += 4;
-            },
-            bbl_format::ENCODING_NULL => {
-                // NULL - no data to read
-                data.insert(i_frame_def.field_names[field_index].clone(), 0);
-                field_index += 1;
-            },
-            _ => {
-                if debug {
-                    println!("Unsupported P-frame encoding {} for field {}", encoding, 
-                           i_frame_def.field_names.get(field_index).unwrap_or(&"unknown".to_string()));
-                }
-                // Skip unknown encoding
-                field_index += 1;
-            }
-        }
     }
     
     Ok(data)
@@ -848,18 +848,13 @@ fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
             bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
-            bbl_format::ENCODING_TAG2_3S32 => {
-                // TAG2_3S32
-                let mut values = [0i32; 3];
-                stream.read_tag2_3s32(&mut values)?;
-                values[0]
-            },
             bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
                     println!("Unsupported S-frame encoding {} for field {}", field.encoding, field.name);
                 }
-                0
+                // For unsupported encodings, try to read as signed VB
+                stream.read_signed_vb().unwrap_or(0)
             }
         };
         

@@ -9,6 +9,7 @@ pub const ENCODING_TAG8_8SVB: u8 = 6;
 pub const ENCODING_TAG2_3S32: u8 = 7;
 pub const ENCODING_TAG8_4S16: u8 = 8;
 pub const ENCODING_NULL: u8 = 9;
+#[allow(dead_code)]
 pub const ENCODING_TAG2_3SVARIABLE: u8 = 10;
 
 // Predictor constants - directly from JavaScript reference
@@ -19,9 +20,11 @@ pub const PREDICT_AVERAGE_2: u8 = 3;
 pub const PREDICT_MINTHROTTLE: u8 = 4;
 pub const PREDICT_MOTOR_0: u8 = 5;
 pub const PREDICT_INC: u8 = 6;
+#[allow(dead_code)]
 pub const PREDICT_HOME_COORD: u8 = 7;
 pub const PREDICT_1500: u8 = 8;
 pub const PREDICT_VBATREF: u8 = 9;
+#[allow(dead_code)]
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
 
@@ -42,6 +45,7 @@ impl<'a> BBLDataStream<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_position(&mut self, pos: usize) {
         self.pos = pos;
         self.eof = pos >= self.end;
@@ -58,6 +62,7 @@ impl<'a> BBLDataStream<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn read_char(&mut self) -> Result<char> {
         Ok(self.read_byte()? as char)
     }
