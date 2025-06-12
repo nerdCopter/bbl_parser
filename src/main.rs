@@ -136,6 +136,7 @@ struct BBLLog {
     header: BBLHeader,
     stats: FrameStats,
     sample_frames: Vec<DecodedFrame>, // Only store a few sample frames, not all
+    debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>, // Frame data by type for debug output
 }
 
 // Frame history for prediction during parsing
@@ -314,7 +315,7 @@ fn parse_single_log(log_data: &[u8], log_number: usize, total_logs: usize, debug
     
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames) = parse_frames(binary_data, &header, debug)?;
+    let (mut stats, frames, debug_frames) = parse_frames(binary_data, &header, debug)?;
     
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -328,6 +329,7 @@ fn parse_single_log(log_data: &[u8], log_number: usize, total_logs: usize, debug
         header,
         stats,
         sample_frames: frames,
+        debug_frames,
     };
     
     Ok(log)
@@ -498,6 +500,106 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
     })
 }
 
+fn display_frame_data(logs: &[BBLLog]) {
+    for log in logs {
+        if let Some(ref debug_frames) = log.debug_frames {
+            println!("\n=== FRAME DATA ===");
+            
+            for (frame_type, frames) in debug_frames.iter() {
+                if frames.is_empty() {
+                    continue;
+                }
+                
+                println!("\n{}-frame data ({} frames):", frame_type, frames.len());
+                
+                // Get field names from first frame
+                if let Some(first_frame) = frames.first() {
+                    let mut field_names: Vec<&String> = first_frame.data.keys().collect();
+                    field_names.sort();
+                    
+                    // Limit field display width to prevent extremely wide output
+                    let max_fields_to_show = 10;
+                    let selected_fields = if field_names.len() > max_fields_to_show {
+                        // Show time, loop, and first 8 field names
+                        let mut selected = Vec::new();
+                        for name in &field_names {
+                            if name.as_str() == "time" || name.as_str() == "loopIteration" {
+                                continue; // These will be shown separately
+                            }
+                            if selected.len() < 8 {
+                                selected.push(*name);
+                            }
+                        }
+                        selected
+                    } else {
+                        field_names.iter().filter(|name| 
+                            name.as_str() != "time" && name.as_str() != "loopIteration"
+                        ).copied().collect()
+                    };
+                    
+                    // Print header
+                    print!("  {:>8} {:>12} {:>8}", "Index", "Time(μs)", "Loop");
+                    for field_name in &selected_fields {
+                        print!(" {:>10}", if field_name.len() > 10 { 
+                            &field_name[..10] 
+                        } else { 
+                            field_name 
+                        });
+                    }
+                    if field_names.len() > max_fields_to_show {
+                        print!(" ... ({} more fields)", field_names.len() - selected_fields.len() - 2);
+                    }
+                    println!();
+                    
+                    // Determine which frames to show
+                    let frames_to_show = if frames.len() <= 30 {
+                        // Show all frames
+                        (0..frames.len()).collect::<Vec<_>>()
+                    } else {
+                        // Show first 5, middle 5, last 5
+                        let mut indices = Vec::new();
+                        // First 5
+                        indices.extend(0..5);
+                        // Middle 5
+                        let mid = frames.len() / 2;
+                        indices.extend((mid-2)..(mid+3));
+                        // Last 5
+                        indices.extend((frames.len()-5)..frames.len());
+                        indices
+                    };
+                    
+                    let mut last_shown_index = None;
+                    for &index in &frames_to_show {
+                        // Show ellipsis if there's a gap
+                        if let Some(last_idx) = last_shown_index {
+                            if index > last_idx + 1 {
+                                println!("  {:>8} {:>12} {:>8} ... ({} frames skipped)", 
+                                        "...", "...", "...", index - last_idx - 1);
+                            }
+                        }
+                        
+                        let frame = &frames[index];
+                        print!("  {:>8} {:>12} {:>8}", 
+                               index, frame.timestamp_us, frame.loop_iteration);
+                        
+                        for field_name in &selected_fields {
+                            let value = frame.data.get(*field_name).copied().unwrap_or(0);
+                            print!(" {:>10}", value);
+                        }
+                        
+                        if field_names.len() > max_fields_to_show {
+                            print!(" ...");
+                        }
+                        println!();
+                        
+                        last_shown_index = Some(index);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn display_debug_info(logs: &[BBLLog]) {
     if let Some(log) = logs.first() {
         println!("\n=== BBL FILE HEADERS ===");
@@ -527,6 +629,9 @@ fn display_debug_info(logs: &[BBLLog]) {
             println!("Sysconfig items: {}", log.header.sysconfig.len());
         }
     }
+    
+    // Display frame data for each log
+    display_frame_data(logs);
 }
 
 fn display_log_info(log: &BBLLog) {
@@ -613,9 +718,14 @@ fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>)> {
+fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>, Option<HashMap<char, Vec<DecodedFrame>>>)> {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
+    let mut debug_frames: Option<HashMap<char, Vec<DecodedFrame>>> = if debug {
+        Some(HashMap::new())
+    } else {
+        None
+    };
     
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -625,7 +735,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
     }
     
     if binary_data.is_empty() {
-        return Ok((stats, sample_frames));
+        return Ok((stats, sample_frames, debug_frames));
     }
     
     // Initialize frame history for proper P-frame parsing
@@ -783,7 +893,31 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                         loop_iteration,
                         data: frame_data.clone(),
                     };
-                    sample_frames.push(decoded_frame);
+                    sample_frames.push(decoded_frame.clone());
+                    
+                    // Store debug frames if debug mode is enabled
+                    if let Some(ref mut debug_map) = debug_frames {
+                        let debug_frame_list = debug_map.entry(frame_type).or_insert_with(Vec::new);
+                        debug_frame_list.push(decoded_frame);
+                    }
+                } else if parsing_success {
+                    // Even if we don't store in sample_frames, still store for debug if enabled
+                    if let Some(ref mut debug_map) = debug_frames {
+                        let debug_frame_list = debug_map.entry(frame_type).or_insert_with(Vec::new);
+                        // Store frames strategically for the display pattern (first/middle/last)
+                        if debug_frame_list.len() < 50 {
+                            let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
+                            let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                            
+                            let decoded_frame = DecodedFrame {
+                                frame_type,
+                                timestamp_us,
+                                loop_iteration,
+                                data: frame_data.clone(),
+                            };
+                            debug_frame_list.push(decoded_frame);
+                        }
+                    }
                 }
                 
                 // Update timing from first and last valid frames with time data
@@ -819,7 +953,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
     
-    Ok((stats, sample_frames))
+    Ok((stats, sample_frames, debug_frames))
 }
 
 #[allow(dead_code)]

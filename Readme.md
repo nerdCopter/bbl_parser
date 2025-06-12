@@ -13,6 +13,7 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official JavaScr
 - **Streaming Architecture**: Memory-efficient processing for large files (500K+ frames)
 - **Frame Prediction**: Full predictor implementation (PREVIOUS, STRAIGHT_LINE, AVERAGE_2, MINTHROTTLE, etc.)
 - **Command Line Interface**: Glob patterns, debug mode, CSV export (in development)
+- **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
 - **High Performance**: 99.99% accuracy, 5K-15K frames/second processing speed
 ## Installation & Usage
 
@@ -61,7 +62,34 @@ S frames           9
 Frames         1410
 ```
 
-**Debug mode** provides additional details: file size, field definitions, binary data inspection, and encoding details.
+### Debug Output
+
+Debug mode adds frame data tables for detailed analysis:
+
+```
+=== FRAME DATA ===
+
+I-frame data (25 frames):
+     Index     Time(μs)     Loop accSmooth[ accSmooth[ gyroADC[0]  motor[0]  motor[1] ... (40 more fields)
+         0            0        4          0          0         -5      1270      1270 ...
+         1     36147802    71168       -163        130       2289      1260      1277 ...
+       ...          ...      ... ... (18 frames skipped)
+        23     36853826    73984       -332        -12       3512      1215      1210 ...
+        24     36885919    74112       -430         26       3552      1205      1210 ...
+
+P-frame data (50 frames):
+     Index     Time(μs)     Loop accSmooth[ accSmooth[ gyroADC[0]  motor[0]  motor[1] ... (40 more fields)
+         0 18446744073709551615        5        -11          9         27       632       637 ...
+         1 18446744073709551615        6        -11          9         26       948       958 ...
+       ...          ...      ... ... (18 frames skipped)
+        49    939855786    71193        -75         94       1504       854       841 ...
+```
+
+**Debug mode** provides detailed analysis including:
+- File size and binary data inspection
+- Field definitions and encoding details  
+- **Frame data tables** organized by type (I, P, S, G, E, H frames)
+- Smart sampling: shows all frames ≤30, or first 5 + middle 5 + last 5 when >30 frames
 
 ## Architecture
 
