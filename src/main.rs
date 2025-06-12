@@ -149,10 +149,10 @@ struct FrameHistory {
 fn main() -> Result<()> {
     let matches = Command::new("BBL Parser")
         .version("1.0")
-        .about("Parse and analyze Betaflight/EmuFlight BBL blackbox log files using JavaScript reference implementation")
+        .about("Parse and analyze BBL blackbox log files from Betaflight, EmuFlight, INAV and other flight controllers using JavaScript reference implementation")
         .arg(
             Arg::new("files")
-                .help("BBL files to parse (supports globbing)")
+                .help("BBL files to parse (.BBL, .BFL, .TXT extensions supported, case-insensitive, supports globbing)")
                 .required(true)
                 .num_args(1..)
                 .index(1),
@@ -194,8 +194,16 @@ fn main() -> Result<()> {
                 eprintln!("Warning: File does not exist: {:?}", path);
                 continue;
             }
-            if path.extension().map_or(true, |ext| ext.to_ascii_lowercase() != "bbl") {
-                eprintln!("Warning: Skipping non-BBL file: {:?}", path);
+            let valid_extension = path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| {
+                    let ext_lower = ext.to_ascii_lowercase();
+                    ext_lower == "bbl" || ext_lower == "bfl" || ext_lower == "txt"
+                })
+                .unwrap_or(false);
+            
+            if !valid_extension {
+                eprintln!("Warning: Skipping file with unsupported extension: {:?}", path);
                 continue;
             }
             valid_paths.push(path);
