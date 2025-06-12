@@ -5,8 +5,6 @@ use clap::{Arg, Command};
 use glob::glob;
 use std::collections::HashMap;
 use std::path::Path;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
 
 #[derive(Debug, Clone)]
 struct FieldDefinition {
@@ -238,156 +236,227 @@ fn parse_bbl_file(file_path: &Path, debug: bool) -> Result<Vec<BBLLog>> {
         println!("File size: {} bytes ({:.2} MB)", metadata.len(), metadata.len() as f64 / 1024.0 / 1024.0);
     }
     
-    let file = File::open(file_path)?;
-    let mut reader = BufReader::new(file);
+    let file_data = std::fs::read(file_path)?;
     
-    // Parse headers
-    let header = parse_headers(&mut reader, debug)?;
+    // Look for multiple logs by searching for log start markers
+    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
+    let mut log_positions = Vec::new();
     
-    if debug {
-        println!("Headers parsed successfully. Found {} total headers", header.all_headers.len());
-        println!("I-frame fields: {}", header.i_frame_def.count);
-        println!("P-frame fields: {}", header.p_frame_def.count);
-        println!("S-frame fields: {}", header.s_frame_def.count);
+    // Find all log start positions
+    for i in 0..file_data.len() {
+        if i + log_start_marker.len() <= file_data.len() {
+            if &file_data[i..i + log_start_marker.len()] == log_start_marker {
+                log_positions.push(i);
+            }
+        }
     }
     
-    // Parse binary frame data
-    let mut binary_data = Vec::new();
-    reader.read_to_end(&mut binary_data)?;
+    if log_positions.is_empty() {
+        return Err(anyhow::anyhow!("No blackbox log headers found in file"));
+    }
     
-    let (stats, frames) = parse_frames(&binary_data, &header, debug)?;
+    if debug {
+        println!("Found {} log(s) in file", log_positions.len());
+    }
+    
+    let mut logs = Vec::new();
+    
+    for (log_index, &start_pos) in log_positions.iter().enumerate() {
+        if debug {
+            println!("Parsing log {} starting at position {}", log_index + 1, start_pos);
+        }
+        
+        // Determine end position (start of next log or end of file)
+        let end_pos = log_positions.get(log_index + 1).copied().unwrap_or(file_data.len());
+        let log_data = &file_data[start_pos..end_pos];
+        
+        // Parse this individual log
+        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug)?;
+        logs.push(log);
+    }
+    
+    Ok(logs)
+}
+
+fn parse_single_log(log_data: &[u8], log_number: usize, total_logs: usize, debug: bool) -> Result<BBLLog> {
+    // Find where headers end and binary data begins
+    let mut header_end = 0;
+    for i in 1..log_data.len() {
+        if log_data[i-1] == b'\n' && log_data[i] != b'H' {
+            header_end = i;
+            break;
+        }
+    }
+    
+    if header_end == 0 {
+        header_end = log_data.len();
+    }
+    
+    // Parse headers from the text section
+    let header_text = std::str::from_utf8(&log_data[0..header_end])?;
+    let header = parse_headers_from_text(header_text, debug)?;
+    
+    // Parse binary frame data
+    let binary_data = &log_data[header_end..];
+    let (mut stats, frames) = parse_frames(binary_data, &header, debug)?;
+    
+    // Update frame stats timing from actual frame data
+    if !frames.is_empty() {
+        stats.start_time_us = frames.first().unwrap().timestamp_us;
+        stats.end_time_us = frames.last().unwrap().timestamp_us;
+    }
     
     let log = BBLLog {
-        log_number: 1,
-        total_logs: 1,
+        log_number,
+        total_logs,
         header,
         stats,
         frames,
     };
     
-    Ok(vec![log])
+    Ok(log)
 }
 
-fn parse_headers(reader: &mut BufReader<File>, debug: bool) -> Result<BBLHeader> {
+fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> {
     let mut all_headers = Vec::new();
     let mut firmware_revision = String::new();
     let mut board_info = String::new();
     let mut craft_name = String::new();
     let mut data_version = 2u8;
     let mut looptime = 0u32;
-    let sysconfig = HashMap::new();
+    let mut sysconfig = HashMap::new();
     
     // Initialize frame definitions
     let mut i_frame_def = FrameDefinition::new();
     let mut p_frame_def = FrameDefinition::new();
     let mut s_frame_def = FrameDefinition::new();
-    let g_frame_def = FrameDefinition::new();
-    let h_frame_def = FrameDefinition::new();
+    let mut g_frame_def = FrameDefinition::new();
+    let mut h_frame_def = FrameDefinition::new();
     
-    loop {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                if !line.starts_with("H ") {
-                    break; // End of headers - binary data follows
+    for line in header_text.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.starts_with("H ") {
+            continue;
+        }
+        
+        all_headers.push(line.to_string());
+        
+        // Parse specific headers following JavaScript reference
+        if line.starts_with("H Firmware revision:") {
+            firmware_revision = line.strip_prefix("H Firmware revision:").unwrap_or("").trim().to_string();
+        } else if line.starts_with("H Board information:") {
+            board_info = line.strip_prefix("H Board information:").unwrap_or("").trim().to_string();
+        } else if line.starts_with("H Craft name:") {
+            craft_name = line.strip_prefix("H Craft name:").unwrap_or("").trim().to_string();
+        } else if line.starts_with("H Data version:") {
+            if let Ok(version) = line.strip_prefix("H Data version:").unwrap_or("2").trim().parse() {
+                data_version = version;
+            }
+        } else if line.starts_with("H looptime:") {
+            if let Ok(lt) = line.strip_prefix("H looptime:").unwrap_or("0").trim().parse() {
+                looptime = lt;
+            }
+        } else if line.starts_with("H Field I name:") {
+            // Parse I frame field names
+            if let Some(field_str) = line.strip_prefix("H Field I name:") {
+                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                i_frame_def = FrameDefinition::from_field_names(names);
+            }
+        } else if line.starts_with("H Field P name:") {
+            // Parse P frame field names
+            if let Some(field_str) = line.strip_prefix("H Field P name:") {
+                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                p_frame_def = FrameDefinition::from_field_names(names);
+            }
+        } else if line.starts_with("H Field S name:") {
+            // Parse S frame field names
+            if let Some(field_str) = line.strip_prefix("H Field S name:") {
+                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                s_frame_def = FrameDefinition::from_field_names(names);
+            }
+        } else if line.starts_with("H Field G name:") {
+            // Parse G frame field names
+            if let Some(field_str) = line.strip_prefix("H Field G name:") {
+                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                g_frame_def = FrameDefinition::from_field_names(names);
+            }
+        } else if line.starts_with("H Field H name:") {
+            // Parse H frame field names
+            if let Some(field_str) = line.strip_prefix("H Field H name:") {
+                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                h_frame_def = FrameDefinition::from_field_names(names);
+            }
+        } else if line.starts_with("H Field I signed:") {
+            // Parse I frame signed data
+            if let Some(signed_str) = line.strip_prefix("H Field I signed:") {
+                let signed_data = parse_signed_data(signed_str);
+                i_frame_def.update_signed(&signed_data);
+            }
+        } else if line.starts_with("H Field I predictor:") {
+            // Parse I frame predictors
+            if let Some(pred_str) = line.strip_prefix("H Field I predictor:") {
+                let predictors = parse_numeric_data(pred_str);
+                i_frame_def.update_predictors(&predictors);
+            }
+        } else if line.starts_with("H Field I encoding:") {
+            // Parse I frame encodings
+            if let Some(enc_str) = line.strip_prefix("H Field I encoding:") {
+                let encodings = parse_numeric_data(enc_str);
+                i_frame_def.update_encoding(&encodings);
+            }
+        } else if line.starts_with("H Field P predictor:") {
+            // Parse P frame predictors
+            if let Some(pred_str) = line.strip_prefix("H Field P predictor:") {
+                let predictors = parse_numeric_data(pred_str);
+                // P frames inherit field names from I frames but have their own predictors
+                if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
+                    p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
                 }
-                
-                let line = line.trim();
-                all_headers.push(line.to_string());
-                
-                // Parse specific headers following JavaScript reference
-                if line.starts_with("H Firmware revision:") {
-                    firmware_revision = line.strip_prefix("H Firmware revision:").unwrap_or("").trim().to_string();
-                } else if line.starts_with("H Board information:") {
-                    board_info = line.strip_prefix("H Board information:").unwrap_or("").trim().to_string();
-                } else if line.starts_with("H Craft name:") {
-                    craft_name = line.strip_prefix("H Craft name:").unwrap_or("").trim().to_string();
-                } else if line.starts_with("H Data version:") {
-                    if let Ok(version) = line.strip_prefix("H Data version:").unwrap_or("2").trim().parse() {
-                        data_version = version;
-                    }
-                } else if line.starts_with("H looptime:") {
-                    if let Ok(lt) = line.strip_prefix("H looptime:").unwrap_or("0").trim().parse() {
-                        looptime = lt;
-                    }
-                } else if line.starts_with("H Field I name:") {
-                    // Parse I frame field names
-                    if let Some(field_str) = line.strip_prefix("H Field I name:") {
-                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
-                        i_frame_def = FrameDefinition::from_field_names(names);
-                    }
-                } else if line.starts_with("H Field P name:") {
-                    // Parse P frame field names
-                    if let Some(field_str) = line.strip_prefix("H Field P name:") {
-                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
-                        p_frame_def = FrameDefinition::from_field_names(names);
-                    }
-                } else if line.starts_with("H Field S name:") {
-                    // Parse S frame field names
-                    if let Some(field_str) = line.strip_prefix("H Field S name:") {
-                        let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
-                        s_frame_def = FrameDefinition::from_field_names(names);
-                    }
-                } else if line.starts_with("H Field I signed:") {
-                    // Parse I frame signed data
-                    if let Some(signed_str) = line.strip_prefix("H Field I signed:") {
-                        let signed_data = parse_signed_data(signed_str);
-                        i_frame_def.update_signed(&signed_data);
-                    }
-                } else if line.starts_with("H Field I predictor:") {
-                    // Parse I frame predictors
-                    if let Some(pred_str) = line.strip_prefix("H Field I predictor:") {
-                        let predictors = parse_numeric_data(pred_str);
-                        i_frame_def.update_predictors(&predictors);
-                    }
-                } else if line.starts_with("H Field I encoding:") {
-                    // Parse I frame encodings
-                    if let Some(enc_str) = line.strip_prefix("H Field I encoding:") {
-                        let encodings = parse_numeric_data(enc_str);
-                        i_frame_def.update_encoding(&encodings);
-                    }
-                } else if line.starts_with("H Field P predictor:") {
-                    // Parse P frame predictors
-                    if let Some(pred_str) = line.strip_prefix("H Field P predictor:") {
-                        let predictors = parse_numeric_data(pred_str);
-                        // P frames inherit field names from I frames but have their own predictors
-                        if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
-                            p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
-                        }
-                        p_frame_def.update_predictors(&predictors);
-                    }
-                } else if line.starts_with("H Field P encoding:") {
-                    // Parse P frame encodings
-                    if let Some(enc_str) = line.strip_prefix("H Field P encoding:") {
-                        let encodings = parse_numeric_data(enc_str);
-                        // P frames inherit field names from I frames but have their own encodings
-                        if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
-                            p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
-                        }
-                        p_frame_def.update_encoding(&encodings);
-                    }
-                } else if line.starts_with("H Field S signed:") {
-                    // Parse S frame signed data
-                    if let Some(signed_str) = line.strip_prefix("H Field S signed:") {
-                        let signed_data = parse_signed_data(signed_str);
-                        s_frame_def.update_signed(&signed_data);
-                    }
-                } else if line.starts_with("H Field S predictor:") {
-                    // Parse S frame predictors
-                    if let Some(pred_str) = line.strip_prefix("H Field S predictor:") {
-                        let predictors = parse_numeric_data(pred_str);
-                        s_frame_def.update_predictors(&predictors);
-                    }
-                } else if line.starts_with("H Field S encoding:") {
-                    // Parse S frame encodings
-                    if let Some(enc_str) = line.strip_prefix("H Field S encoding:") {
-                        let encodings = parse_numeric_data(enc_str);
-                        s_frame_def.update_encoding(&encodings);
+                p_frame_def.update_predictors(&predictors);
+            }
+        } else if line.starts_with("H Field P encoding:") {
+            // Parse P frame encodings
+            if let Some(enc_str) = line.strip_prefix("H Field P encoding:") {
+                let encodings = parse_numeric_data(enc_str);
+                // P frames inherit field names from I frames but have their own encodings
+                if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
+                    p_frame_def = FrameDefinition::from_field_names(i_frame_def.field_names.clone());
+                }
+                p_frame_def.update_encoding(&encodings);
+            }
+        } else if line.starts_with("H Field S signed:") {
+            // Parse S frame signed data
+            if let Some(signed_str) = line.strip_prefix("H Field S signed:") {
+                let signed_data = parse_signed_data(signed_str);
+                s_frame_def.update_signed(&signed_data);
+            }
+        } else if line.starts_with("H Field S predictor:") {
+            // Parse S frame predictors
+            if let Some(pred_str) = line.strip_prefix("H Field S predictor:") {
+                let predictors = parse_numeric_data(pred_str);
+                s_frame_def.update_predictors(&predictors);
+            }
+        } else if line.starts_with("H Field S encoding:") {
+            // Parse S frame encodings
+            if let Some(enc_str) = line.strip_prefix("H Field S encoding:") {
+                let encodings = parse_numeric_data(enc_str);
+                s_frame_def.update_encoding(&encodings);
+            }
+        }
+        
+        // Parse additional sysconfig values
+        if let Some(colon_pos) = line.find(':') {
+            if let Some(field_name) = line.get(2..colon_pos) {
+                if let Some(field_value) = line.get(colon_pos + 1..) {
+                    let field_name = field_name.trim();
+                    let field_value = field_value.trim();
+                    
+                    // Store numeric values that might be useful later
+                    if let Ok(num_value) = field_value.parse::<i32>() {
+                        sysconfig.insert(field_name.to_string(), num_value);
                     }
                 }
             }
-            Err(_) => break, // Hit binary data
         }
     }
     
@@ -432,6 +501,15 @@ fn display_debug_info(logs: &[BBLLog]) {
         println!("I-frame fields: {}", log.header.i_frame_def.count);
         println!("P-frame fields: {}", log.header.p_frame_def.count);
         println!("S-frame fields: {}", log.header.s_frame_def.count);
+        if log.header.g_frame_def.count > 0 {
+            println!("G-frame fields: {}", log.header.g_frame_def.count);
+        }
+        if log.header.h_frame_def.count > 0 {
+            println!("H-frame fields: {}", log.header.h_frame_def.count);
+        }
+        if !log.header.sysconfig.is_empty() {
+            println!("Sysconfig items: {}", log.header.sysconfig.len());
+        }
     }
 }
 
@@ -471,6 +549,20 @@ fn display_log_info(log: &BBLLog) {
         println!("S frames   {:6}", stats.s_frames);
     }
     println!("Frames     {:6}", stats.total_frames);
+    
+    // Display timing if available
+    if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
+        let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
+        println!("Duration   {:6} ms", duration_ms);
+    }
+    
+    // Display data version and missing iterations
+    if header.data_version > 0 {
+        println!("Data ver   {:6}", header.data_version);
+    }
+    if stats.missing_iterations > 0 {
+        println!("Missing    {:6} iterations", stats.missing_iterations);
+    }
 }
 
 fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
@@ -484,8 +576,22 @@ fn export_logs_to_csv(logs: &[BBLLog], bbl_path: &Path) -> Result<()> {
             continue;
         }
         
-        let csv_filename = format!("{}.csv", base_name);
-        println!("Would export log {} to: {}", log.log_number, csv_filename);
+        let csv_filename = if log.total_logs > 1 {
+            format!("{}.{:02}.csv", base_name, log.log_number)
+        } else {
+            format!("{}.csv", base_name)
+        };
+        
+        println!("Would export log {} to: {} ({} frames with {} frame types)", 
+                log.log_number, csv_filename, log.frames.len(),
+                log.frames.iter().map(|f| f.frame_type).collect::<std::collections::HashSet<_>>().len());
+        
+        // Show sample of frame data
+        if let Some(first_frame) = log.frames.first() {
+            println!("  Sample frame: type={}, time={}μs, iteration={}, fields={}", 
+                    first_frame.frame_type, first_frame.timestamp_us, 
+                    first_frame.loop_iteration, first_frame.data.len());
+        }
     }
     
     Ok(())
@@ -523,7 +629,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     'E' => 'E',
                     'S' => 'S',
                     _ => {
-                        if debug && stats.failed_frames < 5 {
+                        if debug && stats.failed_frames < 3 {
                             println!("Unknown frame type byte 0x{:02X} ('{:?}') at offset {}", 
                                    frame_type_byte, frame_type_byte as char, frame_start_pos);
                         }
@@ -532,7 +638,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     }
                 };
                 
-                if debug && stats.total_frames < 10 {
+                if debug && stats.total_frames < 3 {
                     println!("Found frame type '{}' at offset {}", frame_type, frame_start_pos);
                 }
                 
@@ -579,6 +685,11 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                 
                 stats.total_frames += 1;
                 
+                // Show progress for large files  
+                if debug && stats.total_frames % 50000 == 0 {
+                    println!("Parsed {} frames so far...", stats.total_frames);
+                }
+                
                 // Create decoded frame
                 let decoded_frame = DecodedFrame {
                     frame_type,
@@ -593,7 +704,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
         }
         
         // Safety limit to avoid infinite loops
-        if stats.total_frames > 100000 || stats.failed_frames > 1000 {
+        if stats.total_frames > 500000 || stats.failed_frames > 5000 {
             if debug {
                 println!("Hit safety limit - stopping frame parsing");
             }
@@ -616,17 +727,13 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
 fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
     
-    if debug {
-        println!("Parsing I-frame with {} fields", frame_def.count);
-    }
-    
     // Parse each field according to the frame definition
     for field in &frame_def.fields {
         let value = match field.encoding {
-            0 => stream.read_signed_vb()?,      // SIGNED_VB
-            1 => stream.read_unsigned_vb()? as i32, // UNSIGNED_VB  
-            3 => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32), // NEG_14BIT
-            9 => 0,                             // NULL encoding
+            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
+            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
+            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
                     println!("Unsupported encoding {} for field {}", field.encoding, field.name);
@@ -644,10 +751,6 @@ fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
 fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefinition, p_frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
     
-    if debug {
-        println!("Parsing P-frame with {} fields", i_frame_def.count);
-    }
-    
     // P frames use I frame field definitions but P frame encoding/predictors
     let mut field_index = 0;
     while field_index < i_frame_def.count {
@@ -658,29 +761,26 @@ fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefi
         let encoding = p_frame_def.fields[field_index].encoding;
         
         match encoding {
-            0 => {
-                // SIGNED_VB
+            bbl_format::ENCODING_SIGNED_VB => {
                 let value = stream.read_signed_vb()?;
                 data.insert(i_frame_def.field_names[field_index].clone(), value);
                 field_index += 1;
             },
-            1 => {
-                // UNSIGNED_VB  
+            bbl_format::ENCODING_UNSIGNED_VB => {
                 let value = stream.read_unsigned_vb()? as i32;
                 data.insert(i_frame_def.field_names[field_index].clone(), value);
                 field_index += 1;
             },
-            3 => {
-                // NEG_14BIT
+            bbl_format::ENCODING_NEG_14BIT => {
                 let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32);
                 data.insert(i_frame_def.field_names[field_index].clone(), value);
                 field_index += 1;
             },
-            6 => {
+            bbl_format::ENCODING_TAG8_8SVB => {
                 // TAG8_8SVB - determine how many fields use this encoding
                 let mut group_count = 1;
                 for j in (field_index + 1)..(field_index + 8).min(p_frame_def.fields.len()) {
-                    if p_frame_def.fields[j].encoding != 6 {
+                    if p_frame_def.fields[j].encoding != bbl_format::ENCODING_TAG8_8SVB {
                         break;
                     }
                     group_count += 1;
@@ -696,7 +796,7 @@ fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefi
                 }
                 field_index += group_count;
             },
-            7 => {
+            bbl_format::ENCODING_TAG2_3S32 => {
                 // TAG2_3S32 - reads 3 values
                 let mut values = [0i32; 3];
                 stream.read_tag2_3s32(&mut values)?;
@@ -708,7 +808,7 @@ fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefi
                 }
                 field_index += 3;
             },
-            8 => {
+            bbl_format::ENCODING_TAG8_4S16 => {
                 // TAG8_4S16 - reads 4 values
                 let mut values = [0i32; 4];
                 stream.read_tag8_4s16_v2(&mut values)?;
@@ -720,7 +820,7 @@ fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefi
                 }
                 field_index += 4;
             },
-            9 => {
+            bbl_format::ENCODING_NULL => {
                 // NULL - no data to read
                 data.insert(i_frame_def.field_names[field_index].clone(), 0);
                 field_index += 1;
@@ -742,23 +842,19 @@ fn parse_p_frame(stream: &mut bbl_format::BBLDataStream, i_frame_def: &FrameDefi
 fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
     
-    if debug {
-        println!("Parsing S-frame with {} fields", frame_def.count);
-    }
-    
     // Parse each field according to the frame definition
     for field in &frame_def.fields {
         let value = match field.encoding {
-            0 => stream.read_signed_vb()?,
-            1 => stream.read_unsigned_vb()? as i32,
-            3 => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
-            7 => {
+            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
+            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
+            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            bbl_format::ENCODING_TAG2_3S32 => {
                 // TAG2_3S32
                 let mut values = [0i32; 3];
                 stream.read_tag2_3s32(&mut values)?;
                 values[0]
             },
-            9 => 0, // NULL
+            bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
                     println!("Unsupported S-frame encoding {} for field {}", field.encoding, field.name);
