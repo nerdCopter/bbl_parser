@@ -220,22 +220,30 @@ fn main() -> Result<()> {
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         println!("Processing: {}", filename);
         
-        let logs = parse_bbl_file(&path, debug)?;
-        
-        if debug {
-            println!("\n=== DEBUG INFORMATION ===");
-            display_debug_info(&logs);
+        match parse_bbl_file(&path, debug) {
+            Ok(logs) => {
+                if debug {
+                    println!("\n=== DEBUG INFORMATION ===");
+                    display_debug_info(&logs);
+                }
+                
+                for log in &logs {
+                    display_log_info(log);
+                }
+                
+                if export_csv {
+                    if let Err(e) = export_logs_to_csv(&logs, &path) {
+                        eprintln!("Warning: Failed to export CSV for {}: {}", filename, e);
+                    }
+                }
+                
+                processed_files += 1;
+            }
+            Err(e) => {
+                eprintln!("Error processing {}: {}", filename, e);
+                eprintln!("Continuing with next file...");
+            }
         }
-        
-        for log in &logs {
-            display_log_info(log);
-        }
-        
-        if export_csv {
-            export_logs_to_csv(&logs, &path)?;
-        }
-        
-        processed_files += 1;
     }
 
     if processed_files == 0 {
