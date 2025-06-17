@@ -12,9 +12,38 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official JavaScr
 - **Multi-Log Processing**: Detects and processes multiple flight logs within single files
 - **Streaming Architecture**: Memory-efficient processing for large files (500K+ frames)
 - **Frame Prediction**: Full predictor implementation (PREVIOUS, STRAIGHT_LINE, AVERAGE_2, MINTHROTTLE, etc.)
-- **Command Line Interface**: Glob patterns, debug mode, CSV export (in development)
+- **CSV Export**: Export flight data to CSV format with separate header files for H frames
+- **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
 - **High Performance**: 99.99% accuracy, 5K-15K frames/second processing speed
+
+## CSV Export Format
+
+The `--csv` option exports blackbox logs to CSV format with Betaflight-compatible field ordering:
+
+- **`.XX.csv`**: Main flight data file containing I, P, S, G frame data
+  - Field names header row in the same order as Betaflight blackbox-log-viewer
+  - Field names are trimmed of leading/trailing spaces
+  - Time field labeled as "time (us)" to indicate microsecond units
+  - I frame fields first (main flight loop data)
+  - S frame fields second (slow/status data)  
+  - G frame fields third (GPS data, excluding duplicate time field)
+  - Time-sorted data rows with all blackbox fields
+- **`.XX.header.csv`**: Plaintext headers file containing all BBL header information
+  - Field,Value format with all configuration parameters
+  - Includes frame definitions, system settings, firmware info, etc.
+
+Where `XX` represents the flight log number (01, 02, 03, etc.) for multiple logs within a single BBL file.
+
+**Example CSV files generated:**
+```
+BTFL_LOG_20250601_121852.01.csv        # Flight data for log 1
+BTFL_LOG_20250601_121852.01.header.csv # Plaintext headers for log 1
+BTFL_LOG_20250601_121852.02.csv        # Flight data for log 2  
+BTFL_LOG_20250601_121852.02.header.csv # Plaintext headers for log 2
+BTFL_LOG_20250601_121852.03.csv        # Flight data for log 3
+BTFL_LOG_20250601_121852.03.header.csv # Plaintext headers for log 3
+```
 ## Installation & Usage
 
 ```bash
@@ -37,8 +66,11 @@ cargo build --release
 # Debug mode
 ./target/release/bbl_parser --debug logs/*.BBL
 
-# CSV export (in development)
+# CSV export 
 ./target/release/bbl_parser --csv logs/*.BBL
+
+# CSV export to specific directory
+./target/release/bbl_parser --csv --output-dir ./csv_output logs/*.BBL
 ```
 
 ## Output

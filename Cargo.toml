@@ -2,9 +2,25 @@
 name = "bbl_parser"
 version = "0.1.0"
 edition = "2021"
+description = "Parser for Betaflight/EmuFlight/INAV blackbox log files"
+keywords = ["betaflight", "blackbox", "drone", "flight-log", "parser"]
+categories = ["parsing", "aerospace"]
 
 [dependencies]
-clap = { version = "4.0", features = ["derive"] }
-glob = "0.3"
 anyhow = "1.0"
-regex = "1.11.1"
+clap = { version = "4.0", features = ["derive"], optional = true }
+glob = { version = "0.3", optional = true }
+regex = { version = "1.11.1", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+csv = { version = "1.2", optional = true }
+
+[features]
+default = ["csv", "cli"]
+csv = ["dep:csv"]
+json = ["dep:serde", "dep:serde_json"]
+serde = ["dep:serde"]
+cli = ["dep:clap", "dep:glob", "dep:regex"]
+
+[dev-dependencies]
+tempfile = "3.0"
