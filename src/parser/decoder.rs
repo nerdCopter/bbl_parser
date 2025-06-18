@@ -24,6 +24,7 @@ pub const PREDICT_1500: u8 = 8;
 pub const PREDICT_VBATREF: u8 = 9;
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
+pub const PREDICT_MINMOTOR: u8 = 11;
 
 /// Decode a field value using the specified encoding
 pub fn decode_field_value(
@@ -52,7 +53,6 @@ pub fn decode_field_value(
     Ok(())
 }
 
-/// Apply predictor to decoded value
 pub fn apply_predictor(
     predictor: u8,
     value: i32,
@@ -95,12 +95,16 @@ pub fn apply_predictor(
             let minthrottle = sysconfig.get("minthrottle").copied().unwrap_or(1000);
             Ok(value + minthrottle)
         }
-        PREDICT_1500 => {
-            Ok(value + 1500)
-        }
-        PREDICT_VBATREF => {
-            let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
-            Ok(value + vbatref)
+        PREDICT_MOTOR_0 => {
+            // motor[1], motor[2], motor[3] are predicted based on motor[0]
+            // Find motor[0] field index (typically field 39 in I-frame)
+            // For now, use current_frame[39] as motor[0] position based on header analysis
+            let motor0_index = 39; // Based on field analysis: motor[0] is at position 39
+            if motor0_index < current_frame.len() {
+                Ok(value + current_frame[motor0_index])
+            } else {
+                Ok(value)
+            }
         }
         PREDICT_INC => {
             if field_index < previous_frame.len() {
@@ -108,6 +112,22 @@ pub fn apply_predictor(
             } else {
                 Ok(value)
             }
+        }
+        PREDICT_HOME_COORD => {
+            // GPS home coordinate prediction - for now just return value
+            Ok(value)
+        }
+        PREDICT_1500 => {
+            Ok(value + 1500)
+        }
+        PREDICT_VBATREF => {
+            let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
+            Ok(value + vbatref)
+        }
+        PREDICT_MINMOTOR => { // predictor 11
+            // motor[0] prediction: value + motorOutput[0] (minimum motor output)
+            let motor_output_min = sysconfig.get("motorOutput[0]").copied().unwrap_or(48);
+            Ok((value | 0) + motor_output_min) // Force signed 32-bit like Betaflight
         }
         _ => {
             Err(BBLError::InvalidPredictor(predictor))

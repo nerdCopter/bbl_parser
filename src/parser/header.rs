@@ -162,7 +162,17 @@ fn parse_sysconfig_line(line: &str, sysconfig: &mut HashMap<String, i32>) {
         let parts: Vec<&str> = config_str.splitn(2, ':').collect();
         if parts.len() == 2 {
             let key = parts[0].trim();
-            if let Ok(value) = parts[1].trim().parse::<i32>() {
+            let value_str = parts[1].trim();
+            
+            // Handle array values like motorOutput:48,2047
+            if key == "motorOutput" && value_str.contains(',') {
+                let values: Vec<&str> = value_str.split(',').collect();
+                for (i, val) in values.iter().enumerate() {
+                    if let Ok(int_val) = val.trim().parse::<i32>() {
+                        sysconfig.insert(format!("{}[{}]", key, i), int_val);
+                    }
+                }
+            } else if let Ok(value) = value_str.parse::<i32>() {
                 sysconfig.insert(key.to_string(), value);
             }
         }
