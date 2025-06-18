@@ -147,6 +147,16 @@ struct FrameHistory {
     valid: bool,
 }
 
+#[allow(dead_code)]
+fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool {
+    let frame_interval_i = sysconfig.get("frameIntervalI").copied().unwrap_or(32);
+    let frame_interval_p_num = sysconfig.get("frameIntervalPNum").copied().unwrap_or(1);
+    let frame_interval_p_denom = sysconfig.get("frameIntervalPDenom").copied().unwrap_or(1);
+    
+    let left_side = ((frame_index % frame_interval_i as u32) + frame_interval_p_num as u32 - 1) % frame_interval_p_denom as u32;
+    left_side < frame_interval_p_num as u32
+}
+
 #[derive(Debug, Clone)]
 struct CsvExportOptions {
     output_dir: Option<String>,
@@ -810,8 +820,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // 2. Add S frame field names (slow fields like flight mode flags)
     for field_name in &log.header.s_frame_def.field_names {
         let trimmed = field_name.trim();
-        let csv_name = if trimmed == "time" { "time (us)" } else { trimmed };
-        field_names.push(csv_name.to_string());
+        let csv_name = if trimmed == "time" { 
+            "time (us)".to_string()
+        } else if trimmed.contains("Flag") || trimmed == "failsafePhase" {
+            format!("{} (flags)", trimmed)
+        } else {
+            trimmed.to_string()
+        };
+        field_names.push(csv_name);
     }
     
     // 3. Add G frame field names (GPS) but skip duplicate "time" field
@@ -851,32 +867,39 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         return Ok(()); // No data to export
     }
     
-    // Write field names header (in Betaflight order)
+    // Write field names header (in Betaflight order with proper spacing)
     for (i, field_name) in field_names.iter().enumerate() {
         if i > 0 {
-            write!(writer, ",")?;
+            write!(writer, ", ")?; // Space after comma to match reference
         }
         write!(writer, "{}", field_name)?;
     }
     writeln!(writer)?;
     
-    // Write data rows
-    for (timestamp, _frame_type, frame) in &all_frames {
+    // Write data rows (with proper spacing and sequential iteration like Betaflight)
+    for (output_iteration, (timestamp, _frame_type, frame)) in all_frames.iter().enumerate() {
         for (i, field_name) in field_names.iter().enumerate() {
             if i > 0 {
-                write!(writer, ",")?;
+                write!(writer, ", ")?; // Space after comma to match reference
             }
             
             let value = if field_name == "time (us)" {
                 *timestamp as i32
             } else if field_name == "loopIteration" {
-                frame.loop_iteration as i32
+                // Use sequential iteration starting from 0, like Betaflight
+                output_iteration as i32
             } else {
-                // For data lookup, use the field name as it appears in the frame data
-                frame.data.get(field_name).copied().unwrap_or(0)
+                // For flag fields with " (flags)" suffix, strip the suffix for data lookup
+                let lookup_name = if field_name.ends_with(" (flags)") {
+                    &field_name[..field_name.len() - 8] // Remove " (flags)"
+                } else {
+                    field_name
+                };
+                
+                frame.data.get(lookup_name).copied().unwrap_or(0)
             };
             
-            write!(writer, "{}", value)?;
+            write!(writer, "{:4}", value)?; // Right-aligned with width 4 to match reference spacing
         }
         writeln!(writer)?;
     }
@@ -966,16 +989,19 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                 header.data_version,
                                 &header.sysconfig,
                             ) {
-                                // Copy parsed data to frame_data HashMap
+                                // Update time and loop iteration from parsed frame
                                 for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
                                     if i < frame_history.current_frame.len() {
-                                        frame_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                        let value = frame_history.current_frame[i];
+                                        frame_data.insert(field_name.clone(), value);
                                     }
                                 }
                                 
-                                // Update history for future P-frames
-                                frame_history.previous2_frame.copy_from_slice(&frame_history.previous_frame);
+                                // Update history for future P-frames  
+                                // Both the previous and previous-previous states become the I-frame, 
+                                // because we can't look further into the past than the I-frame
                                 frame_history.previous_frame.copy_from_slice(&frame_history.current_frame);
+                                frame_history.previous2_frame.copy_from_slice(&frame_history.current_frame);
                                 frame_history.valid = true;
                                 parsing_success = true;
                                 stats.i_frames += 1;
@@ -984,12 +1010,12 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     },
                     'P' => {
                         if header.p_frame_def.count > 0 && frame_history.valid {
-                            frame_history.current_frame.fill(0);
+                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
                             
                             if let Ok(_) = bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &mut frame_history.current_frame,
+                                &mut p_frame_values,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
                                 0, // TODO: Calculate skipped frames properly
@@ -997,10 +1023,26 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                 header.data_version,
                                 &header.sysconfig,
                             ) {
-                                // Copy parsed data using I-frame field names (P-frames use I-frame structure)
+                                // P-frames update only specific fields, rest inherit from previous I-frame
+                                frame_history.current_frame.copy_from_slice(&frame_history.previous_frame);
+                                
+                                // Apply P-frame deltas to current frame
+                                for (i, field_name) in header.p_frame_def.field_names.iter().enumerate() {
+                                    if i < p_frame_values.len() {
+                                        // Find corresponding index in I-frame structure
+                                        if let Some(i_frame_idx) = header.i_frame_def.field_names.iter().position(|name| name == field_name) {
+                                            if i_frame_idx < frame_history.current_frame.len() {
+                                                frame_history.current_frame[i_frame_idx] = p_frame_values[i];
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Copy current frame to output using I-frame field names and structure
                                 for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
                                     if i < frame_history.current_frame.len() {
-                                        frame_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                        let value = frame_history.current_frame[i];
+                                        frame_data.insert(field_name.clone(), value);
                                     }
                                 }
                                 
@@ -1092,19 +1134,17 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                 } else if parsing_success {
                     // Store frames for CSV export (even when not sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_insert_with(Vec::new);
-                    // Limit frames to prevent memory issues but keep enough for useful CSV
-                    if debug_frame_list.len() < 10000 {
-                        let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                        let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-                        
-                        let decoded_frame = DecodedFrame {
-                            frame_type,
-                            timestamp_us,
-                            loop_iteration,
-                            data: frame_data.clone(),
-                        };
-                        debug_frame_list.push(decoded_frame);
-                    }
+                    // Store all frames for complete CSV export - memory usage managed by processing in chunks
+                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
+                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    
+                    let decoded_frame = DecodedFrame {
+                        frame_type,
+                        timestamp_us,
+                        loop_iteration,
+                        data: frame_data.clone(),
+                    };
+                    debug_frame_list.push(decoded_frame);
                 }
                 
                 // Update timing from first and last valid frames with time data
