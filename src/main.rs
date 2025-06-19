@@ -893,7 +893,17 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut cumulative_energy_mah = 0f32;
     let mut last_timestamp_us = 0u64;
     
-    for (output_iteration, (timestamp, _frame_type, frame)) in all_frames.iter().enumerate() {
+    // Track the latest S-frame values to use for all frames
+    let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
+    
+    for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
+        // Update latest S-frame data if this is an S frame
+        if *frame_type == 'S' {
+            for (key, value) in &frame.data {
+                latest_s_frame_data.insert(key.clone(), *value);
+            }
+        }
+        
         // Calculate energyCumulative for this frame
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
@@ -932,7 +942,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 if lookup_name.is_empty() {
                     0 // Will be handled specially below
                 } else {
-                    frame.data.get(lookup_name).copied().unwrap_or(0)
+                    // First try to get from current frame, then from latest S-frame data
+                    frame.data.get(lookup_name).copied()
+                        .or_else(|| latest_s_frame_data.get(lookup_name).copied())
+                        .unwrap_or(0)
                 }
             };
             
@@ -946,13 +959,19 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             } else if field_name == "energyCumulative (mAh)" {
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
             } else if field_name == "flightModeFlags (flags)" {
-                let raw_value = frame.data.get("flightModeFlags").copied().unwrap_or(0);
+                let raw_value = frame.data.get("flightModeFlags").copied()
+                    .or_else(|| latest_s_frame_data.get("flightModeFlags").copied())
+                    .unwrap_or(0);
                 write!(writer, "{}", format_flight_mode_flags(raw_value))?;
             } else if field_name == "stateFlags (flags)" {
-                let raw_value = frame.data.get("stateFlags").copied().unwrap_or(0);
+                let raw_value = frame.data.get("stateFlags").copied()
+                    .or_else(|| latest_s_frame_data.get("stateFlags").copied())
+                    .unwrap_or(0);
                 write!(writer, "{}", format_state_flags(raw_value))?;
             } else if field_name == "failsafePhase (flags)" {
-                let raw_value = frame.data.get("failsafePhase").copied().unwrap_or(0);
+                let raw_value = frame.data.get("failsafePhase").copied()
+                    .or_else(|| latest_s_frame_data.get("failsafePhase").copied())
+                    .unwrap_or(0);
                 write!(writer, "{}", format_failsafe_phase(raw_value))?;
             } else {
                 write!(writer, "{:4}", value)?; // Right-aligned with width 4 to match reference spacing

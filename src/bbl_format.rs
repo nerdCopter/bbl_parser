@@ -375,8 +375,19 @@ pub fn apply_predictor(
         }
         
         PREDICT_MINMOTOR => {
-            let minmotor = sysconfig.get("motorOutput[0]").copied().unwrap_or(1150);
-            (raw_value | 0) + minmotor
+            // Get the min motor value from motorOutput "min,max" format
+            let minmotor = if let Some(motor_output) = sysconfig.get("motorOutput") {
+                // Parse "48,2047" format to get first value (48)
+                let motor_output_str = motor_output.to_string();
+                if let Some(comma_pos) = motor_output_str.find(',') {
+                    motor_output_str[..comma_pos].parse().unwrap_or(48)
+                } else {
+                    motor_output_str.parse().unwrap_or(48)
+                }
+            } else {
+                48  // Default min motor output value
+            };
+            raw_value + minmotor
         }
         
         _ => raw_value,
