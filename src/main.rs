@@ -996,6 +996,9 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
     let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
     
+    // Track the most recent S-frame data for merging (following JavaScript approach)
+    let mut last_slow_data: HashMap<String, i32> = HashMap::new();
+    
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
         if !binary_data.is_empty() {
@@ -1073,6 +1076,16 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                     }
                                 }
                                 
+                                // Merge lastSlow data into I-frame (following JavaScript approach)
+                                for (key, value) in &last_slow_data {
+                                    frame_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug && stats.i_frames < 3 {
+                                    println!("DEBUG: I-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
+                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
+                                }
+                                
                                 // Update history for future P-frames  
                                 // Both the previous and previous-previous states become the I-frame, 
                                 // because we can't look further into the past than the I-frame
@@ -1122,6 +1135,16 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                     }
                                 }
                                 
+                                // Merge lastSlow data into P-frame (following JavaScript approach)
+                                for (key, value) in &last_slow_data {
+                                    frame_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug && stats.p_frames < 3 {
+                                    println!("DEBUG: P-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
+                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
+                                }
+                                
                                 // Update history
                                 frame_history.previous2_frame.copy_from_slice(&frame_history.previous_frame);
                                 frame_history.previous_frame.copy_from_slice(&frame_history.current_frame);
@@ -1137,6 +1160,19 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     'S' => {
                         if header.s_frame_def.count > 0 {
                             if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug) {
+                                // Following JavaScript approach: update lastSlow data
+                                if debug && stats.s_frames < 3 {
+                                    println!("DEBUG: Processing S-frame with data: {:?}", data);
+                                }
+                                
+                                for (key, value) in &data {
+                                    last_slow_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug && stats.s_frames < 3 {
+                                    println!("DEBUG: S-frame data updated lastSlow: {:?}", last_slow_data);
+                                }
+                                
                                 frame_data = data;
                                 parsing_success = true;
                                 stats.s_frames += 1;

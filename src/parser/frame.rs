@@ -32,6 +32,9 @@ pub fn parse_frames(
     let mut frame_history = FrameHistory::new(header.i_frame_def.count);
     let mut stream = BBLDataStream::new(binary_data);
     
+    // Track the most recent S-frame data for merging (following JavaScript approach)
+    let mut last_slow_data: HashMap<String, i32> = HashMap::new();
+    
     // Main frame parsing loop - process frames as a stream
     while !stream.eof {
         let frame_start_pos = stream.pos;
@@ -87,6 +90,16 @@ pub fn parse_frames(
                                     }
                                 }
                                 
+                                // Merge lastSlow data into I-frame (following JavaScript approach)
+                                for (key, value) in &last_slow_data {
+                                    frame_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug && stats.i_frames <= 2 {
+                                    println!("DEBUG: I-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
+                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
+                                }
+                                
                                 // Update history for future P-frames
                                 frame_history.update(frame_history.current_frame.clone());
                                 parsing_success = true;
@@ -116,6 +129,16 @@ pub fn parse_frames(
                                     }
                                 }
                                 
+                                // Merge lastSlow data into P-frame (following JavaScript approach)
+                                for (key, value) in &last_slow_data {
+                                    frame_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug && stats.p_frames <= 2 {
+                                    println!("DEBUG: P-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
+                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
+                                }
+                                
                                 // Update history
                                 frame_history.update(frame_history.current_frame.clone());
                                 parsing_success = true;
@@ -130,6 +153,19 @@ pub fn parse_frames(
                     'S' => {
                         if header.s_frame_def.count > 0 {
                             if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug) {
+                                // Following JavaScript approach: update lastSlow data
+                                if debug {
+                                    println!("DEBUG: Processing S-frame with data: {:?}", data);
+                                }
+                                
+                                for (key, value) in &data {
+                                    last_slow_data.insert(key.clone(), *value);
+                                }
+                                
+                                if debug {
+                                    println!("DEBUG: S-frame data updated lastSlow: {:?}", last_slow_data);
+                                }
+                                
                                 frame_data = data;
                                 parsing_success = true;
                                 stats.s_frames += 1;
