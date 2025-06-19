@@ -813,8 +813,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // 1. Start with I frame field names (main flight loop fields)
     for field_name in &log.header.i_frame_def.field_names {
         let trimmed = field_name.trim();
-        let csv_name = if trimmed == "time" { "time (us)" } else { trimmed };
-        field_names.push(csv_name.to_string());
+        let csv_name = if trimmed == "time" { 
+            "time (us)".to_string()
+        } else if trimmed == "vbatLatest" {
+            "vbatLatest (V)".to_string()
+        } else if trimmed == "amperageLatest" {
+            "amperageLatest (A)".to_string()
+        } else {
+            trimmed.to_string()
+        };
+        field_names.push(csv_name);
     }
     
     // 2. Add S frame field names (slow fields like flight mode flags)
@@ -838,12 +846,17 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         }
     }
     
+    // 4. Add computed fields that match reference output
+    if field_names.iter().any(|name| name == "amperageLatest (A)") {
+        field_names.push("energyCumulative (mAh)".to_string());
+    }
+    
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
     
     if let Some(ref debug_frames) = log.debug_frames {
-        // Collect I, P, S, G frames
-        for frame_type in ['I', 'P', 'S', 'G'] {
+        // Collect I, P, S frames (exclude E frames as they are events, not flight data)
+        for frame_type in ['I', 'P', 'S'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
                 for frame in frames {
                     all_frames.push((frame.timestamp_us, frame_type, frame));
@@ -877,7 +890,20 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     writeln!(writer)?;
     
     // Write data rows (with proper spacing and sequential iteration like Betaflight)
+    let mut cumulative_energy_mah = 0f32;
+    let mut last_timestamp_us = 0u64;
+    
     for (output_iteration, (timestamp, _frame_type, frame)) in all_frames.iter().enumerate() {
+        // Calculate energyCumulative for this frame
+        if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
+            if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
+                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0; // Convert microseconds to hours
+                let current_amps = convert_amperage_to_amps(current_raw);
+                cumulative_energy_mah += current_amps * time_delta_hours * 1000.0; // Convert to mAh
+            }
+            last_timestamp_us = *timestamp;
+        }
+        
         for (i, field_name) in field_names.iter().enumerate() {
             if i > 0 {
                 write!(writer, ", ")?; // Space after comma to match reference
@@ -886,20 +912,51 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             let value = if field_name == "time (us)" {
                 *timestamp as i32
             } else if field_name == "loopIteration" {
-                // Use sequential iteration starting from 0, like Betaflight
-                output_iteration as i32
+                // Use the actual loop iteration from the frame data, not sequential numbering
+                frame.data.get("loopIteration").copied().unwrap_or(output_iteration as i32)
             } else {
                 // For flag fields with " (flags)" suffix, strip the suffix for data lookup
                 let lookup_name = if field_name.ends_with(" (flags)") {
                     &field_name[..field_name.len() - 8] // Remove " (flags)"
+                } else if field_name.ends_with(" (V)") {
+                    &field_name[..field_name.len() - 4] // Remove " (V)"
+                } else if field_name.ends_with(" (A)") {
+                    &field_name[..field_name.len() - 4] // Remove " (A)" 
+                } else if field_name.ends_with(" (mAh)") {
+                    // Special handling for energyCumulative
+                    ""
                 } else {
                     field_name
                 };
                 
-                frame.data.get(lookup_name).copied().unwrap_or(0)
+                if lookup_name.is_empty() {
+                    0 // Will be handled specially below
+                } else {
+                    frame.data.get(lookup_name).copied().unwrap_or(0)
+                }
             };
             
-            write!(writer, "{:4}", value)?; // Right-aligned with width 4 to match reference spacing
+            // Apply unit conversions and formatting based on field name
+            if field_name == "vbatLatest (V)" {
+                let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
+                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
+            } else if field_name == "amperageLatest (A)" {
+                let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
+                write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
+            } else if field_name == "energyCumulative (mAh)" {
+                write!(writer, "{:5}", cumulative_energy_mah as i32)?;
+            } else if field_name == "flightModeFlags (flags)" {
+                let raw_value = frame.data.get("flightModeFlags").copied().unwrap_or(0);
+                write!(writer, "{}", format_flight_mode_flags(raw_value))?;
+            } else if field_name == "stateFlags (flags)" {
+                let raw_value = frame.data.get("stateFlags").copied().unwrap_or(0);
+                write!(writer, "{}", format_state_flags(raw_value))?;
+            } else if field_name == "failsafePhase (flags)" {
+                let raw_value = frame.data.get("failsafePhase").copied().unwrap_or(0);
+                write!(writer, "{}", format_failsafe_phase(raw_value))?;
+            } else {
+                write!(writer, "{:4}", value)?; // Right-aligned with width 4 to match reference spacing
+            }
         }
         writeln!(writer)?;
     }
@@ -917,8 +974,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>, Option<HashMap<char, Vec<DecodedFrame>>>)> {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
-    // Always create debug_frames for CSV export, even when not in debug mode
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
+    let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
     
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -1120,9 +1177,32 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                     
+                    // Update last timestamp for main frames (I, P)
+                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
+                        last_main_frame_timestamp = timestamp_us;
+                    }
+                    
+                    // S frames inherit timestamp from last main frame
+                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
+                        last_main_frame_timestamp
+                    } else {
+                        timestamp_us
+                    };
+                    
+                    if debug && (frame_type == 'I' || frame_type == 'P') && sample_frames.len() < 3 {
+                        println!("DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}", 
+                                frame_type, timestamp_us, frame_data.keys().collect::<Vec<_>>());
+                        if let Some(time_val) = frame_data.get("time") {
+                            println!("DEBUG: 'time' field value: {}", time_val);
+                        }
+                        if let Some(loop_val) = frame_data.get("loopIteration") {
+                            println!("DEBUG: 'loopIteration' field value: {}", loop_val);
+                        }
+                    }
+                    
                     let decoded_frame = DecodedFrame {
                         frame_type,
-                        timestamp_us,
+                        timestamp_us: final_timestamp,
                         loop_iteration,
                         data: frame_data.clone(),
                     };
@@ -1138,9 +1218,26 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                     
+                    // Update last timestamp for main frames (I, P)
+                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
+                        last_main_frame_timestamp = timestamp_us;
+                    }
+                    
+                    // S frames inherit timestamp from last main frame
+                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
+                        last_main_frame_timestamp
+                    } else {
+                        timestamp_us
+                    };
+                    
+                    if debug && timestamp_us == 0 && debug_frame_list.len() < 5 {
+                        println!("DEBUG: Non-sample frame {:?} has timestamp 0->{}. Fields: {:?}", 
+                                frame_type, final_timestamp, frame_data.keys().collect::<Vec<_>>());
+                    }
+                    
                     let decoded_frame = DecodedFrame {
                         frame_type,
-                        timestamp_us,
+                        timestamp_us: final_timestamp,
                         loop_iteration,
                         data: frame_data.clone(),
                     };
@@ -1209,24 +1306,54 @@ fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
 
 fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefinition, debug: bool) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
+    let mut field_index = 0;
     
-    // Parse each field according to the frame definition
-    for field in &frame_def.fields {
-        let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
-            bbl_format::ENCODING_NULL => 0,
+    while field_index < frame_def.fields.len() {
+        let field = &frame_def.fields[field_index];
+        
+        match field.encoding {
+            bbl_format::ENCODING_SIGNED_VB => {
+                let value = stream.read_signed_vb()?;
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            },
+            bbl_format::ENCODING_UNSIGNED_VB => {
+                let value = stream.read_unsigned_vb()? as i32;
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            },
+            bbl_format::ENCODING_NEG_14BIT => {
+                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32);
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            },
+            bbl_format::ENCODING_TAG2_3S32 => {
+                // This encoding handles 3 fields at once
+                let mut values = [0i32; 8];
+                stream.read_tag2_3s32(&mut values)?;
+                
+                for j in 0..3 {
+                    if field_index + j < frame_def.fields.len() {
+                        let current_field = &frame_def.fields[field_index + j];
+                        data.insert(current_field.name.clone(), values[j]);
+                    }
+                }
+                field_index += 3;
+            },
+            bbl_format::ENCODING_NULL => {
+                data.insert(field.name.clone(), 0);
+                field_index += 1;
+            },
             _ => {
                 if debug {
                     println!("Unsupported S-frame encoding {} for field {}", field.encoding, field.name);
                 }
                 // For unsupported encodings, try to read as signed VB
-                stream.read_signed_vb().unwrap_or(0)
+                let value = stream.read_signed_vb().unwrap_or(0);
+                data.insert(field.name.clone(), value);
+                field_index += 1;
             }
-        };
-        
-        data.insert(field.name.clone(), value);
+        }
     }
     
     Ok(data)
@@ -1342,4 +1469,88 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
     numeric_data.split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect()
+}
+
+// Unit conversion functions
+fn convert_vbat_to_volts(raw_value: i32) -> f32 {
+    // Betaflight already does the ADC conversion to 0.1V units
+    raw_value as f32 / 10.0
+}
+
+fn convert_amperage_to_amps(raw_value: i32) -> f32 {
+    // Betaflight already does the ADC conversion to 0.01A units  
+    raw_value as f32 / 100.0
+}
+
+fn format_flight_mode_flags(flags: i32) -> String {
+    let mut modes = Vec::new();
+    
+    // Based on Betaflight flight mode flags  
+    if (flags & (1 << 0)) != 0 { modes.push("ARM"); }
+    if (flags & (1 << 1)) != 0 { modes.push("ANGLE_MODE"); }
+    if (flags & (1 << 2)) != 0 { modes.push("HORIZON_MODE"); }
+    if (flags & (1 << 3)) != 0 { modes.push("BARO"); }
+    if (flags & (1 << 4)) != 0 { modes.push("ANTI_GRAVITY"); }
+    if (flags & (1 << 5)) != 0 { modes.push("HEADFREE"); }
+    if (flags & (1 << 6)) != 0 { modes.push("HEAD_ADJ"); }
+    if (flags & (1 << 7)) != 0 { modes.push("CAMSTAB"); }
+    if (flags & (1 << 8)) != 0 { modes.push("CAMTRIG"); }
+    if (flags & (1 << 9)) != 0 { modes.push("GPSHOME"); }
+    if (flags & (1 << 10)) != 0 { modes.push("GPSHOLD"); }
+    if (flags & (1 << 11)) != 0 { modes.push("PASSTHRU"); }
+    if (flags & (1 << 12)) != 0 { modes.push("BEEPER"); }
+    if (flags & (1 << 13)) != 0 { modes.push("LEDMAX"); }
+    if (flags & (1 << 14)) != 0 { modes.push("LEDLOW"); }
+    if (flags & (1 << 15)) != 0 { modes.push("LLIGHTS"); }
+    if (flags & (1 << 16)) != 0 { modes.push("CALIB"); }
+    if (flags & (1 << 17)) != 0 { modes.push("GOV"); }
+    if (flags & (1 << 18)) != 0 { modes.push("OSD"); }
+    if (flags & (1 << 19)) != 0 { modes.push("TELEMETRY"); }
+    if (flags & (1 << 20)) != 0 { modes.push("GTUNE"); }
+    if (flags & (1 << 21)) != 0 { modes.push("SONAR"); }
+    if (flags & (1 << 22)) != 0 { modes.push("SERVO1"); }
+    if (flags & (1 << 23)) != 0 { modes.push("SERVO2"); }
+    if (flags & (1 << 24)) != 0 { modes.push("SERVO3"); }
+    if (flags & (1 << 25)) != 0 { modes.push("BLACKBOX"); }
+    if (flags & (1 << 26)) != 0 { modes.push("FAILSAFE"); }
+    if (flags & (1 << 27)) != 0 { modes.push("AIRMODE"); }
+    
+    if modes.is_empty() {
+        "0".to_string()
+    } else {
+        modes.join(", ")
+    }
+}
+
+fn format_state_flags(flags: i32) -> String {
+    let mut states = Vec::new();
+    
+    // Based on Betaflight state flags
+    if (flags & (1 << 0)) != 0 { states.push("GPS_FIX_HOME"); }
+    if (flags & (1 << 1)) != 0 { states.push("GPS_FIX"); }
+    if (flags & (1 << 2)) != 0 { states.push("CALIBRATE_MAG"); }
+    if (flags & (1 << 3)) != 0 { states.push("SMALL_ANGLE"); }
+    if (flags & (1 << 4)) != 0 { states.push("FIXED_WING"); }
+    if (flags & (1 << 5)) != 0 { states.push("ANTI_WINDUP"); }
+    if (flags & (1 << 6)) != 0 { states.push("FLAPERON_AVAILABLE"); }
+    if (flags & (1 << 7)) != 0 { states.push("NAV_MOTOR_STOP_OR_IDLE"); }
+    if (flags & (1 << 8)) != 0 { states.push("COMPASS_CALIBRATED"); }
+    if (flags & (1 << 9)) != 0 { states.push("ACCELEROMETER_CALIBRATED"); }
+    if (flags & (1 << 10)) != 0 { states.push("PWM_DRIVER_AVAILABLE"); }
+    
+    if states.is_empty() {
+        "0".to_string()
+    } else {
+        states.join(", ")
+    }
+}
+
+fn format_failsafe_phase(phase: i32) -> String {
+    match phase {
+        0 => "IDLE".to_string(),
+        1 => "RX_LOSS_DETECTED".to_string(),
+        2 => "LANDING".to_string(),
+        3 => "LANDED".to_string(),
+        _ => phase.to_string(),
+    }
 }
