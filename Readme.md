@@ -29,7 +29,7 @@ The `--csv` option exports blackbox logs to CSV format with Betaflight-compatibl
   - S frame fields second (slow/status data)  
   - G frame fields third (GPS data, excluding duplicate time field)
   - Time-sorted data rows with all blackbox fields
-- **`.XX.header.csv`**: Plaintext headers file containing all BBL header information
+- **`.XX.headers.csv`**: Plaintext headers file containing all BBL header information
   - Field,Value format with all configuration parameters
   - Includes frame definitions, system settings, firmware info, etc.
 
@@ -37,12 +37,12 @@ Where `XX` represents the flight log number (01, 02, 03, etc.) for multiple logs
 
 **Example CSV files generated:**
 ```
-BTFL_LOG_20250601_121852.01.csv        # Flight data for log 1
-BTFL_LOG_20250601_121852.01.header.csv # Plaintext headers for log 1
-BTFL_LOG_20250601_121852.02.csv        # Flight data for log 2  
-BTFL_LOG_20250601_121852.02.header.csv # Plaintext headers for log 2
-BTFL_LOG_20250601_121852.03.csv        # Flight data for log 3
-BTFL_LOG_20250601_121852.03.header.csv # Plaintext headers for log 3
+BTFL_LOG_20250601_121852.01.csv         # Flight data for log 1
+BTFL_LOG_20250601_121852.01.headers.csv # Plaintext headers for log 1
+BTFL_LOG_20250601_121852.02.csv         # Flight data for log 2  
+BTFL_LOG_20250601_121852.02.headers.csv # Plaintext headers for log 2
+BTFL_LOG_20250601_121852.03.csv         # Flight data for log 3
+BTFL_LOG_20250601_121852.03.headers.csv # Plaintext headers for log 3
 ```
 ## Installation & Usage
 

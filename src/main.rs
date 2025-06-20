@@ -182,7 +182,7 @@ fn main() -> Result<()> {
         .arg(
             Arg::new("csv")
                 .long("csv")
-                .help("Export decoded frame data to CSV files (creates .XX.csv for flight data and .XX.header.csv for plaintext headers)")
+                .help("Export decoded frame data to CSV files (creates .XX.csv for flight data and .XX.headers.csv for plaintext headers)")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -743,7 +743,7 @@ fn export_logs_to_csv(logs: &[BBLLog], input_path: &Path, options: &CsvExportOpt
         };
         
         // Export plaintext headers to separate CSV
-        let header_csv_path = output_dir.join(format!("{}{}.header.csv", base_name, log_suffix));
+        let header_csv_path = output_dir.join(format!("{}{}.headers.csv", base_name, log_suffix));
         export_headers_to_csv(&log.header, &header_csv_path, debug)?;
         if debug {
             println!("Exported plaintext headers to: {:?}", header_csv_path);
