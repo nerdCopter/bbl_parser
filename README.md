@@ -129,9 +129,11 @@ P-frame data (50 frames):
 **Frame Support:** I, P, H, S, E, G frames | **Encoding:** All major BBL formats | **Predictors:** JavaScript-compliant implementation
 ## Development Status
 
-**Production Ready:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
+**Near Production Ready:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
 
-**Testing Complete:** 91.3% file success rate across 23 BBL files, reference-equivalent accuracy (100.02%)
+**Testing Complete:** 91.3% file success rate across 23 BBL files, reference-equivalent accuracy (100.02%) based on tested file subset
+
+**Remaining Work:** Code refinement (replace unwrap() calls), complete missing implementations, expand error handling
 
 **Implementation:** Direct port of [Betaflight blackbox-log-viewer](https://github.com/betaflight/blackbox-log-viewer) JavaScript reference along with analysis of the [blackbox-tools](https://github.com/betaflight/blackbox-tools) C reference.
 
