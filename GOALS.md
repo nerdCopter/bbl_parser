@@ -5,20 +5,32 @@
 - Complete I, P, S frame parsing with proper predictor implementation
 - Header parsing and field definition extraction
 - CSV export with 100%+ accuracy vs reference implementation (based on tested files)
+- Main CSV export with Betaflight-compatible field ordering
+- Headers CSV export by default (--save-headers equivalent)
 - Proper field encoding/decoding (signed VB, unsigned VB, etc.)
 - Motor value prediction fix (100% accuracy achieved)
-- S-frame timestamp inheritance
-- Unit conversions (voltage, current)
+- S-frame timestamp inheritance and data merging
+- Multi-log detection and separate file generation
+- Basic unit conversions (voltage, current)
 - Energy calculation (energyCumulative field)
+- Time-sorted CSV output with proper chronological ordering
+- Debug mode with frame-by-frame analysis
+- Large file streaming support (369K+ frames)
 
 🔧 **REMAINING WORK:**
 - Code refinement: Replace unwrap() calls with proper error handling
 - Complete missing implementations in frame parsing
 - S-frame field association (rxSignalReceived, rxFlightChannelsValid)
 - Flight mode flag decoding improvements  
-- G-frame (GPS) parsing (if needed)
-- E-frame (event) parsing optimization
-- Export other formats (TBD)
+- G-frame (GPS) parsing and GPS CSV export
+- E-frame (event) parsing optimization and JSON event export
+- GPX file export for GPS track visualization
+- Unit conversion options (time, voltage, current, height, speed, rotation, acceleration)
+- IMU simulation (roll/pitch/yaw angle computation from gyro/accel/mag)
+- Current meter simulation and energy integration
+- GPS merge option (integrate GPS data into main CSV)
+- Raw mode output (unprocessed sensor values)
+- Statistics output (frame counts, timing, loop statistics)
 - Full RUST CRATE for Reusability and Modularity
 - Comprehensive error handling and edge case testing
 
