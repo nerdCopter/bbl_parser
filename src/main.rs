@@ -147,6 +147,72 @@ struct CsvExportOptions {
     output_dir: Option<String>,
 }
 
+// Pre-computed CSV field mapping for performance
+#[derive(Debug)]
+struct CsvFieldMap {
+    field_name_to_lookup: Vec<(String, String)>, // (csv_name, lookup_name)
+}
+
+impl CsvFieldMap {
+    fn new(header: &BBLHeader) -> Self {
+        let mut field_name_to_lookup = Vec::new();
+        
+        // Build optimized field mappings from all frame types
+        let mut csv_field_names = Vec::new();
+        
+        // I frame fields
+        for field_name in &header.i_frame_def.field_names {
+            let trimmed = field_name.trim();
+            let csv_name = if trimmed == "time" {
+                "time (us)".to_string()
+            } else if trimmed == "vbatLatest" {
+                "vbatLatest (V)".to_string()
+            } else if trimmed == "amperageLatest" {
+                "amperageLatest (A)".to_string()
+            } else {
+                trimmed.to_string()
+            };
+            
+            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            csv_field_names.push(csv_name);
+        }
+        
+        // S frame fields
+        for field_name in &header.s_frame_def.field_names {
+            let trimmed = field_name.trim();
+            if trimmed == "time" { continue; } // Skip duplicate
+            
+            let csv_name = if trimmed.contains("Flag") || trimmed == "failsafePhase" {
+                format!("{trimmed} (flags)")
+            } else {
+                trimmed.to_string()
+            };
+            
+            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            csv_field_names.push(csv_name);
+        }
+        
+        // G frame fields (skip duplicate time)
+        for field_name in &header.g_frame_def.field_names {
+            let trimmed = field_name.trim();
+            if trimmed == "time" { continue; } // Skip duplicate
+            
+            field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
+            csv_field_names.push(trimmed.to_string());
+        }
+        
+        // Add computed fields
+        if field_name_to_lookup.iter().any(|(_, lookup)| lookup == "amperageLatest") {
+            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            csv_field_names.push("energyCumulative (mAh)".to_string());
+        }
+        
+        Self {
+            field_name_to_lookup,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let matches = Command::new("BBL Parser")
         .version(env!("CARGO_PKG_VERSION"))
@@ -924,51 +990,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         .with_context(|| format!("Failed to create flight data CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
 
-    // Build field names in the same order as Betaflight blackbox-log-viewer
-    // Reference: https://github.com/betaflight/blackbox-log-viewer/blob/master/src/flightlog.js buildFieldNames()
-    let mut field_names = Vec::new();
-
-    // 1. Start with I frame field names (main flight loop fields)
-    for field_name in &log.header.i_frame_def.field_names {
-        let trimmed = field_name.trim();
-        let csv_name = if trimmed == "time" {
-            "time (us)".to_string()
-        } else if trimmed == "vbatLatest" {
-            "vbatLatest (V)".to_string()
-        } else if trimmed == "amperageLatest" {
-            "amperageLatest (A)".to_string()
-        } else {
-            trimmed.to_string()
-        };
-        field_names.push(csv_name);
-    }
-
-    // 2. Add S frame field names (slow fields like flight mode flags)
-    for field_name in &log.header.s_frame_def.field_names {
-        let trimmed = field_name.trim();
-        let csv_name = if trimmed == "time" {
-            "time (us)".to_string()
-        } else if trimmed.contains("Flag") || trimmed == "failsafePhase" {
-            format!("{trimmed} (flags)")
-        } else {
-            trimmed.to_string()
-        };
-        field_names.push(csv_name);
-    }
-
-    // 3. Add G frame field names (GPS) but skip duplicate "time" field
-    for field_name in &log.header.g_frame_def.field_names {
-        let trimmed = field_name.trim();
-        if trimmed != "time" {
-            // Skip duplicate time field from GPS frames
-            field_names.push(trimmed.to_string());
-        }
-    }
-
-    // 4. Add computed fields that match reference output
-    if field_names.iter().any(|name| name == "amperageLatest (A)") {
-        field_names.push("energyCumulative (mAh)".to_string());
-    }
+    // Build optimized field mapping (like C reference - pre-computed, no string matching per frame)
+    let csv_map = CsvFieldMap::new(&log.header);
+    let field_names: Vec<String> = csv_map.field_name_to_lookup.iter().map(|(csv_name, _)| csv_name.clone()).collect();
 
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
@@ -999,20 +1023,18 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         return Ok(()); // No data to export
     }
 
-    // Write field names header (in Betaflight order with proper spacing)
+    // Write field names header
     for (i, field_name) in field_names.iter().enumerate() {
         if i > 0 {
-            write!(writer, ", ")?; // Space after comma to match reference
+            write!(writer, ", ")?;
         }
         write!(writer, "{field_name}")?;
     }
     writeln!(writer)?;
 
-    // Write data rows (with proper spacing and sequential iteration like Betaflight)
+    // Optimized CSV writing with pre-computed mappings (like C reference)
     let mut cumulative_energy_mah = 0f32;
     let mut last_timestamp_us = 0u64;
-
-    // Track the latest S-frame values to use for all frames
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
     for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
@@ -1026,104 +1048,66 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // Calculate energyCumulative for this frame
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
-                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0; // Convert microseconds to hours
+                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
                 let current_amps = convert_amperage_to_amps(current_raw);
                 cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
-                // Convert to mAh
             }
             last_timestamp_us = *timestamp;
         }
 
-        for (i, field_name) in field_names.iter().enumerate() {
+        // Write data row using optimized field mapping
+        for (i, (csv_name, lookup_name)) in csv_map.field_name_to_lookup.iter().enumerate() {
             if i > 0 {
-                write!(writer, ", ")?; // Space after comma to match reference
+                write!(writer, ", ")?;
             }
 
-            let value = if field_name == "time (us)" {
-                *timestamp as i32
-            } else if field_name == "loopIteration" {
-                // Use the actual loop iteration from the frame data, not sequential numbering
-                frame
-                    .data
-                    .get("loopIteration")
-                    .copied()
-                    .unwrap_or(output_iteration as i32)
-            } else {
-                // For flag fields with " (flags)" suffix, strip the suffix for data lookup
-                let lookup_name = if field_name.ends_with(" (flags)") {
-                    &field_name[..field_name.len() - 8] // Remove " (flags)"
-                } else if field_name.ends_with(" (V)") || field_name.ends_with(" (A)") {
-                    &field_name[..field_name.len() - 4] // Remove " (V)" or " (A)"
-                } else if field_name.ends_with(" (mAh)") {
-                    // Special handling for energyCumulative
-                    ""
-                } else {
-                    field_name
-                };
-
-                if lookup_name.is_empty() {
-                    0 // Will be handled specially below
-                } else {
-                    // First try to get from current frame, then from latest S-frame data
-                    frame
-                        .data
-                        .get(lookup_name)
-                        .copied()
-                        .or_else(|| latest_s_frame_data.get(lookup_name).copied())
-                        .unwrap_or(0)
-                }
-            };
-
-            // Apply unit conversions and formatting based on field name
-            if field_name == "vbatLatest (V)" {
+            // Fast path for special fields using pre-computed indices
+            if csv_name == "time (us)" {
+                write!(writer, "{}", *timestamp as i32)?;
+            } else if csv_name == "loopIteration" {
+                let value = frame.data.get("loopIteration").copied().unwrap_or(output_iteration as i32);
+                write!(writer, "{value:4}")?;
+            } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
-            } else if field_name == "amperageLatest (A)" {
+            } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
-            } else if field_name == "energyCumulative (mAh)" {
+            } else if csv_name == "energyCumulative (mAh)" {
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
-            } else if field_name == "flightModeFlags (flags)" {
-                let raw_value = frame
-                    .data
-                    .get("flightModeFlags")
+            } else if csv_name.ends_with(" (flags)") {
+                // Handle flag fields with optimized lookup
+                let raw_value = frame.data.get(lookup_name)
                     .copied()
-                    .or_else(|| latest_s_frame_data.get("flightModeFlags").copied())
+                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
-                write!(writer, "{}", format_flight_mode_flags(raw_value))?;
-            } else if field_name == "stateFlags (flags)" {
-                let raw_value = frame
-                    .data
-                    .get("stateFlags")
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get("stateFlags").copied())
-                    .unwrap_or(0);
-                write!(writer, "{}", format_state_flags(raw_value))?;
-            } else if field_name == "failsafePhase (flags)" {
-                let raw_value = frame
-                    .data
-                    .get("failsafePhase")
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get("failsafePhase").copied())
-                    .unwrap_or(0);
-                write!(writer, "{}", format_failsafe_phase(raw_value))?;
+                
+                let formatted = if lookup_name == "flightModeFlags" {
+                    format_flight_mode_flags(raw_value)
+                } else if lookup_name == "stateFlags" {
+                    format_state_flags(raw_value) 
+                } else if lookup_name == "failsafePhase" {
+                    format_failsafe_phase(raw_value)
+                } else {
+                    raw_value.to_string()
+                };
+                write!(writer, "{formatted}")?;
             } else {
-                write!(writer, "{value:4}")?; // Right-aligned with width 4 to match reference spacing
+                // Regular field lookup with S-frame fallback
+                let value = frame.data.get(lookup_name)
+                    .copied()
+                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
+                    .unwrap_or(0);
+                write!(writer, "{value:4}")?;
             }
         }
         writeln!(writer)?;
     }
 
-    writer
-        .flush()
-        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
+    writer.flush().with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
 
     if debug {
-        println!(
-            "Exported {} data rows with {} fields",
-            all_frames.len(),
-            field_names.len()
-        );
+        println!("Exported {} data rows with {} fields (optimized)", all_frames.len(), field_names.len());
     }
 
     Ok(())
