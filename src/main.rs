@@ -185,23 +185,53 @@ fn main() -> Result<()> {
     
     let mut processed_files = 0;
 
+    if debug {
+        println!("Input patterns: {file_patterns:?}");
+    }
+
     // Collect all valid file paths
     let mut valid_paths = Vec::new();
     for pattern in &file_patterns {
+        if debug {
+            println!("Processing pattern: {pattern}");
+        }
+        
         let paths: Vec<_> = if pattern.contains('*') || pattern.contains('?') {
-            glob(pattern)
-                .with_context(|| format!("Invalid glob pattern: {pattern}"))?
-                .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("Error expanding glob pattern: {pattern}"))?
+            match glob(pattern) {
+                Ok(glob_iter) => {
+                    let collected = glob_iter.collect::<Result<Vec<_>, _>>();
+                    match collected {
+                        Ok(paths) => {
+                            if debug {
+                                println!("Glob pattern '{pattern}' matched {} files", paths.len());
+                            }
+                            paths
+                        }
+                        Err(e) => {
+                            eprintln!("Error expanding glob pattern '{pattern}': {e}");
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Invalid glob pattern '{pattern}': {e}");
+                    continue;
+                }
+            }
         } else {
             vec![Path::new(pattern).to_path_buf()]
         };
 
         for path in paths {
+            if debug {
+                println!("Checking file: {path:?}");
+            }
+            
             if !path.exists() {
                 eprintln!("Warning: File does not exist: {path:?}");
                 continue;
             }
+            
             let valid_extension = path.extension()
                 .and_then(|ext| ext.to_str())
                 .map(|ext| {
@@ -211,11 +241,29 @@ fn main() -> Result<()> {
                 .unwrap_or(false);
             
             if !valid_extension {
-                eprintln!("Warning: Skipping file with unsupported extension: {path:?}");
+                let ext = path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("none");
+                eprintln!("Warning: Skipping file with unsupported extension '{ext}': {path:?}");
                 continue;
+            }
+            
+            if debug {
+                println!("Added valid file: {path:?}");
             }
             valid_paths.push(path);
         }
+    }
+
+    if debug {
+        println!("Found {} valid files to process", valid_paths.len());
+    }
+
+    if valid_paths.is_empty() {
+        eprintln!("Error: No valid files found to process.");
+        eprintln!("Supported extensions: .BBL, .BFL, .TXT (case-insensitive)");
+        eprintln!("Input patterns were: {file_patterns:?}");
+        std::process::exit(1);
     }
 
     // Process files
@@ -254,7 +302,12 @@ fn main() -> Result<()> {
     }
 
     if processed_files == 0 {
-        eprintln!("No files were successfully processed.");
+        eprintln!("Error: No files were successfully processed out of {} files found.", valid_paths.len());
+        eprintln!("This could be due to:");
+        eprintln!("  - Files not being valid BBL/BFL format");
+        eprintln!("  - Corrupted or empty files");
+        eprintln!("  - Missing blackbox log headers");
+        eprintln!("Use --debug flag for more detailed error information.");
         std::process::exit(1);
     }
 
@@ -1584,5 +1637,158 @@ fn format_failsafe_phase(phase: i32) -> String {
         2 => "LANDING".to_string(),
         3 => "LANDED".to_string(),
         _ => phase.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_frame_definition_creation() {
+        let mut frame_def = FrameDefinition::new();
+        assert_eq!(frame_def.count, 0);
+        assert!(frame_def.field_names.is_empty());
+        
+        let field_names = vec!["time".to_string(), "loopIteration".to_string()];
+        frame_def = FrameDefinition::from_field_names(field_names.clone());
+        assert_eq!(frame_def.count, 2);
+        assert_eq!(frame_def.field_names, field_names);
+    }
+
+    #[test]
+    fn test_frame_definition_predictor_update() {
+        let mut frame_def = FrameDefinition::from_field_names(vec!["field1".to_string(), "field2".to_string()]);
+        let predictors = vec![1, 2];
+        frame_def.update_predictors(&predictors);
+        
+        assert_eq!(frame_def.fields[0].predictor, 1);
+        assert_eq!(frame_def.fields[1].predictor, 2);
+    }
+
+    #[test]
+    fn test_unit_conversions() {
+        // Test voltage conversion (0.1V units)
+        let volts = convert_vbat_to_volts(33); // 33 * 0.1 = 3.3V
+        assert!((volts - 3.3).abs() < 0.01);
+        
+        // Test amperage conversion (0.01A units)
+        let amps = convert_amperage_to_amps(100); // 100 * 0.01 = 1.0A
+        assert!((amps - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_frame_stats_default() {
+        let stats = FrameStats::default();
+        assert_eq!(stats.total_frames, 0);
+        assert_eq!(stats.i_frames, 0);
+        assert_eq!(stats.p_frames, 0);
+        assert_eq!(stats.failed_frames, 0);
+    }
+
+    #[test]
+    fn test_csv_export_options() {
+        let options = CsvExportOptions {
+            output_dir: Some("/tmp".to_string()),
+        };
+        assert_eq!(options.output_dir.as_ref().unwrap(), "/tmp");
+        
+        let options = CsvExportOptions {
+            output_dir: None,
+        };
+        assert!(options.output_dir.is_none());
+    }
+
+    #[test]
+    fn test_file_extension_validation() {
+        let valid_extensions = ["bbl", "bfl", "txt"];
+        let invalid_extensions = ["csv", "json", "xml"];
+        
+        for ext in valid_extensions {
+            let path = PathBuf::from(format!("test.{ext}"));
+            let is_valid = path.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| {
+                    let ext_lower = e.to_ascii_lowercase();
+                    ext_lower == "bbl" || ext_lower == "bfl" || ext_lower == "txt"
+                })
+                .unwrap_or(false);
+            assert!(is_valid, "Extension {ext} should be valid");
+        }
+        
+        for ext in invalid_extensions {
+            let path = PathBuf::from(format!("test.{ext}"));
+            let is_valid = path.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| {
+                    let ext_lower = e.to_ascii_lowercase();
+                    ext_lower == "bbl" || ext_lower == "bfl" || ext_lower == "txt"
+                })
+                .unwrap_or(false);
+            assert!(!is_valid, "Extension {ext} should be invalid");
+        }
+    }
+
+    #[test]
+    fn test_format_functions_basic() {
+        // Test that format functions work correctly with basic inputs
+        let flight_mode = format_flight_mode_flags(0);
+        assert_eq!(flight_mode, "0");
+        
+        let flight_mode_armed = format_flight_mode_flags(1); // ARM flag
+        assert!(flight_mode_armed.contains("ARM"));
+        
+        let state = format_state_flags(0);
+        assert_eq!(state, "0");
+        
+        let failsafe = format_failsafe_phase(0);
+        assert_eq!(failsafe, "IDLE");
+        
+        let failsafe_landing = format_failsafe_phase(2);
+        assert_eq!(failsafe_landing, "LANDING");
+    }
+
+    #[test]
+    fn test_bbl_header_creation() {
+        let header = BBLHeader {
+            firmware_revision: "4.5.0".to_string(),
+            board_info: "MAMBAF722".to_string(),
+            craft_name: "TestCraft".to_string(),
+            data_version: 2,
+            looptime: 500,
+            i_frame_def: FrameDefinition::new(),
+            p_frame_def: FrameDefinition::new(),
+            s_frame_def: FrameDefinition::new(),
+            g_frame_def: FrameDefinition::new(),
+            h_frame_def: FrameDefinition::new(),
+            sysconfig: HashMap::new(),
+            all_headers: Vec::new(),
+        };
+        
+        assert_eq!(header.firmware_revision, "4.5.0");
+        assert_eq!(header.board_info, "MAMBAF722");
+        assert_eq!(header.craft_name, "TestCraft");
+        assert_eq!(header.data_version, 2);
+        assert_eq!(header.looptime, 500);
+    }
+
+    #[test]
+    fn test_decoded_frame_creation() {
+        let mut data = HashMap::new();
+        data.insert("time".to_string(), 1000);
+        data.insert("loopIteration".to_string(), 1);
+        
+        let frame = DecodedFrame {
+            frame_type: 'I',
+            timestamp_us: 1000,
+            loop_iteration: 1,
+            data,
+        };
+        
+        assert_eq!(frame.frame_type, 'I');
+        assert_eq!(frame.timestamp_us, 1000);
+        assert_eq!(frame.loop_iteration, 1);
+        assert_eq!(frame.data.get("time"), Some(&1000));
     }
 }
