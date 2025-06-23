@@ -86,7 +86,7 @@ struct BBLHeader {
     all_headers: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FrameStats {
     i_frames: u32,
     p_frames: u32,
@@ -100,25 +100,6 @@ struct FrameStats {
     end_time_us: u64,
     failed_frames: u32,
     missing_iterations: u64,
-}
-
-impl Default for FrameStats {
-    fn default() -> Self {
-        Self {
-            i_frames: 0,
-            p_frames: 0,
-            h_frames: 0,
-            g_frames: 0,
-            e_frames: 0,
-            s_frames: 0,
-            total_frames: 0,
-            total_bytes: 0,
-            start_time_us: 0,
-            end_time_us: 0,
-            failed_frames: 0,
-            missing_iterations: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,7 +145,7 @@ struct CsvExportOptions {
 
 fn main() -> Result<()> {
     let matches = Command::new("BBL Parser")
-        .version("1.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .about("Read and parse BBL blackbox log files. Output to various formats.")
         .arg(
             Arg::new("files")
@@ -209,16 +190,16 @@ fn main() -> Result<()> {
     for pattern in &file_patterns {
         let paths: Vec<_> = if pattern.contains('*') || pattern.contains('?') {
             glob(pattern)
-                .with_context(|| format!("Invalid glob pattern: {}", pattern))?
+                .with_context(|| format!("Invalid glob pattern: {pattern}"))?
                 .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("Error expanding glob pattern: {}", pattern))?
+                .with_context(|| format!("Error expanding glob pattern: {pattern}"))?
         } else {
             vec![Path::new(pattern).to_path_buf()]
         };
 
         for path in paths {
             if !path.exists() {
-                eprintln!("Warning: File does not exist: {:?}", path);
+                eprintln!("Warning: File does not exist: {path:?}");
                 continue;
             }
             let valid_extension = path.extension()
@@ -230,7 +211,7 @@ fn main() -> Result<()> {
                 .unwrap_or(false);
             
             if !valid_extension {
-                eprintln!("Warning: Skipping file with unsupported extension: {:?}", path);
+                eprintln!("Warning: Skipping file with unsupported extension: {path:?}");
                 continue;
             }
             valid_paths.push(path);
@@ -244,9 +225,9 @@ fn main() -> Result<()> {
         }
         
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-        println!("Processing: {}", filename);
+        println!("Processing: {filename}");
         
-        match parse_bbl_file(&path, debug) {
+        match parse_bbl_file(path, debug) {
             Ok(logs) => {
                 if debug {
                     println!("\n=== DEBUG INFORMATION ===");
@@ -258,15 +239,15 @@ fn main() -> Result<()> {
                 }
                 
                 if export_csv {
-                    if let Err(e) = export_logs_to_csv(&logs, &path, &csv_options, debug) {
-                        eprintln!("Warning: Failed to export CSV for {}: {}", filename, e);
+                    if let Err(e) = export_logs_to_csv(&logs, path, &csv_options, debug) {
+                        eprintln!("Warning: Failed to export CSV for {filename}: {e}");
                     }
                 }
                 
                 processed_files += 1;
             }
             Err(e) => {
-                eprintln!("Error processing {}: {}", filename, e);
+                eprintln!("Error processing {filename}: {e}");
                 eprintln!("Continuing with next file...");
             }
         }
@@ -295,11 +276,10 @@ fn parse_bbl_file(file_path: &Path, debug: bool) -> Result<Vec<BBLLog>> {
     
     // Find all log start positions
     for i in 0..file_data.len() {
-        if i + log_start_marker.len() <= file_data.len() {
-            if &file_data[i..i + log_start_marker.len()] == log_start_marker {
+        if i + log_start_marker.len() <= file_data.len()
+            && &file_data[i..i + log_start_marker.len()] == log_start_marker {
                 log_positions.push(i);
             }
-        }
     }
     
     if log_positions.is_empty() {
@@ -513,9 +493,8 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
     }
     
     if debug {
-        println!("Parsed headers: Firmware={}, Board={}, Craft={}", 
-                 firmware_revision, board_info, craft_name);
-        println!("Data version: {}, Looptime: {}", data_version, looptime);
+        println!("Parsed headers: Firmware={firmware_revision}, Board={board_info}, Craft={craft_name}");
+        println!("Data version: {data_version}, Looptime: {looptime}");
     }
     
     Ok(BBLHeader {
@@ -618,7 +597,7 @@ fn display_frame_data(logs: &[BBLLog]) {
                         
                         for field_name in &selected_fields {
                             let value = frame.data.get(*field_name).copied().unwrap_or(0);
-                            print!(" {:>10}", value);
+                            print!(" {value:>10}");
                         }
                         
                         if field_names.len() > max_fields_to_show {
@@ -646,7 +625,7 @@ fn display_debug_info(logs: &[BBLLog]) {
                header.contains("Board information:") ||
                header.contains("Craft name:") ||
                header.contains("looptime:") {
-                println!("{}", header);
+                println!("{header}");
             }
         }
         
@@ -708,7 +687,7 @@ fn display_log_info(log: &BBLLog) {
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
         let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
-        println!("Duration   {:6} ms", duration_ms);
+        println!("Duration   {duration_ms:6} ms");
     }
     
     // Display data version and missing iterations
@@ -743,17 +722,17 @@ fn export_logs_to_csv(logs: &[BBLLog], input_path: &Path, options: &CsvExportOpt
         };
         
         // Export plaintext headers to separate CSV
-        let header_csv_path = output_dir.join(format!("{}{}.headers.csv", base_name, log_suffix));
+        let header_csv_path = output_dir.join(format!("{base_name}{log_suffix}.headers.csv"));
         export_headers_to_csv(&log.header, &header_csv_path, debug)?;
         if debug {
-            println!("Exported plaintext headers to: {:?}", header_csv_path);
+            println!("Exported plaintext headers to: {header_csv_path:?}");
         }
         
         // Export flight data (I, P, S, G frames) to main CSV
-        let flight_csv_path = output_dir.join(format!("{}{}.csv", base_name, log_suffix));
+        let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
         export_flight_data_to_csv(log, &flight_csv_path, debug)?;
         if debug {
-            println!("Exported flight data to: {:?}", flight_csv_path);
+            println!("Exported flight data to: {flight_csv_path:?}");
         }
     }
     
@@ -765,7 +744,7 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path, _debug: bool) -
     use std::io::{BufWriter, Write};
     
     let file = File::create(output_path)
-        .with_context(|| format!("Failed to create headers CSV file: {:?}", output_path))?;
+        .with_context(|| format!("Failed to create headers CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
     
     // Write CSV header
@@ -773,9 +752,8 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path, _debug: bool) -
     
     // Parse and write all header lines
     for header_line in &header.all_headers {
-        if header_line.starts_with("H ") {
+        if let Some(content) = header_line.strip_prefix("H ") {
             // Remove "H " prefix and find the colon separator
-            let content = &header_line[2..];
             if let Some(colon_pos) = content.find(':') {
                 let field_name = content[..colon_pos].trim();
                 let field_value = content[colon_pos + 1..].trim();
@@ -787,13 +765,13 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path, _debug: bool) -
                     field_value.to_string()
                 };
                 
-                writeln!(writer, "{},{}", field_name, escaped_value)?;
+                writeln!(writer, "{field_name},{escaped_value}")?;
             }
         }
     }
     
     writer.flush()
-        .with_context(|| format!("Failed to flush headers CSV file: {:?}", output_path))?;
+        .with_context(|| format!("Failed to flush headers CSV file: {output_path:?}"))?;
     
     Ok(())
 }
@@ -803,7 +781,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     use std::io::{BufWriter, Write};
     
     let file = File::create(output_path)
-        .with_context(|| format!("Failed to create flight data CSV file: {:?}", output_path))?;
+        .with_context(|| format!("Failed to create flight data CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
     
     // Build field names in the same order as Betaflight blackbox-log-viewer
@@ -831,7 +809,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         let csv_name = if trimmed == "time" { 
             "time (us)".to_string()
         } else if trimmed.contains("Flag") || trimmed == "failsafePhase" {
-            format!("{} (flags)", trimmed)
+            format!("{trimmed} (flags)")
         } else {
             trimmed.to_string()
         };
@@ -885,7 +863,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         if i > 0 {
             write!(writer, ", ")?; // Space after comma to match reference
         }
-        write!(writer, "{}", field_name)?;
+        write!(writer, "{field_name}")?;
     }
     writeln!(writer)?;
     
@@ -928,10 +906,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // For flag fields with " (flags)" suffix, strip the suffix for data lookup
                 let lookup_name = if field_name.ends_with(" (flags)") {
                     &field_name[..field_name.len() - 8] // Remove " (flags)"
-                } else if field_name.ends_with(" (V)") {
-                    &field_name[..field_name.len() - 4] // Remove " (V)"
-                } else if field_name.ends_with(" (A)") {
-                    &field_name[..field_name.len() - 4] // Remove " (A)" 
+                } else if field_name.ends_with(" (V)") || field_name.ends_with(" (A)") {
+                    &field_name[..field_name.len() - 4] // Remove " (V)" or " (A)"
                 } else if field_name.ends_with(" (mAh)") {
                     // Special handling for energyCumulative
                     ""
@@ -974,14 +950,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .unwrap_or(0);
                 write!(writer, "{}", format_failsafe_phase(raw_value))?;
             } else {
-                write!(writer, "{:4}", value)?; // Right-aligned with width 4 to match reference spacing
+                write!(writer, "{value:4}")?; // Right-aligned with width 4 to match reference spacing
             }
         }
         writeln!(writer)?;
     }
     
     writer.flush()
-        .with_context(|| format!("Failed to flush flight data CSV file: {:?}", output_path))?;
+        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
     
     if debug {
         println!("Exported {} data rows with {} fields", all_frames.len(), field_names.len());
@@ -990,7 +966,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     Ok(())
 }
 
-fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(FrameStats, Vec<DecodedFrame>, Option<HashMap<char, Vec<DecodedFrame>>>)> {
+type ParseFramesResult = Result<(FrameStats, Vec<DecodedFrame>, Option<HashMap<char, Vec<DecodedFrame>>>)>;
+
+fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
@@ -1044,7 +1022,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                 };
                 
                 if debug && stats.total_frames < 3 {
-                    println!("Found frame type '{}' at offset {}", frame_type, frame_start_pos);
+                    println!("Found frame type '{frame_type}' at offset {frame_start_pos}");
                 }
                 
                 // Parse frame using proper streaming logic
@@ -1057,7 +1035,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
                             
-                            if let Ok(_) = bbl_format::parse_frame_data(
+                            if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
@@ -1067,7 +1045,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
-                            ) {
+                            ).is_ok() {
                                 // Update time and loop iteration from parsed frame
                                 for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
                                     if i < frame_history.current_frame.len() {
@@ -1101,7 +1079,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                         if header.p_frame_def.count > 0 && frame_history.valid {
                             let mut p_frame_values = vec![0i32; header.p_frame_def.count];
                             
-                            if let Ok(_) = bbl_format::parse_frame_data(
+                            if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
                                 &mut p_frame_values,
@@ -1111,7 +1089,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
-                            ) {
+                            ).is_ok() {
                                 // P-frames update only specific fields, rest inherit from previous I-frame
                                 frame_history.current_frame.copy_from_slice(&frame_history.previous_frame);
                                 
@@ -1162,7 +1140,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                             if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug) {
                                 // Following JavaScript approach: update lastSlow data
                                 if debug && stats.s_frames < 3 {
-                                    println!("DEBUG: Processing S-frame with data: {:?}", data);
+                                    println!("DEBUG: Processing S-frame with data: {data:?}");
                                 }
                                 
                                 for (key, value) in &data {
@@ -1170,7 +1148,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                                 }
                                 
                                 if debug && stats.s_frames < 3 {
-                                    println!("DEBUG: S-frame data updated lastSlow: {:?}", last_slow_data);
+                                    println!("DEBUG: S-frame data updated lastSlow: {last_slow_data:?}");
                                 }
                                 
                                 frame_data = data;
@@ -1220,9 +1198,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                 stats.total_frames += 1;
                 
                 // Show progress for large files  
-                if debug && stats.total_frames % 50000 == 0 {
-                    println!("Parsed {} frames so far...", stats.total_frames);
-                } else if stats.total_frames % 100000 == 0 {
+                if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
                 }
                 
@@ -1248,10 +1224,10 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                         println!("DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}", 
                                 frame_type, timestamp_us, frame_data.keys().collect::<Vec<_>>());
                         if let Some(time_val) = frame_data.get("time") {
-                            println!("DEBUG: 'time' field value: {}", time_val);
+                            println!("DEBUG: 'time' field value: {time_val}");
                         }
                         if let Some(loop_val) = frame_data.get("loopIteration") {
-                            println!("DEBUG: 'loopIteration' field value: {}", loop_val);
+                            println!("DEBUG: 'loopIteration' field value: {loop_val}");
                         }
                     }
                     
@@ -1264,11 +1240,11 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> Result<(
                     sample_frames.push(decoded_frame.clone());
                     
                     // Store debug frames
-                    let debug_frame_list = debug_frames.entry(frame_type).or_insert_with(Vec::new);
+                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     debug_frame_list.push(decoded_frame);
                 } else if parsing_success {
                     // Store frames for CSV export (even when not sample frames)
-                    let debug_frame_list = debug_frames.entry(frame_type).or_insert_with(Vec::new);
+                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     // Store all frames for complete CSV export - memory usage managed by processing in chunks
                     let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
@@ -1343,7 +1319,7 @@ fn parse_i_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
         let value = match field.encoding {
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
             bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -1378,7 +1354,7 @@ fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
                 field_index += 1;
             },
             bbl_format::ENCODING_NEG_14BIT => {
-                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32);
+                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16));
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             },
@@ -1387,6 +1363,7 @@ fn parse_s_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
                 let mut values = [0i32; 8];
                 stream.read_tag2_3s32(&mut values)?;
                 
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..3 {
                     if field_index + j < frame_def.fields.len() {
                         let current_field = &frame_def.fields[field_index + j];
@@ -1430,7 +1407,7 @@ fn parse_h_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
         let value = match field.encoding {
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
             bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -1462,7 +1439,7 @@ fn parse_g_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
         let value = match field.encoding {
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16) as i32),
+            bbl_format::ENCODING_NEG_14BIT => -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
             bbl_format::ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -1480,7 +1457,7 @@ fn parse_g_frame(stream: &mut bbl_format::BBLDataStream, frame_def: &FrameDefini
 
 fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
     if debug {
-        println!("Skipping {} frame", frame_type);
+        println!("Skipping {frame_type} frame");
     }
     
     // Skip frame by reading a few bytes - this is a simple heuristic

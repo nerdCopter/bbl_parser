@@ -107,6 +107,7 @@ impl<'a> BBLDataStream<'a> {
         let mut nibble_index = 0;
         let mut buffer = 0u8;
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..4 {
             let field_type = (selector >> (i * 2)) & 0x03;
 
@@ -126,7 +127,7 @@ impl<'a> BBLDataStream<'a> {
                     if nibble_index == 0 {
                         values[i] = sign_extend_8bit(self.read_byte()?);
                     } else {
-                        let mut char1 = ((buffer & 0x0f) << 4) as u8;
+                        let mut char1 = (buffer & 0x0f) << 4;
                         buffer = self.read_byte()?;
                         char1 |= buffer >> 4;
                         values[i] = sign_extend_8bit(char1);
@@ -180,6 +181,7 @@ impl<'a> BBLDataStream<'a> {
             }
             3 => { // 8, 16 or 24 bit fields
                 let mut selector = lead_byte;
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..3 {
                     match selector & 0x03 {
                         0 => { // 8-bit
@@ -224,6 +226,7 @@ impl<'a> BBLDataStream<'a> {
             values[0] = self.read_signed_vb()?;
         } else {
             let mut header = self.read_byte()?;
+            #[allow(clippy::needless_range_loop)]
             for i in 0..8.min(value_count) {
                 values[i] = if header & 0x01 != 0 {
                     self.read_signed_vb()?
@@ -289,6 +292,7 @@ pub fn sign_extend_14bit(value: u16) -> i32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_predictor(
     field_index: usize,
     predictor: u8,
@@ -341,7 +345,7 @@ pub fn apply_predictor(
         
         PREDICT_MINTHROTTLE => {
             let minthrottle = sysconfig.get("minthrottle").copied().unwrap_or(1150);
-            (raw_value | 0) + minthrottle
+            raw_value + minthrottle
         }
         
         PREDICT_MOTOR_0 => {
@@ -415,6 +419,7 @@ pub fn decode_frame_field(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn parse_frame_data(
     stream: &mut BBLDataStream,
     frame_def: &crate::FrameDefinition,
