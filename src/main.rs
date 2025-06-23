@@ -279,7 +279,7 @@ fn main() -> Result<()> {
             .unwrap_or("unknown");
         println!("Processing: {filename}");
 
-        match parse_bbl_file(path, debug) {
+        match parse_bbl_file(path, debug, export_csv) {
             Ok(logs) => {
                 if debug {
                     println!("\n=== DEBUG INFORMATION ===");
@@ -321,7 +321,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_bbl_file(file_path: &Path, debug: bool) -> Result<Vec<BBLLog>> {
+fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec<BBLLog>> {
     if debug {
         println!("=== PARSING BBL FILE ===");
         let metadata = std::fs::metadata(file_path)?;
@@ -374,7 +374,7 @@ fn parse_bbl_file(file_path: &Path, debug: bool) -> Result<Vec<BBLLog>> {
         let log_data = &file_data[start_pos..end_pos];
 
         // Parse this individual log
-        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug)?;
+        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug, csv_export)?;
         logs.push(log);
     }
 
@@ -386,6 +386,7 @@ fn parse_single_log(
     log_number: usize,
     total_logs: usize,
     debug: bool,
+    csv_export: bool,
 ) -> Result<BBLLog> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
@@ -406,7 +407,7 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames, debug_frames) = parse_frames(binary_data, &header, debug)?;
+    let (mut stats, frames, debug_frames) = parse_frames(binary_data, &header, debug, csv_export)?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -1134,7 +1135,7 @@ type ParseFramesResult = Result<(
     Option<HashMap<char, Vec<DecodedFrame>>>,
 )>;
 
-fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> ParseFramesResult {
+fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool, csv_export: bool) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
@@ -1142,6 +1143,9 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> ParseFra
 
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
+
+    // Decide whether to store all frames based on CSV export requirement
+    let store_all_frames = csv_export; // Store all frames when CSV export is requested
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -1447,11 +1451,11 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool) -> ParseFra
                     };
                     sample_frames.push(decoded_frame.clone());
 
-                    // Store debug frames
+                    // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     debug_frame_list.push(decoded_frame);
-                } else if parsing_success {
-                    // Store frames for CSV export (even when not sample frames)
+                } else if parsing_success && store_all_frames {
+                    // Store ALL frames for CSV export when requested
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     // Store all frames for complete CSV export - memory usage managed by processing in chunks
                     let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
