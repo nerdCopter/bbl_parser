@@ -113,7 +113,8 @@ impl<'a> BBLDataStream<'a> {
 
             match field_type {
                 0 => values[i] = 0, // FIELD_ZERO
-                1 => { // FIELD_4BIT
+                1 => {
+                    // FIELD_4BIT
                     if nibble_index == 0 {
                         buffer = self.read_byte()?;
                         values[i] = sign_extend_4bit(buffer >> 4);
@@ -123,7 +124,8 @@ impl<'a> BBLDataStream<'a> {
                         nibble_index = 0;
                     }
                 }
-                2 => { // FIELD_8BIT
+                2 => {
+                    // FIELD_8BIT
                     if nibble_index == 0 {
                         values[i] = sign_extend_8bit(self.read_byte()?);
                     } else {
@@ -133,7 +135,8 @@ impl<'a> BBLDataStream<'a> {
                         values[i] = sign_extend_8bit(char1);
                     }
                 }
-                3 => { // FIELD_16BIT
+                3 => {
+                    // FIELD_16BIT
                     if nibble_index == 0 {
                         let char1 = self.read_byte()?;
                         let char2 = self.read_byte()?;
@@ -142,9 +145,9 @@ impl<'a> BBLDataStream<'a> {
                         let char1 = self.read_byte()?;
                         let char2 = self.read_byte()?;
                         values[i] = sign_extend_16bit(
-                            (((buffer & 0x0f) as u16) << 12) | 
-                            ((char1 as u16) << 4) | 
-                            ((char2 as u16) >> 4)
+                            (((buffer & 0x0f) as u16) << 12)
+                                | ((char1 as u16) << 4)
+                                | ((char2 as u16) >> 4),
                         );
                         buffer = char2;
                     }
@@ -161,53 +164,63 @@ impl<'a> BBLDataStream<'a> {
         let lead_byte = self.read_byte()?;
 
         match lead_byte >> 6 {
-            0 => { // 2-bit fields
+            0 => {
+                // 2-bit fields
                 values[0] = sign_extend_2bit((lead_byte >> 4) & 0x03);
                 values[1] = sign_extend_2bit((lead_byte >> 2) & 0x03);
                 values[2] = sign_extend_2bit(lead_byte & 0x03);
             }
-            1 => { // 4-bit fields
+            1 => {
+                // 4-bit fields
                 values[0] = sign_extend_4bit(lead_byte & 0x0f);
                 let second_byte = self.read_byte()?;
                 values[1] = sign_extend_4bit(second_byte >> 4);
                 values[2] = sign_extend_4bit(second_byte & 0x0f);
             }
-            2 => { // 6-bit fields
+            2 => {
+                // 6-bit fields
                 values[0] = sign_extend_6bit(lead_byte & 0x3f);
                 let byte2 = self.read_byte()?;
                 values[1] = sign_extend_6bit(byte2 & 0x3f);
                 let byte3 = self.read_byte()?;
                 values[2] = sign_extend_6bit(byte3 & 0x3f);
             }
-            3 => { // 8, 16 or 24 bit fields
+            3 => {
+                // 8, 16 or 24 bit fields
                 let mut selector = lead_byte;
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..3 {
                     match selector & 0x03 {
-                        0 => { // 8-bit
+                        0 => {
+                            // 8-bit
                             let byte1 = self.read_byte()?;
                             values[i] = sign_extend_8bit(byte1);
                         }
-                        1 => { // 16-bit
+                        1 => {
+                            // 16-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             values[i] = sign_extend_16bit((byte1 as u16) | ((byte2 as u16) << 8));
                         }
-                        2 => { // 24-bit
+                        2 => {
+                            // 24-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             let byte3 = self.read_byte()?;
                             values[i] = sign_extend_24bit(
-                                (byte1 as u32) | ((byte2 as u32) << 8) | ((byte3 as u32) << 16)
+                                (byte1 as u32) | ((byte2 as u32) << 8) | ((byte3 as u32) << 16),
                             );
                         }
-                        3 => { // 32-bit
+                        3 => {
+                            // 32-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             let byte3 = self.read_byte()?;
                             let byte4 = self.read_byte()?;
-                            values[i] = (byte1 as i32) | ((byte2 as i32) << 8) | 
-                                       ((byte3 as i32) << 16) | ((byte4 as i32) << 24);
+                            values[i] = (byte1 as i32)
+                                | ((byte2 as i32) << 8)
+                                | ((byte3 as i32) << 16)
+                                | ((byte4 as i32) << 24);
                         }
                         _ => unreachable!(),
                     }
@@ -306,7 +319,7 @@ pub fn apply_predictor(
 ) -> i32 {
     match predictor {
         PREDICT_0 => raw_value,
-        
+
         PREDICT_PREVIOUS => {
             if let Some(prev) = previous_frame {
                 if field_index < prev.len() {
@@ -318,7 +331,7 @@ pub fn apply_predictor(
                 raw_value
             }
         }
-        
+
         PREDICT_STRAIGHT_LINE => {
             if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                 if field_index < prev.len() && field_index < prev2.len() {
@@ -330,7 +343,7 @@ pub fn apply_predictor(
                 raw_value
             }
         }
-        
+
         PREDICT_AVERAGE_2 => {
             if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                 if field_index < prev.len() && field_index < prev2.len() {
@@ -342,12 +355,12 @@ pub fn apply_predictor(
                 raw_value
             }
         }
-        
+
         PREDICT_MINTHROTTLE => {
             let minthrottle = sysconfig.get("minthrottle").copied().unwrap_or(1150);
             raw_value + minthrottle
         }
-        
+
         PREDICT_MOTOR_0 => {
             // Find motor[0] field index
             if let Some(motor0_idx) = field_names.iter().position(|name| name == "motor[0]") {
@@ -360,7 +373,7 @@ pub fn apply_predictor(
                 raw_value
             }
         }
-        
+
         PREDICT_INC => {
             let mut result = skipped_frames as i32 + 1;
             if let Some(prev) = previous_frame {
@@ -370,14 +383,14 @@ pub fn apply_predictor(
             }
             result
         }
-        
+
         PREDICT_1500 => raw_value + 1500,
-        
+
         PREDICT_VBATREF => {
             let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
             raw_value + vbatref
         }
-        
+
         PREDICT_MINMOTOR => {
             // Get the min motor value from motorOutput "min,max" format
             let minmotor = if let Some(motor_output) = sysconfig.get("motorOutput") {
@@ -389,11 +402,11 @@ pub fn apply_predictor(
                     motor_output_str.parse().unwrap_or(48)
                 }
             } else {
-                48  // Default min motor output value
+                48 // Default min motor output value
             };
             raw_value + minmotor
         }
-        
+
         _ => raw_value,
     }
 }
@@ -405,16 +418,16 @@ pub fn decode_frame_field(
 ) -> Result<i32> {
     match encoding {
         ENCODING_SIGNED_VB => stream.read_signed_vb(),
-        
+
         ENCODING_UNSIGNED_VB => Ok(stream.read_unsigned_vb()? as i32),
-        
+
         ENCODING_NEG_14BIT => {
             let value = stream.read_unsigned_vb()? as u16;
             Ok(-sign_extend_14bit(value))
         }
-        
+
         ENCODING_NULL => Ok(0),
-        
+
         _ => Err(anyhow::anyhow!("Unsupported encoding: {}", encoding)),
     }
 }
@@ -436,7 +449,7 @@ pub fn parse_frame_data(
 
     while i < frame_def.fields.len() {
         let field = &frame_def.fields[i];
-        
+
         if field.predictor == PREDICT_INC {
             current_frame[i] = apply_predictor(
                 i,
@@ -459,13 +472,17 @@ pub fn parse_frame_data(
                     // v1 implementation would be different but we'll use v2
                 }
                 stream.read_tag8_4s16_v2(&mut values)?;
-                
+
                 // Apply predictors for the 4 fields
                 for j in 0..4 {
                     if i + j >= frame_def.fields.len() {
                         break;
                     }
-                    let predictor = if raw { PREDICT_0 } else { frame_def.fields[i + j].predictor };
+                    let predictor = if raw {
+                        PREDICT_0
+                    } else {
+                        frame_def.fields[i + j].predictor
+                    };
                     current_frame[i + j] = apply_predictor(
                         i + j,
                         predictor,
@@ -481,16 +498,20 @@ pub fn parse_frame_data(
                 i += 4;
                 continue;
             }
-            
+
             ENCODING_TAG2_3S32 => {
                 stream.read_tag2_3s32(&mut values)?;
-                
+
                 // Apply predictors for the 3 fields
                 for j in 0..3 {
                     if i + j >= frame_def.fields.len() {
                         break;
                     }
-                    let predictor = if raw { PREDICT_0 } else { frame_def.fields[i + j].predictor };
+                    let predictor = if raw {
+                        PREDICT_0
+                    } else {
+                        frame_def.fields[i + j].predictor
+                    };
                     current_frame[i + j] = apply_predictor(
                         i + j,
                         predictor,
@@ -506,7 +527,7 @@ pub fn parse_frame_data(
                 i += 3;
                 continue;
             }
-            
+
             ENCODING_TAG8_8SVB => {
                 // Count how many fields use this encoding
                 let mut group_count = 1;
@@ -516,15 +537,19 @@ pub fn parse_frame_data(
                     }
                     group_count += 1;
                 }
-                
+
                 stream.read_tag8_8svb(&mut values, group_count)?;
-                
+
                 // Apply predictors for the group
                 for j in 0..group_count {
                     if i + j >= frame_def.fields.len() {
                         break;
                     }
-                    let predictor = if raw { PREDICT_0 } else { frame_def.fields[i + j].predictor };
+                    let predictor = if raw {
+                        PREDICT_0
+                    } else {
+                        frame_def.fields[i + j].predictor
+                    };
                     current_frame[i + j] = apply_predictor(
                         i + j,
                         predictor,
@@ -540,7 +565,7 @@ pub fn parse_frame_data(
                 i += group_count;
                 continue;
             }
-            
+
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
@@ -557,7 +582,7 @@ pub fn parse_frame_data(
                 );
             }
         }
-        
+
         i += 1;
     }
 
