@@ -71,14 +71,11 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run tests (library)
-        run: cargo test --lib --verbose
+      - name: Run tests
+        run: cargo test --verbose
 
-      - name: Run tests (CLI)
+      - name: Run tests with CLI features
         run: cargo test --features=cli --verbose
-
-      - name: Run doc tests
-        run: cargo test --doc --verbose
 
   build:
     name: Build Release Binaries
