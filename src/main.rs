@@ -911,6 +911,14 @@ fn export_logs_to_csv(
         input_path.parent().unwrap_or(Path::new("."))
     };
 
+    // Create output directory if it doesn't exist
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir)?;
+        if debug {
+            println!("Created output directory: {:?}", output_dir);
+        }
+    }
+
     if debug {
         println!(
             "Exporting {} logs to CSV in directory: {:?}",
