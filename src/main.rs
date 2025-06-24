@@ -1986,6 +1986,9 @@ mod tests {
         // Test high-order flags
         assert_eq!(format_flight_mode_flags(1 << 26), "FAILSAFE");         // bit 26
         assert_eq!(format_flight_mode_flags(1 << 27), "AIRMODE");          // bit 27
+        assert_eq!(format_flight_mode_flags(1 << 28), "SUPEREXPO");        // bit 28
+        assert_eq!(format_flight_mode_flags(1 << 29), "3D_DISABLE_SWITCH"); // bit 29
+        assert_eq!(format_flight_mode_flags(1 << 30), "CHECKBOX_ITEM_COUNT"); // bit 30
     }
 
     #[test]
@@ -2200,6 +2203,15 @@ fn format_flight_mode_flags(flags: i32) -> String {
     }
     if (flags & (1 << 27)) != 0 {
         modes.push("AIRMODE");
+    }
+    if (flags & (1 << 28)) != 0 {
+        modes.push("SUPEREXPO");
+    }
+    if (flags & (1 << 29)) != 0 {
+        modes.push("3D_DISABLE_SWITCH");
+    }
+    if (flags & (1 << 30)) != 0 {
+        modes.push("CHECKBOX_ITEM_COUNT");
     }
 
     if modes.is_empty() {
