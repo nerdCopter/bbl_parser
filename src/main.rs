@@ -345,23 +345,11 @@ fn main() -> Result<()> {
             .unwrap_or("unknown");
         println!("Processing: {filename}");
 
-        match parse_bbl_file(path, debug, export_csv) {
-            Ok(logs) => {
+        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options) {
+            Ok(processed_logs) => {
                 if debug {
-                    println!("\n=== DEBUG INFORMATION ===");
-                    display_debug_info(&logs);
+                    println!("Successfully processed {} log(s) with streaming export", processed_logs);
                 }
-
-                for log in &logs {
-                    display_log_info(log);
-                }
-
-                if export_csv {
-                    if let Err(e) = export_logs_to_csv(&logs, path, &csv_options, debug) {
-                        eprintln!("Warning: Failed to export CSV for {filename}: {e}");
-                    }
-                }
-
                 processed_files += 1;
             }
             Err(e) => {
@@ -944,6 +932,50 @@ fn export_logs_to_csv(
         export_flight_data_to_csv(log, &flight_csv_path, debug)?;
         println!("Exported flight data to: {}", flight_csv_path.display());
     }
+
+    Ok(())
+}
+
+fn export_single_log_to_csv(
+    log: &BBLLog,
+    input_path: &Path,
+    options: &CsvExportOptions,
+    debug: bool,
+) -> Result<()> {
+    let base_name = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("blackbox");
+
+    let output_dir = if let Some(ref dir) = options.output_dir {
+        Path::new(dir)
+    } else {
+        input_path.parent().unwrap_or(Path::new("."))
+    };
+
+    // Create output directory if it doesn't exist
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir)?;
+        if debug {
+            println!("Created output directory: {:?}", output_dir);
+        }
+    }
+
+    let log_suffix = if log.total_logs > 1 {
+        format!(".{:02}", log.log_number)
+    } else {
+        ".01".to_string()
+    };
+
+    // Export plaintext headers to separate CSV
+    let header_csv_path = output_dir.join(format!("{base_name}{log_suffix}.headers.csv"));
+    export_headers_to_csv(&log.header, &header_csv_path, debug)?;
+    println!("Exported headers to: {}", header_csv_path.display());
+
+    // Export flight data (I, P, S, G frames) to main CSV
+    let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
+    export_flight_data_to_csv(log, &flight_csv_path, debug)?;
+    println!("Exported flight data to: {}", flight_csv_path.display());
 
     Ok(())
 }
