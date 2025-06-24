@@ -109,6 +109,7 @@ struct FrameStats {
 struct DecodedFrame {
     frame_type: char,
     timestamp_us: u64,
+    #[allow(dead_code)]
     loop_iteration: u32,
     data: HashMap<String, i32>,
 }
@@ -156,10 +157,10 @@ struct CsvFieldMap {
 impl CsvFieldMap {
     fn new(header: &BBLHeader) -> Self {
         let mut field_name_to_lookup = Vec::new();
-        
+
         // Build optimized field mappings from all frame types
         let mut csv_field_names = Vec::new();
-        
+
         // I frame fields
         for field_name in &header.i_frame_def.field_names {
             let trimmed = field_name.trim();
@@ -172,41 +173,48 @@ impl CsvFieldMap {
             } else {
                 trimmed.to_string()
             };
-            
+
             field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
             csv_field_names.push(csv_name);
         }
-        
+
         // S frame fields
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
-            if trimmed == "time" { continue; } // Skip duplicate
-            
+            if trimmed == "time" {
+                continue;
+            } // Skip duplicate
+
             let csv_name = if trimmed.contains("Flag") || trimmed == "failsafePhase" {
                 format!("{trimmed} (flags)")
             } else {
                 trimmed.to_string()
             };
-            
+
             field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
             csv_field_names.push(csv_name);
         }
-        
+
         // G frame fields (skip duplicate time)
         for field_name in &header.g_frame_def.field_names {
             let trimmed = field_name.trim();
-            if trimmed == "time" { continue; } // Skip duplicate
-            
+            if trimmed == "time" {
+                continue;
+            } // Skip duplicate
+
             field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
             csv_field_names.push(trimmed.to_string());
         }
-        
+
         // Add computed fields
-        if field_name_to_lookup.iter().any(|(_, lookup)| lookup == "amperageLatest") {
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
             field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
             csv_field_names.push("energyCumulative (mAh)".to_string());
         }
-        
+
         Self {
             field_name_to_lookup,
         }
@@ -348,7 +356,9 @@ fn main() -> Result<()> {
         match parse_bbl_file_streaming(path, debug, export_csv, &csv_options) {
             Ok(processed_logs) => {
                 if debug {
-                    println!("Successfully processed {} log(s) with streaming export", processed_logs);
+                    println!(
+                        "Successfully processed {processed_logs} log(s) with streaming export"
+                    );
                 }
                 processed_files += 1;
             }
@@ -375,6 +385,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec<BBLLog>> {
     if debug {
         println!("=== PARSING BBL FILE ===");
@@ -428,7 +439,13 @@ fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec
         let log_data = &file_data[start_pos..end_pos];
 
         // Parse this individual log
-        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug, csv_export)?;
+        let log = parse_single_log(
+            log_data,
+            log_index + 1,
+            log_positions.len(),
+            debug,
+            csv_export,
+        )?;
         logs.push(log);
     }
 
@@ -676,6 +693,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
     })
 }
 
+#[allow(dead_code)]
 fn display_frame_data(logs: &[BBLLog]) {
     for log in logs {
         if let Some(ref debug_frames) = log.debug_frames {
@@ -793,6 +811,7 @@ fn display_frame_data(logs: &[BBLLog]) {
     }
 }
 
+#[allow(dead_code)]
 fn display_debug_info(logs: &[BBLLog]) {
     if let Some(log) = logs.first() {
         println!("\n=== BBL FILE HEADERS ===");
@@ -882,6 +901,7 @@ fn display_log_info(log: &BBLLog) {
     }
 }
 
+#[allow(dead_code)]
 fn export_logs_to_csv(
     logs: &[BBLLog],
     input_path: &Path,
@@ -903,7 +923,7 @@ fn export_logs_to_csv(
     if !output_dir.exists() {
         std::fs::create_dir_all(output_dir)?;
         if debug {
-            println!("Created output directory: {:?}", output_dir);
+            println!("Created output directory: {output_dir:?}");
         }
     }
 
@@ -957,7 +977,7 @@ fn export_single_log_to_csv(
     if !output_dir.exists() {
         std::fs::create_dir_all(output_dir)?;
         if debug {
-            println!("Created output directory: {:?}", output_dir);
+            println!("Created output directory: {output_dir:?}");
         }
     }
 
@@ -1028,7 +1048,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     // Build optimized field mapping (like C reference - pre-computed, no string matching per frame)
     let csv_map = CsvFieldMap::new(&log.header);
-    let field_names: Vec<String> = csv_map.field_name_to_lookup.iter().map(|(csv_name, _)| csv_name.clone()).collect();
+    let field_names: Vec<String> = csv_map
+        .field_name_to_lookup
+        .iter()
+        .map(|(csv_name, _)| csv_name.clone())
+        .collect();
 
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
@@ -1101,7 +1125,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             if csv_name == "time (us)" {
                 write!(writer, "{}", *timestamp as i32)?;
             } else if csv_name == "loopIteration" {
-                let value = frame.data.get("loopIteration").copied().unwrap_or(output_iteration as i32);
+                let value = frame
+                    .data
+                    .get("loopIteration")
+                    .copied()
+                    .unwrap_or(output_iteration as i32);
                 write!(writer, "{value:4}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
@@ -1113,15 +1141,17 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
             } else if csv_name.ends_with(" (flags)") {
                 // Handle flag fields with optimized lookup
-                let raw_value = frame.data.get(lookup_name)
+                let raw_value = frame
+                    .data
+                    .get(lookup_name)
                     .copied()
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
-                
+
                 let formatted = if lookup_name == "flightModeFlags" {
                     format_flight_mode_flags(raw_value)
                 } else if lookup_name == "stateFlags" {
-                    format_state_flags(raw_value) 
+                    format_state_flags(raw_value)
                 } else if lookup_name == "failsafePhase" {
                     format_failsafe_phase(raw_value)
                 } else {
@@ -1130,7 +1160,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{formatted}")?;
             } else {
                 // Regular field lookup with S-frame fallback
-                let value = frame.data.get(lookup_name)
+                let value = frame
+                    .data
+                    .get(lookup_name)
                     .copied()
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
@@ -1140,10 +1172,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         writeln!(writer)?;
     }
 
-    writer.flush().with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
 
     if debug {
-        println!("Exported {} data rows with {} fields (optimized)", all_frames.len(), field_names.len());
+        println!(
+            "Exported {} data rows with {} fields (optimized)",
+            all_frames.len(),
+            field_names.len()
+        );
     }
 
     Ok(())
@@ -1155,7 +1193,12 @@ type ParseFramesResult = Result<(
     Option<HashMap<char, Vec<DecodedFrame>>>,
 )>;
 
-fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool, csv_export: bool) -> ParseFramesResult {
+fn parse_frames(
+    binary_data: &[u8],
+    header: &BBLHeader,
+    debug: bool,
+    csv_export: bool,
+) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
@@ -2100,4 +2143,94 @@ mod tests {
         assert_eq!(frame.loop_iteration, 1);
         assert_eq!(frame.data.get("time"), Some(&1000));
     }
+}
+fn parse_bbl_file_streaming(
+    file_path: &Path,
+    debug: bool,
+    export_csv: bool,
+    csv_options: &CsvExportOptions,
+) -> Result<usize> {
+    if debug {
+        println!("=== STREAMING BBL FILE PROCESSING ===");
+        let metadata = std::fs::metadata(file_path)?;
+        println!(
+            "File size: {} bytes ({:.2} MB)",
+            metadata.len(),
+            metadata.len() as f64 / 1024.0 / 1024.0
+        );
+    }
+
+    let file_data = std::fs::read(file_path)?;
+
+    // Look for multiple logs by searching for log start markers
+    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
+    let mut log_positions = Vec::new();
+
+    // Find all log start positions
+    for i in 0..file_data.len() {
+        if i + log_start_marker.len() <= file_data.len()
+            && &file_data[i..i + log_start_marker.len()] == log_start_marker
+        {
+            log_positions.push(i);
+        }
+    }
+
+    if log_positions.is_empty() {
+        return Err(anyhow::anyhow!("No blackbox log headers found in file"));
+    }
+
+    if debug {
+        println!("Found {} log(s) in file", log_positions.len());
+    }
+
+    let mut processed_logs = 0;
+
+    for (log_index, &start_pos) in log_positions.iter().enumerate() {
+        if debug {
+            println!(
+                "Processing log {} starting at position {}",
+                log_index + 1,
+                start_pos
+            );
+        }
+
+        // Determine end position (start of next log or end of file)
+        let end_pos = log_positions
+            .get(log_index + 1)
+            .copied()
+            .unwrap_or(file_data.len());
+        let log_data = &file_data[start_pos..end_pos];
+
+        // Parse this individual log
+        let log = parse_single_log(
+            log_data,
+            log_index + 1,
+            log_positions.len(),
+            debug,
+            export_csv,
+        )?;
+
+        // Display log info immediately
+        display_log_info(&log);
+
+        // Export CSV immediately while data is hot in cache
+        if export_csv {
+            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, debug) {
+                let filename = file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                eprintln!(
+                    "Warning: Failed to export CSV for {filename} log {}: {e}",
+                    log_index + 1
+                );
+            }
+        }
+
+        processed_logs += 1;
+
+        // Log goes out of scope here, memory is freed immediately
+    }
+
+    Ok(processed_logs)
 }
