@@ -929,16 +929,12 @@ fn export_logs_to_csv(
         // Export plaintext headers to separate CSV
         let header_csv_path = output_dir.join(format!("{base_name}{log_suffix}.headers.csv"));
         export_headers_to_csv(&log.header, &header_csv_path, debug)?;
-        if debug {
-            println!("Exported plaintext headers to: {header_csv_path:?}");
-        }
+        println!("Exported headers to: {}", header_csv_path.display());
 
         // Export flight data (I, P, S, G frames) to main CSV
         let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
         export_flight_data_to_csv(log, &flight_csv_path, debug)?;
-        if debug {
-            println!("Exported flight data to: {flight_csv_path:?}");
-        }
+        println!("Exported flight data to: {}", flight_csv_path.display());
     }
 
     Ok(())
