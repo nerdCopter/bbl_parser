@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -1469,6 +1470,7 @@ fn parse_frames(
                 // Show progress for large files
                 if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
+                    std::io::stdout().flush().unwrap_or_default();
                 }
 
                 // Store only a few sample frames for display purposes
@@ -2228,6 +2230,11 @@ fn parse_bbl_file_streaming(
         }
 
         processed_logs += 1;
+
+        // Add separator between logs for clarity
+        if log_index + 1 < log_positions.len() {
+            println!();
+        }
 
         // Log goes out of scope here, memory is freed immediately
     }
