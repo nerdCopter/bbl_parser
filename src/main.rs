@@ -1133,7 +1133,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             } else if csv_name == "energyCumulative (mAh)" {
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
             } else if csv_name.ends_with(" (flags)") {
-                // Handle flag fields - output raw numeric values like blackbox_decode.c
+                // Handle flag fields - output text values like blackbox_decode.c 
                 let raw_value = frame
                     .data
                     .get(lookup_name)
@@ -1141,8 +1141,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
 
-                // blackbox_decode.c outputs raw numeric values by default (not text strings)
-                write!(writer, "{raw_value}")?;
+                let formatted = if lookup_name == "flightModeFlags" {
+                    format_flight_mode_flags(raw_value)
+                } else if lookup_name == "stateFlags" {
+                    format_state_flags(raw_value)
+                } else if lookup_name == "failsafePhase" {
+                    format_failsafe_phase(raw_value)
+                } else {
+                    raw_value.to_string()
+                };
+                write!(writer, "{formatted}")?;
             } else {
                 // Regular field lookup with S-frame fallback
                 let value = frame
@@ -1959,6 +1967,54 @@ mod tests {
         assert_eq!(frame.loop_iteration, 1);
         assert_eq!(frame.data.get("time"), Some(&1000));
     }
+
+    #[test]
+    fn test_format_flight_mode_flags() {
+        // Test no flags
+        assert_eq!(format_flight_mode_flags(0), "0");
+        
+        // Test single flags
+        assert_eq!(format_flight_mode_flags(1), "ARM");                    // bit 0
+        assert_eq!(format_flight_mode_flags(2), "ANGLE_MODE");             // bit 1
+        assert_eq!(format_flight_mode_flags(4), "HORIZON_MODE");           // bit 2
+        
+        // Test multiple flags (like blackbox_decode.c output)
+        assert_eq!(format_flight_mode_flags(3), "ARM|ANGLE_MODE");         // bits 0+1
+        assert_eq!(format_flight_mode_flags(6), "ANGLE_MODE|HORIZON_MODE"); // bits 1+2
+        assert_eq!(format_flight_mode_flags(7), "ARM|ANGLE_MODE|HORIZON_MODE"); // bits 0+1+2
+        
+        // Test high-order flags
+        assert_eq!(format_flight_mode_flags(1 << 26), "FAILSAFE");         // bit 26
+        assert_eq!(format_flight_mode_flags(1 << 27), "AIRMODE");          // bit 27
+    }
+
+    #[test]
+    fn test_format_state_flags() {
+        // Test no flags
+        assert_eq!(format_state_flags(0), "0");
+        
+        // Test single flags
+        assert_eq!(format_state_flags(1), "GPS_FIX_HOME");                 // bit 0
+        assert_eq!(format_state_flags(2), "GPS_FIX");                      // bit 1
+        assert_eq!(format_state_flags(4), "CALIBRATE_MAG");                // bit 2
+        
+        // Test multiple flags 
+        assert_eq!(format_state_flags(3), "GPS_FIX_HOME|GPS_FIX");         // bits 0+1
+        assert_eq!(format_state_flags(7), "GPS_FIX_HOME|GPS_FIX|CALIBRATE_MAG"); // bits 0+1+2
+    }
+
+    #[test]
+    fn test_format_failsafe_phase() {
+        // Test known phases
+        assert_eq!(format_failsafe_phase(0), "IDLE");
+        assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED");
+        assert_eq!(format_failsafe_phase(2), "LANDING");
+        assert_eq!(format_failsafe_phase(3), "LANDED");
+        
+        // Test unknown phases (should return numeric string)
+        assert_eq!(format_failsafe_phase(99), "99");
+        assert_eq!(format_failsafe_phase(-1), "-1");
+    }
 }
 fn parse_bbl_file_streaming(
     file_path: &Path,
@@ -2054,4 +2110,158 @@ fn parse_bbl_file_streaming(
     }
 
     Ok(processed_logs)
+}
+
+fn format_flight_mode_flags(flags: i32) -> String {
+    let mut modes = Vec::new();
+
+    // Based on Betaflight flight mode flags - matches blackbox_decode.c exactly
+    // Returns ALL active flags separated by pipes, like "ANGLE_MODE|HORIZON_MODE"
+    if (flags & (1 << 0)) != 0 {
+        modes.push("ARM");
+    }
+    if (flags & (1 << 1)) != 0 {
+        modes.push("ANGLE_MODE");
+    }
+    if (flags & (1 << 2)) != 0 {
+        modes.push("HORIZON_MODE");
+    }
+    if (flags & (1 << 3)) != 0 {
+        modes.push("BARO");
+    }
+    if (flags & (1 << 4)) != 0 {
+        modes.push("ANTI_GRAVITY");
+    }
+    if (flags & (1 << 5)) != 0 {
+        modes.push("HEADFREE");
+    }
+    if (flags & (1 << 6)) != 0 {
+        modes.push("HEAD_ADJ");
+    }
+    if (flags & (1 << 7)) != 0 {
+        modes.push("CAMSTAB");
+    }
+    if (flags & (1 << 8)) != 0 {
+        modes.push("CAMTRIG");
+    }
+    if (flags & (1 << 9)) != 0 {
+        modes.push("GPSHOME");
+    }
+    if (flags & (1 << 10)) != 0 {
+        modes.push("GPSHOLD");
+    }
+    if (flags & (1 << 11)) != 0 {
+        modes.push("PASSTHRU");
+    }
+    if (flags & (1 << 12)) != 0 {
+        modes.push("BEEPER");
+    }
+    if (flags & (1 << 13)) != 0 {
+        modes.push("LEDMAX");
+    }
+    if (flags & (1 << 14)) != 0 {
+        modes.push("LEDLOW");
+    }
+    if (flags & (1 << 15)) != 0 {
+        modes.push("LLIGHTS");
+    }
+    if (flags & (1 << 16)) != 0 {
+        modes.push("CALIB");
+    }
+    if (flags & (1 << 17)) != 0 {
+        modes.push("GOV");
+    }
+    if (flags & (1 << 18)) != 0 {
+        modes.push("OSD");
+    }
+       if (flags & (1 << 19)) != 0 {
+        modes.push("TELEMETRY");
+    }
+    if (flags & (1 << 20)) != 0 {
+        modes.push("GTUNE");
+    }
+    if (flags & (1 << 21)) != 0 {
+        modes.push("SONAR");
+    }
+    if (flags & (1 << 22)) != 0 {
+        modes.push("SERVO1");
+    }
+    if (flags & (1 << 23)) != 0 {
+        modes.push("SERVO2");
+    }
+    if (flags & (1 << 24)) != 0 {
+        modes.push("SERVO3");
+    }
+    if (flags & (1 << 25)) != 0 {
+        modes.push("BLACKBOX");
+    }
+    if (flags & (1 << 26)) != 0 {
+        modes.push("FAILSAFE");
+    }
+    if (flags & (1 << 27)) != 0 {
+        modes.push("AIRMODE");
+    }
+
+    if modes.is_empty() {
+        "0".to_string()
+    } else {
+        modes.join("|") // Use pipe separator to match blackbox_decode.c exactly
+    }
+}
+
+fn format_state_flags(flags: i32) -> String {
+    let mut states = Vec::new();
+
+    // Based on Betaflight state flags - matches blackbox_decode.c exactly
+    // Returns ALL active flags separated by pipes, like "GPS_FIX_HOME|GPS_FIX"
+    if (flags & (1 << 0)) != 0 {
+        states.push("GPS_FIX_HOME");
+    }
+    if (flags & (1 << 1)) != 0 {
+        states.push("GPS_FIX");
+    }
+    if (flags & (1 << 2)) != 0 {
+        states.push("CALIBRATE_MAG");
+    }
+    if (flags & (1 << 3)) != 0 {
+        states.push("SMALL_ANGLE");
+    }
+    if (flags & (1 << 4)) != 0 {
+        states.push("FIXED_WING");
+    }
+    if (flags & (1 << 5)) != 0 {
+        states.push("ANTI_WINDUP");
+    }
+    if (flags & (1 << 6)) != 0 {
+        states.push("FLAPERON_AVAILABLE");
+    }
+    if (flags & (1 << 7)) != 0 {
+        states.push("NAV_MOTOR_STOP_OR_IDLE");
+    }
+    if (flags & (1 << 8)) != 0 {
+        states.push("COMPASS_CALIBRATED");
+    }
+    if (flags & (1 << 9)) != 0 {
+        states.push("ACCELEROMETER_CALIBRATED");
+    }
+    if (flags & (1 << 10)) != 0 {
+        states.push("PWM_DRIVER_AVAILABLE");
+    }
+
+    if states.is_empty() {
+        "0".to_string()
+    } else {
+        states.join("|") // Use pipe separator to match blackbox_decode.c exactly
+    }
+}
+
+fn format_failsafe_phase(phase: i32) -> String {
+    // Match blackbox_decode.c failsafe phase names exactly
+    match phase {
+        0 => "IDLE".to_string(),
+        1 => "RX_LOSS_DETECTED".to_string(),
+        2 => "LANDING".to_string(),
+        3 => "LANDED".to_string(),
+        _ => phase.to_string(),
+    }
 }
