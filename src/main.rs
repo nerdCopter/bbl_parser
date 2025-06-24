@@ -87,6 +87,8 @@ struct BBLHeader {
     h_frame_def: FrameDefinition,
     sysconfig: HashMap<String, i32>,
     all_headers: Vec<String>,
+    // Performance: Pre-computed field index mapping for fast array access (like C reference)
+    field_indices: HashMap<String, usize>,
 }
 
 #[derive(Debug, Default)]
@@ -109,8 +111,9 @@ struct FrameStats {
 struct DecodedFrame {
     frame_type: char,
     timestamp_us: u64,
+    #[allow(dead_code)] // Used in CSV export via field access
     loop_iteration: u32,
-    data: HashMap<String, i32>,
+    data: Vec<i32>, // Indexed array for performance (like C reference blackbox_decode)
 }
 
 #[derive(Debug)]
@@ -156,10 +159,10 @@ struct CsvFieldMap {
 impl CsvFieldMap {
     fn new(header: &BBLHeader) -> Self {
         let mut field_name_to_lookup = Vec::new();
-        
+
         // Build optimized field mappings from all frame types
         let mut csv_field_names = Vec::new();
-        
+
         // I frame fields
         for field_name in &header.i_frame_def.field_names {
             let trimmed = field_name.trim();
@@ -172,41 +175,48 @@ impl CsvFieldMap {
             } else {
                 trimmed.to_string()
             };
-            
+
             field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
             csv_field_names.push(csv_name);
         }
-        
+
         // S frame fields
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
-            if trimmed == "time" { continue; } // Skip duplicate
-            
+            if trimmed == "time" {
+                continue;
+            } // Skip duplicate
+
             let csv_name = if trimmed.contains("Flag") || trimmed == "failsafePhase" {
                 format!("{trimmed} (flags)")
             } else {
                 trimmed.to_string()
             };
-            
+
             field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
             csv_field_names.push(csv_name);
         }
-        
+
         // G frame fields (skip duplicate time)
         for field_name in &header.g_frame_def.field_names {
             let trimmed = field_name.trim();
-            if trimmed == "time" { continue; } // Skip duplicate
-            
+            if trimmed == "time" {
+                continue;
+            } // Skip duplicate
+
             field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
             csv_field_names.push(trimmed.to_string());
         }
-        
+
         // Add computed fields
-        if field_name_to_lookup.iter().any(|(_, lookup)| lookup == "amperageLatest") {
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
             field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
             csv_field_names.push("energyCumulative (mAh)".to_string());
         }
-        
+
         Self {
             field_name_to_lookup,
         }
@@ -440,7 +450,13 @@ fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec
         let log_data = &file_data[start_pos..end_pos];
 
         // Parse this individual log
-        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug, csv_export)?;
+        let log = parse_single_log(
+            log_data,
+            log_index + 1,
+            log_positions.len(),
+            debug,
+            csv_export,
+        )?;
         logs.push(log);
     }
 
@@ -672,6 +688,34 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         println!("Data version: {data_version}, Looptime: {looptime}");
     }
 
+    // Build field index mapping for performance (like C reference implementation)
+    let mut field_indices = HashMap::new();
+    let mut index = 0;
+
+    // Map I frame fields first (main flight loop data)
+    for field_name in &i_frame_def.field_names {
+        field_indices.insert(field_name.trim().to_string(), index);
+        index += 1;
+    }
+
+    // Map S frame fields (continue indexing, skip duplicates)
+    for field_name in &s_frame_def.field_names {
+        let trimmed = field_name.trim();
+        if !field_indices.contains_key(trimmed) {
+            field_indices.insert(trimmed.to_string(), index);
+            index += 1;
+        }
+    }
+
+    // Map G frame fields (continue indexing, skip duplicates)
+    for field_name in &g_frame_def.field_names {
+        let trimmed = field_name.trim();
+        if !field_indices.contains_key(trimmed) {
+            field_indices.insert(trimmed.to_string(), index);
+            index += 1;
+        }
+    }
+
     Ok(BBLHeader {
         firmware_revision,
         board_info,
@@ -685,6 +729,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         h_frame_def,
         sysconfig,
         all_headers,
+        field_indices,
     })
 }
 
@@ -699,105 +744,31 @@ fn display_frame_data(logs: &[BBLLog]) {
                 }
 
                 println!("\n{}-frame data ({} frames):", frame_type, frames.len());
+                println!("  Debug display optimized for indexed arrays - showing first 3 fields from first frame");
 
-                // Get field names from first frame
                 if let Some(first_frame) = frames.first() {
-                    let mut field_names: Vec<&String> = first_frame.data.keys().collect();
-                    field_names.sort();
-
-                    // Limit field display width to prevent extremely wide output
-                    let max_fields_to_show = 10;
-                    let selected_fields = if field_names.len() > max_fields_to_show {
-                        // Show time, loop, and first 8 field names
-                        let mut selected = Vec::new();
-                        for name in &field_names {
-                            if name.as_str() == "time" || name.as_str() == "loopIteration" {
-                                continue; // These will be shown separately
-                            }
-                            if selected.len() < 8 {
-                                selected.push(*name);
-                            }
-                        }
-                        selected
-                    } else {
-                        field_names
-                            .iter()
-                            .filter(|name| {
-                                name.as_str() != "time" && name.as_str() != "loopIteration"
-                            })
-                            .copied()
-                            .collect()
+                    // Get frame definition for this frame type
+                    let frame_def = match *frame_type {
+                        'I' => &log.header.i_frame_def,
+                        'P' => &log.header.p_frame_def,
+                        'S' => &log.header.s_frame_def,
+                        'G' => &log.header.g_frame_def,
+                        'H' => &log.header.h_frame_def,
+                        _ => continue,
                     };
 
-                    // Print header
-                    print!("  {:>8} {:>12} {:>8}", "Index", "Time(μs)", "Loop");
-                    for field_name in &selected_fields {
-                        print!(
-                            " {:>10}",
-                            if field_name.len() > 10 {
-                                &field_name[..10]
-                            } else {
-                                field_name
-                            }
-                        );
+                    // Show first few fields with their values
+                    for (i, field_name) in frame_def.field_names.iter().enumerate().take(3) {
+                        if let Some(value) = first_frame.data.get(i) {
+                            println!("    {}: {}", field_name.trim(), value);
+                        }
                     }
-                    if field_names.len() > max_fields_to_show {
-                        print!(
-                            " ... ({} more fields)",
-                            field_names.len() - selected_fields.len() - 2
+
+                    if frame_def.field_names.len() > 3 {
+                        println!(
+                            "    ... and {} more fields",
+                            frame_def.field_names.len() - 3
                         );
-                    }
-                    println!();
-
-                    // Determine which frames to show
-                    let frames_to_show = if frames.len() <= 30 {
-                        // Show all frames
-                        (0..frames.len()).collect::<Vec<_>>()
-                    } else {
-                        // Show first 5, middle 5, last 5
-                        let mut indices = Vec::new();
-                        // First 5
-                        indices.extend(0..5);
-                        // Middle 5
-                        let mid = frames.len() / 2;
-                        indices.extend((mid - 2)..(mid + 3));
-                        // Last 5
-                        indices.extend((frames.len() - 5)..frames.len());
-                        indices
-                    };
-
-                    let mut last_shown_index = None;
-                    for &index in &frames_to_show {
-                        // Show ellipsis if there's a gap
-                        if let Some(last_idx) = last_shown_index {
-                            if index > last_idx + 1 {
-                                println!(
-                                    "  {:>8} {:>12} {:>8} ... ({} frames skipped)",
-                                    "...",
-                                    "...",
-                                    "...",
-                                    index - last_idx - 1
-                                );
-                            }
-                        }
-
-                        let frame = &frames[index];
-                        print!(
-                            "  {:>8} {:>12} {:>8}",
-                            index, frame.timestamp_us, frame.loop_iteration
-                        );
-
-                        for field_name in &selected_fields {
-                            let value = frame.data.get(*field_name).copied().unwrap_or(0);
-                            print!(" {value:>10}");
-                        }
-
-                        if field_names.len() > max_fields_to_show {
-                            print!(" ...");
-                        }
-                        println!();
-
-                        last_shown_index = Some(index);
                     }
                 }
             }
@@ -992,7 +963,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     // Build optimized field mapping (like C reference - pre-computed, no string matching per frame)
     let csv_map = CsvFieldMap::new(&log.header);
-    let field_names: Vec<String> = csv_map.field_name_to_lookup.iter().map(|(csv_name, _)| csv_name.clone()).collect();
+    let field_names: Vec<String> = csv_map
+        .field_name_to_lookup
+        .iter()
+        .map(|(csv_name, _)| csv_name.clone())
+        .collect();
 
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
@@ -1035,18 +1010,21 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Optimized CSV writing with pre-computed mappings (like C reference)
     let mut cumulative_energy_mah = 0f32;
     let mut last_timestamp_us = 0u64;
-    let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
+    let mut latest_s_frame_data: Vec<i32> = vec![0; log.header.field_indices.len()];
 
     for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
-            for (key, value) in &frame.data {
-                latest_s_frame_data.insert(key.clone(), *value);
+            // Copy S-frame data to latest storage (indexed approach)
+            for (i, value) in frame.data.iter().enumerate() {
+                if i < latest_s_frame_data.len() {
+                    latest_s_frame_data[i] = *value;
+                }
             }
         }
 
         // Calculate energyCumulative for this frame
-        if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
+        if let Some(current_raw) = frame.get_field("amperageLatest", &log.header) {
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
                 let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
                 let current_amps = convert_amperage_to_amps(current_raw);
@@ -1061,31 +1039,41 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, ", ")?;
             }
 
-            // Fast path for special fields using pre-computed indices
+            // Fast path for special fields using optimized indexed access
             if csv_name == "time (us)" {
                 write!(writer, "{}", *timestamp as i32)?;
             } else if csv_name == "loopIteration" {
-                let value = frame.data.get("loopIteration").copied().unwrap_or(output_iteration as i32);
+                let value = frame.get_field_or_default(
+                    "loopIteration",
+                    &log.header,
+                    output_iteration as i32,
+                );
                 write!(writer, "{value:4}")?;
             } else if csv_name == "vbatLatest (V)" {
-                let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
+                let raw_value = frame.get_field_or_default("vbatLatest", &log.header, 0);
                 write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
             } else if csv_name == "amperageLatest (A)" {
-                let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
+                let raw_value = frame.get_field_or_default("amperageLatest", &log.header, 0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
             } else if csv_name == "energyCumulative (mAh)" {
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
             } else if csv_name.ends_with(" (flags)") {
-                // Handle flag fields with optimized lookup
-                let raw_value = frame.data.get(lookup_name)
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
+                // Handle flag fields with optimized indexed lookup
+                let raw_value = frame
+                    .get_field(lookup_name, &log.header)
+                    .or_else(|| {
+                        log.header
+                            .field_indices
+                            .get(lookup_name)
+                            .and_then(|&index| latest_s_frame_data.get(index))
+                            .copied()
+                    })
                     .unwrap_or(0);
-                
+
                 let formatted = if lookup_name == "flightModeFlags" {
                     format_flight_mode_flags(raw_value)
                 } else if lookup_name == "stateFlags" {
-                    format_state_flags(raw_value) 
+                    format_state_flags(raw_value)
                 } else if lookup_name == "failsafePhase" {
                     format_failsafe_phase(raw_value)
                 } else {
@@ -1093,10 +1081,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 };
                 write!(writer, "{formatted}")?;
             } else {
-                // Regular field lookup with S-frame fallback
-                let value = frame.data.get(lookup_name)
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
+                // Regular field lookup with S-frame fallback using indexed access
+                let value = frame
+                    .get_field(lookup_name, &log.header)
+                    .or_else(|| {
+                        log.header
+                            .field_indices
+                            .get(lookup_name)
+                            .and_then(|&index| latest_s_frame_data.get(index))
+                            .copied()
+                    })
                     .unwrap_or(0);
                 write!(writer, "{value:4}")?;
             }
@@ -1104,10 +1098,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         writeln!(writer)?;
     }
 
-    writer.flush().with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
 
     if debug {
-        println!("Exported {} data rows with {} fields (optimized)", all_frames.len(), field_names.len());
+        println!(
+            "Exported {} data rows with {} fields (optimized)",
+            all_frames.len(),
+            field_names.len()
+        );
     }
 
     Ok(())
@@ -1119,7 +1119,12 @@ type ParseFramesResult = Result<(
     Option<HashMap<char, Vec<DecodedFrame>>>,
 )>;
 
-fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool, csv_export: bool) -> ParseFramesResult {
+fn parse_frames(
+    binary_data: &[u8],
+    header: &BBLHeader,
+    debug: bool,
+    csv_export: bool,
+) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
@@ -1431,7 +1436,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool, csv_export:
                         frame_type,
                         timestamp_us: final_timestamp,
                         loop_iteration,
-                        data: frame_data.clone(),
+                        data: hashmap_to_indexed_vec(&frame_data, header),
                     };
                     sample_frames.push(decoded_frame.clone());
 
@@ -1471,7 +1476,7 @@ fn parse_frames(binary_data: &[u8], header: &BBLHeader, debug: bool, csv_export:
                         frame_type,
                         timestamp_us: final_timestamp,
                         loop_iteration,
-                        data: frame_data.clone(),
+                        data: hashmap_to_indexed_vec(&frame_data, header),
                     };
                     debug_frame_list.push(decoded_frame);
                 }
@@ -2037,6 +2042,7 @@ mod tests {
             h_frame_def: FrameDefinition::new(),
             sysconfig: HashMap::new(),
             all_headers: Vec::new(),
+            field_indices: HashMap::new(),
         };
 
         assert_eq!(header.firmware_revision, "4.5.0");
@@ -2048,20 +2054,68 @@ mod tests {
 
     #[test]
     fn test_decoded_frame_creation() {
-        let mut data = HashMap::new();
-        data.insert("time".to_string(), 1000);
-        data.insert("loopIteration".to_string(), 1);
+        let mut field_indices = HashMap::new();
+        field_indices.insert("time".to_string(), 0);
+        field_indices.insert("loopIteration".to_string(), 1);
+
+        let header = BBLHeader {
+            firmware_revision: "Test".to_string(),
+            board_info: "Test".to_string(),
+            craft_name: "Test".to_string(),
+            data_version: 2,
+            looptime: 1000,
+            i_frame_def: FrameDefinition::from_field_names(vec![
+                "time".to_string(),
+                "loopIteration".to_string(),
+            ]),
+            p_frame_def: FrameDefinition::new(),
+            s_frame_def: FrameDefinition::new(),
+            g_frame_def: FrameDefinition::new(),
+            h_frame_def: FrameDefinition::new(),
+            sysconfig: HashMap::new(),
+            all_headers: vec![],
+            field_indices,
+        };
 
         let frame = DecodedFrame {
             frame_type: 'I',
             timestamp_us: 1000,
             loop_iteration: 1,
-            data,
+            data: vec![1000, 1], // indexed data: [time=1000, loopIteration=1]
         };
 
         assert_eq!(frame.frame_type, 'I');
         assert_eq!(frame.timestamp_us, 1000);
         assert_eq!(frame.loop_iteration, 1);
-        assert_eq!(frame.data.get("time"), Some(&1000));
+        assert_eq!(frame.get_field("time", &header), Some(1000));
+        assert_eq!(frame.get_field("loopIteration", &header), Some(1));
     }
+}
+
+// Performance helper functions for indexed frame data access (like C reference)
+impl DecodedFrame {
+    fn get_field(&self, field_name: &str, header: &BBLHeader) -> Option<i32> {
+        header
+            .field_indices
+            .get(field_name)
+            .and_then(|&index| self.data.get(index))
+            .copied()
+    }
+
+    fn get_field_or_default(&self, field_name: &str, header: &BBLHeader, default: i32) -> i32 {
+        self.get_field(field_name, header).unwrap_or(default)
+    }
+}
+
+// Convert HashMap frame data to indexed Vec for performance (like C reference)
+fn hashmap_to_indexed_vec(frame_data: &HashMap<String, i32>, header: &BBLHeader) -> Vec<i32> {
+    let mut indexed_data = vec![0; header.field_indices.len()];
+    for (field_name, value) in frame_data {
+        if let Some(&index) = header.field_indices.get(field_name) {
+            if index < indexed_data.len() {
+                indexed_data[index] = *value;
+            }
+        }
+    }
+    indexed_data
 }
