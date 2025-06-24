@@ -196,16 +196,8 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
-        // G frame fields (skip duplicate time)
-        for field_name in &header.g_frame_def.field_names {
-            let trimmed = field_name.trim();
-            if trimmed == "time" {
-                continue;
-            } // Skip duplicate
-
-            field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
-            csv_field_names.push(trimmed.to_string());
-        }
+        // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
+        // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
 
         // Add computed fields
         if field_name_to_lookup
