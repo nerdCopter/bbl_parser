@@ -1926,7 +1926,7 @@ fn format_flight_mode_flags(flags: i32) -> String {
     if modes.is_empty() {
         "0".to_string()
     } else {
-        modes.join(", ")
+        modes.join("|") // Use pipe separator instead of comma to avoid CSV field confusion
     }
 }
 
@@ -1971,7 +1971,7 @@ fn format_state_flags(flags: i32) -> String {
     if states.is_empty() {
         "0".to_string()
     } else {
-        states.join(", ")
+        states.join("|") // Use pipe separator instead of comma to avoid CSV field confusion
     }
 }
 
