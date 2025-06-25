@@ -170,15 +170,8 @@ impl CsvFieldMap {
         // I frame fields
         for field_name in &header.i_frame_def.field_names {
             let trimmed = field_name.trim();
-            let csv_name = if trimmed == "time" {
-                "time (us)".to_string()
-            } else if trimmed == "vbatLatest" {
-                "vbatLatest (V)".to_string()
-            } else if trimmed == "amperageLatest" {
-                "amperageLatest (A)".to_string()
-            } else {
-                trimmed.to_string()
-            };
+            // Use exact field names to match blackbox_decode CSV output
+            let csv_name = trimmed.to_string();
 
             field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
             csv_field_names.push(csv_name);
@@ -201,10 +194,50 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
-        // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
+        // G frame fields - include to match blackbox_decode output
+        for field_name in &header.g_frame_def.field_names {
+            let trimmed = field_name.trim();
+            if trimmed == "time" {
+                continue; // Skip duplicate
+            }
+            
+            // GPS fields with descriptive units
+            let csv_name = if trimmed == "GPS_numSat" {
+                "GPS_numSat (satellites)".to_string()
+            } else if trimmed == "GPS_coord[0]" {
+                "GPS_latitude (degrees)".to_string()
+            } else if trimmed == "GPS_coord[1]" {
+                "GPS_longitude (degrees)".to_string()
+            } else if trimmed == "GPS_altitude" {
+                "GPS_altitude (m)".to_string()
+            } else if trimmed == "GPS_speed" {
+                "GPS_speed (cm/s)".to_string()
+            } else if trimmed == "GPS_ground_course" {
+                "GPS_ground_course (degrees)".to_string()
+            } else {
+                trimmed.to_string()
+            };
+
+            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            csv_field_names.push(csv_name);
+        }
+
+        // H frame fields - include to match blackbox_decode output  
+        for field_name in &header.h_frame_def.field_names {
+            let trimmed = field_name.trim();
+            if trimmed == "time" {
+                continue; // Skip duplicate
+            }
+            
+            field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
+            csv_field_names.push(trimmed.to_string());
+        }
+
         // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
 
-        // Add computed fields
+        // TODO: Add computed fields only when specifically requested
+        // For blackbox_decode compatibility, exclude computed fields by default
+        /*
         if field_name_to_lookup
             .iter()
             .any(|(_, lookup)| lookup == "amperageLatest")
@@ -212,6 +245,7 @@ impl CsvFieldMap {
             field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
             csv_field_names.push("energyCumulative (mAh)".to_string());
         }
+        */
 
         Self {
             field_name_to_lookup,
@@ -911,6 +945,20 @@ fn display_log_info(log: &BBLLog, debug: bool) {
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
         let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
         println!("Duration   {duration_ms:6} ms");
+        
+        // Calculate frame rates for blackbox_decode comparison
+        if debug {
+            let duration_s = duration_ms as f64 / 1000.0;
+            let main_frames = stats.i_frames + stats.p_frames;
+            if duration_s > 0.0 && main_frames > 0 {
+                let main_rate = main_frames as f64 / duration_s;
+                println!("Main frame rate: {:.1} Hz (I+P frames)", main_rate);
+            }
+            if stats.s_frames > 0 && duration_s > 0.0 {
+                let s_rate = stats.s_frames as f64 / duration_s;
+                println!("S frame rate: {:.1} Hz", s_rate);
+            }
+        }
     }
 
     // Display data version and missing iterations
@@ -1114,11 +1162,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     writeln!(writer)?;
 
     // Optimized CSV writing with pre-computed mappings (like C reference)
-    let mut cumulative_energy_mah = 0f32;
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
-    for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
+    for (_output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
             for (key, value) in &frame.data {
@@ -1126,13 +1173,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             }
         }
 
-        // Calculate energyCumulative for this frame
-        if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
-            if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
-                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
-                let current_amps = convert_amperage_to_amps(current_raw);
-                cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
-            }
+        // Update last timestamp for timing calculations
+        if *timestamp > last_timestamp_us {
             last_timestamp_us = *timestamp;
         }
 
@@ -1143,23 +1185,25 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             }
 
             // Fast path for special fields using pre-computed indices
-            if csv_name == "time (us)" {
-                write!(writer, "{}", *timestamp as i32)?;
+            if csv_name == "time" {
+                // Output full timestamp precision for blackbox_decode compatibility
+                write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
+                // Use actual loop iteration from frame data, not output iteration
                 let value = frame
                     .data
                     .get("loopIteration")
                     .copied()
-                    .unwrap_or(output_iteration as i32);
-                write!(writer, "{value:4}")?;
-            } else if csv_name == "vbatLatest (V)" {
+                    .unwrap_or(0); // Use 0 as fallback to match blackbox_decode behavior
+                write!(writer, "{value}")?;
+            } else if csv_name == "vbatLatest" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
-            } else if csv_name == "amperageLatest (A)" {
+                // Output raw value to match blackbox_decode exactly
+                write!(writer, "{}", raw_value)?;
+            } else if csv_name == "amperageLatest" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
-            } else if csv_name == "energyCumulative (mAh)" {
-                write!(writer, "{:5}", cumulative_energy_mah as i32)?;
+                // Output raw value to match blackbox_decode exactly  
+                write!(writer, "{}", raw_value)?;
             } else if csv_name.ends_with(" (flags)") {
                 // Handle flag fields - output text values like blackbox_decode.c
                 let raw_value = frame
@@ -1187,7 +1231,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .copied()
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
-                write!(writer, "{value:4}")?;
+                write!(writer, "{value}")?; // Raw value output to match blackbox_decode
             }
         }
         writeln!(writer)?;
@@ -1199,10 +1243,25 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     if debug {
         println!(
-            "Exported {} data rows with {} fields (optimized)",
+            "Exported {} data rows with {} fields to CSV",
             all_frames.len(),
             field_names.len()
         );
+        
+        // Analyze data density for blackbox_decode comparison
+        let main_frames = all_frames.iter().filter(|(_, frame_type, _)| *frame_type == 'I' || *frame_type == 'P').count();
+        let s_frames = all_frames.iter().filter(|(_, frame_type, _)| *frame_type == 'S').count();
+        println!("CSV composition: {} main frames (I+P), {} S frames", main_frames, s_frames);
+        
+        if let Some((start_time, _, _)) = all_frames.first() {
+            if let Some((end_time, _, _)) = all_frames.last() {
+                let duration_s = (*end_time as f64 - *start_time as f64) / 1_000_000.0;
+                if duration_s > 0.0 {
+                    let csv_rate = all_frames.len() as f64 / duration_s;
+                    println!("CSV data rate: {:.1} rows/second", csv_rate);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1965,11 +2024,13 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
 }
 
 // Unit conversion functions
+#[allow(dead_code)]
 fn convert_vbat_to_volts(raw_value: i32) -> f32 {
     // Betaflight already does the ADC conversion to 0.1V units
     raw_value as f32 / 10.0
 }
 
+#[allow(dead_code)]
 fn convert_amperage_to_amps(raw_value: i32) -> f32 {
     // Betaflight already does the ADC conversion to 0.01A units
     raw_value as f32 / 100.0
