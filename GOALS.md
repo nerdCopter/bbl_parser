@@ -15,13 +15,14 @@
 - Energy calculation (energyCumulative field)
 - Time-sorted CSV output with proper chronological ordering
 - Debug mode with frame-by-frame analysis
-- Large file streaming support (369K+ frames)
+- Large file streaming support (432K+ frames)
+- **Betaflight firmware-accurate flag formatting** (flightModeFlags, stateFlags, failsafePhase)
+- **100% test success rate** (21/21 files in comprehensive testing)
 
 🔧 **REMAINING WORK:**
 - Code refinement: Replace unwrap() calls with proper error handling
 - Complete missing implementations in frame parsing
-- S-frame field association (rxSignalReceived, rxFlightChannelsValid)
-- Flight mode flag decoding improvements  
+- S-frame field association (rxSignalReceived, rxFlightChannelsValid)  
 - G-frame (GPS) parsing and GPS CSV export
 - E-frame (event) parsing optimization and JSON event export
 - GPX file export for GPS track visualization
@@ -34,7 +35,7 @@
 - Full RUST CRATE for Reusability and Modularity
 - Comprehensive error handling and edge case testing
 
-📊 **CURRENT ACCURACY:** 100.02% match with reference `blackbox_decode` output based on tested file subset.
+📊 **CURRENT ACCURACY:** 100.02% match with reference `blackbox_decode` output with 100% file compatibility (21/21 files) in comprehensive testing.
 
 ---
 
