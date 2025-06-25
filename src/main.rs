@@ -194,45 +194,7 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
-        // G frame fields - include to match blackbox_decode output
-        for field_name in &header.g_frame_def.field_names {
-            let trimmed = field_name.trim();
-            if trimmed == "time" {
-                continue; // Skip duplicate
-            }
-            
-            // GPS fields with descriptive units
-            let csv_name = if trimmed == "GPS_numSat" {
-                "GPS_numSat (satellites)".to_string()
-            } else if trimmed == "GPS_coord[0]" {
-                "GPS_latitude (degrees)".to_string()
-            } else if trimmed == "GPS_coord[1]" {
-                "GPS_longitude (degrees)".to_string()
-            } else if trimmed == "GPS_altitude" {
-                "GPS_altitude (m)".to_string()
-            } else if trimmed == "GPS_speed" {
-                "GPS_speed (cm/s)".to_string()
-            } else if trimmed == "GPS_ground_course" {
-                "GPS_ground_course (degrees)".to_string()
-            } else {
-                trimmed.to_string()
-            };
-
-            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
-            csv_field_names.push(csv_name);
-        }
-
-        // H frame fields - include to match blackbox_decode output  
-        for field_name in &header.h_frame_def.field_names {
-            let trimmed = field_name.trim();
-            if trimmed == "time" {
-                continue; // Skip duplicate
-            }
-            
-            field_name_to_lookup.push((trimmed.to_string(), trimmed.to_string()));
-            csv_field_names.push(trimmed.to_string());
-        }
-
+        // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
         // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
 
         // TODO: Add computed fields only when specifically requested
@@ -937,7 +899,7 @@ fn display_log_info(log: &BBLLog, debug: bool) {
         }
         if !stats.unknown_frame_bytes.is_empty() {
             println!("Unknown frame bytes: {:?}", 
-                     stats.unknown_frame_bytes.iter().take(10).map(|b| format!("0x{:02X}", b)).collect::<Vec<_>>());
+                     stats.unknown_frame_bytes.iter().take(10).map(|b| format!("0x{b:02X}")).collect::<Vec<_>>());
         }
     }
 
@@ -952,11 +914,11 @@ fn display_log_info(log: &BBLLog, debug: bool) {
             let main_frames = stats.i_frames + stats.p_frames;
             if duration_s > 0.0 && main_frames > 0 {
                 let main_rate = main_frames as f64 / duration_s;
-                println!("Main frame rate: {:.1} Hz (I+P frames)", main_rate);
+                println!("Main frame rate: {main_rate:.1} Hz (I+P frames)");
             }
             if stats.s_frames > 0 && duration_s > 0.0 {
                 let s_rate = stats.s_frames as f64 / duration_s;
-                println!("S frame rate: {:.1} Hz", s_rate);
+                println!("S frame rate: {s_rate:.1} Hz");
             }
         }
     }
@@ -1165,7 +1127,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
-    for (_output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
+    for (timestamp, frame_type, frame) in all_frames.iter() {
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
             for (key, value) in &frame.data {
@@ -1199,11 +1161,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             } else if csv_name == "vbatLatest" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 // Output raw value to match blackbox_decode exactly
-                write!(writer, "{}", raw_value)?;
+                write!(writer, "{raw_value}")?;
             } else if csv_name == "amperageLatest" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 // Output raw value to match blackbox_decode exactly  
-                write!(writer, "{}", raw_value)?;
+                write!(writer, "{raw_value}")?;
             } else if csv_name.ends_with(" (flags)") {
                 // Handle flag fields - output text values like blackbox_decode.c
                 let raw_value = frame
@@ -1251,14 +1213,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // Analyze data density for blackbox_decode comparison
         let main_frames = all_frames.iter().filter(|(_, frame_type, _)| *frame_type == 'I' || *frame_type == 'P').count();
         let s_frames = all_frames.iter().filter(|(_, frame_type, _)| *frame_type == 'S').count();
-        println!("CSV composition: {} main frames (I+P), {} S frames", main_frames, s_frames);
+        println!("CSV composition: {main_frames} main frames (I+P), {s_frames} S frames");
         
         if let Some((start_time, _, _)) = all_frames.first() {
             if let Some((end_time, _, _)) = all_frames.last() {
                 let duration_s = (*end_time as f64 - *start_time as f64) / 1_000_000.0;
                 if duration_s > 0.0 {
                     let csv_rate = all_frames.len() as f64 / duration_s;
-                    println!("CSV data rate: {:.1} rows/second", csv_rate);
+                    println!("CSV data rate: {csv_rate:.1} rows/second");
                 }
             }
         }
@@ -1282,7 +1244,7 @@ fn is_frame_technically_valid(
         }
         _ => {
             if debug {
-                println!("Invalid frame type: '{}'", frame_type);
+                println!("Invalid frame type: '{frame_type}'");
             }
             return false;
         }
@@ -1643,7 +1605,7 @@ fn parse_frames(
                     if !is_frame_technically_valid(frame_type, &frame_data, header, debug) {
                         stats.frame_validation_failures += 1;
                         if debug && stats.frame_validation_failures < 5 {
-                            println!("Frame validation failed for {} frame", frame_type);
+                            println!("Frame validation failed for {frame_type} frame");
                         }
                         parsing_success = false; // Mark as failed
                         stats.failed_frames += 1;
