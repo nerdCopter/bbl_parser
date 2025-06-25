@@ -149,68 +149,66 @@ struct CsvExportOptions {
     output_dir: Option<String>,
 }
 
-// Pre-computed CSV field mapping for performance
-#[derive(Debug)]
-struct CsvFieldMap {
-    field_name_to_lookup: Vec<(String, String)>, // (csv_name, lookup_name)
+// Export filtering options for blackbox_decode compatibility
+#[derive(Debug, Clone)]
+struct FilterOptions {
+    /// When true, exports raw unfiltered data (all frames including pre-arming)
+    /// When false (default), applies blackbox_decode compatible filtering
+    raw_export: bool,
+    time_start: Option<u64>,
+    time_end: Option<u64>,
 }
 
-impl CsvFieldMap {
-    fn new(header: &BBLHeader) -> Self {
-        let mut field_name_to_lookup = Vec::new();
-
-        // Build optimized field mappings from all frame types
-        let mut csv_field_names = Vec::new();
-
-        // I frame fields
-        for field_name in &header.i_frame_def.field_names {
-            let trimmed = field_name.trim();
-            let csv_name = if trimmed == "time" {
-                "time (us)".to_string()
-            } else if trimmed == "vbatLatest" {
-                "vbatLatest (V)".to_string()
-            } else if trimmed == "amperageLatest" {
-                "amperageLatest (A)".to_string()
-            } else {
-                trimmed.to_string()
-            };
-
-            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
-            csv_field_names.push(csv_name);
-        }
-
-        // S frame fields
-        for field_name in &header.s_frame_def.field_names {
-            let trimmed = field_name.trim();
-            if trimmed == "time" {
-                continue;
-            } // Skip duplicate
-
-            let csv_name = if trimmed.contains("Flag") || trimmed == "failsafePhase" {
-                format!("{trimmed} (flags)")
-            } else {
-                trimmed.to_string()
-            };
-
-            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
-            csv_field_names.push(csv_name);
-        }
-
-        // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
-        // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
-
-        // Add computed fields
-        if field_name_to_lookup
-            .iter()
-            .any(|(_, lookup)| lookup == "amperageLatest")
-        {
-            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
-            csv_field_names.push("energyCumulative (mAh)".to_string());
-        }
-
+impl FilterOptions {
+    /// Create default options with blackbox_decode compatible filtering enabled
+    fn new() -> Self {
         Self {
-            field_name_to_lookup,
+            raw_export: false, // Default to filtered/compatible output
+            time_start: None,
+            time_end: None,
         }
+    }
+    
+    /// Create options for raw unfiltered export (full data)
+    fn raw() -> Self {
+        Self {
+            raw_export: true,
+            time_start: None,
+            time_end: None,
+        }
+    }
+    
+    fn should_filter_frame(&self, frame: &DecodedFrame, armed_state: bool) -> bool {
+        // If raw export is enabled, don't filter anything
+        if self.raw_export {
+            return false;
+        }
+        
+        // Time-based filtering
+        if let Some(start_time) = self.time_start {
+            if frame.timestamp_us < start_time {
+                return true; // Filter out
+            }
+        }
+        
+        if let Some(end_time) = self.time_end {
+            if frame.timestamp_us > end_time {
+                return true; // Filter out
+            }
+        }
+        
+        // Default blackbox_decode compatible filtering:
+        // 1. Filter out pre-arming data (first 5 seconds)
+        if frame.timestamp_us < 5_000_000 {
+            return true; // Filter out
+        }
+        
+        // 2. Filter out non-armed data (when armed state is available)
+        if !armed_state && frame.data.contains_key("flightModeFlags") {
+            return true; // Filter out
+        }
+        
+        false // Don't filter
     }
 }
 
@@ -243,12 +241,45 @@ fn main() -> Result<()> {
                 .help("Directory for CSV output files (default: same as input file)")
                 .value_name("DIR"),
         )
+        .arg(
+            Arg::new("raw")
+                .long("raw")
+                .help("Export raw unfiltered data (includes pre-arming data). Default is blackbox_decode compatible filtering.")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("time-start")
+                .long("time-start")
+                .help("Start export from specific timestamp (microseconds)")
+                .value_name("MICROSECONDS"),
+        )
+        .arg(
+            Arg::new("time-end")
+                .long("time-end") 
+                .help("End export at specific timestamp (microseconds)")
+                .value_name("MICROSECONDS"),
+        )
         .get_matches();
 
     let debug = matches.get_flag("debug");
     let export_csv = matches.get_flag("csv");
     let output_dir = matches.get_one::<String>("output-dir").cloned();
     let file_patterns: Vec<&String> = matches.get_many::<String>("files").unwrap().collect();
+
+    // Extract filtering options
+    let mut filter_options = if matches.get_flag("raw") {
+        FilterOptions::raw() // Raw unfiltered export
+    } else {
+        FilterOptions::new() // Default blackbox_decode compatible filtering
+    };
+    
+    if let Some(time_start_str) = matches.get_one::<String>("time-start") {
+        filter_options.time_start = time_start_str.parse().ok();
+    }
+    
+    if let Some(time_end_str) = matches.get_one::<String>("time-end") {
+        filter_options.time_end = time_end_str.parse().ok();
+    }
 
     let csv_options = CsvExportOptions { output_dir };
 
@@ -346,7 +377,7 @@ fn main() -> Result<()> {
             .unwrap_or("unknown");
         println!("Processing: {filename}");
 
-        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options) {
+        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options, &filter_options) {
             Ok(processed_logs) => {
                 if debug {
                     println!(
@@ -894,65 +925,76 @@ fn display_log_info(log: &BBLLog) {
     }
 }
 
-#[allow(dead_code)]
-fn export_logs_to_csv(
-    logs: &[BBLLog],
-    input_path: &Path,
-    options: &CsvExportOptions,
-    debug: bool,
-) -> Result<()> {
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("blackbox");
+// Pre-computed CSV field mapping for performance
+#[derive(Debug)]
+struct CsvFieldMap {
+    field_name_to_lookup: Vec<(String, String)>, // (csv_name, lookup_name)
+}
 
-    let output_dir = if let Some(ref dir) = options.output_dir {
-        Path::new(dir)
-    } else {
-        input_path.parent().unwrap_or(Path::new("."))
-    };
+impl CsvFieldMap {
+    fn new(header: &BBLHeader) -> Self {
+        let mut field_name_to_lookup = Vec::new();
 
-    // Create output directory if it doesn't exist
-    if !output_dir.exists() {
-        std::fs::create_dir_all(output_dir)?;
-        if debug {
-            println!("Created output directory: {output_dir:?}");
+        // Build optimized field mappings from all frame types
+        let mut csv_field_names = Vec::new();
+
+        // I frame fields
+        for field_name in &header.i_frame_def.field_names {
+            let trimmed = field_name.trim();
+            let csv_name = if trimmed == "time" {
+                "time (us)".to_string()
+            } else if trimmed == "vbatLatest" {
+                "vbatLatest (V)".to_string()
+            } else if trimmed == "amperageLatest" {
+                "amperageLatest (A)".to_string()
+            } else {
+                trimmed.to_string()
+            };
+
+            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            csv_field_names.push(csv_name);
+        }
+
+        // S frame fields
+        for field_name in &header.s_frame_def.field_names {
+            let trimmed = field_name.trim();
+            if trimmed == "time" {
+                continue;
+            } // Skip duplicate
+
+            let csv_name = if trimmed.contains("Flag") || trimmed == "failsafePhase" {
+                format!("{trimmed} (flags)")
+            } else {
+                trimmed.to_string()
+            };
+
+            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            csv_field_names.push(csv_name);
+        }
+
+        // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
+        // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
+
+        // Add computed fields
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
+            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            csv_field_names.push("energyCumulative (mAh)".to_string());
+        }
+
+        Self {
+            field_name_to_lookup,
         }
     }
-
-    if debug {
-        println!(
-            "Exporting {} logs to CSV in directory: {:?}",
-            logs.len(),
-            output_dir
-        );
-    }
-
-    for log in logs {
-        let log_suffix = if logs.len() > 1 {
-            format!(".{:02}", log.log_number)
-        } else {
-            ".01".to_string()
-        };
-
-        // Export plaintext headers to separate CSV
-        let header_csv_path = output_dir.join(format!("{base_name}{log_suffix}.headers.csv"));
-        export_headers_to_csv(&log.header, &header_csv_path, debug)?;
-        println!("Exported headers to: {}", header_csv_path.display());
-
-        // Export flight data (I, P, S, G frames) to main CSV
-        let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
-        export_flight_data_to_csv(log, &flight_csv_path, debug)?;
-        println!("Exported flight data to: {}", flight_csv_path.display());
-    }
-
-    Ok(())
 }
 
 fn export_single_log_to_csv(
     log: &BBLLog,
     input_path: &Path,
     options: &CsvExportOptions,
+    filter_options: &FilterOptions,
     debug: bool,
 ) -> Result<()> {
     let base_name = input_path
@@ -987,7 +1029,7 @@ fn export_single_log_to_csv(
 
     // Export flight data (I, P, S, G frames) to main CSV
     let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
-    export_flight_data_to_csv(log, &flight_csv_path, debug)?;
+    export_flight_data_to_csv(log, &flight_csv_path, filter_options, debug)?;
     println!("Exported flight data to: {}", flight_csv_path.display());
 
     Ok(())
@@ -1031,7 +1073,7 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path, _debug: bool) -
     Ok(())
 }
 
-fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> Result<()> {
+fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, filter_options: &FilterOptions, debug: bool) -> Result<()> {
     use std::fs::File;
     use std::io::{BufWriter, Write};
 
@@ -1074,6 +1116,34 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     if all_frames.is_empty() {
         return Ok(()); // No data to export
+    }
+
+    // Apply filtering for blackbox_decode compatibility (unless raw export is requested)
+    if !filter_options.raw_export || filter_options.time_start.is_some() || filter_options.time_end.is_some() {
+        
+        let original_count = all_frames.len();
+        let mut filtered_frames = Vec::new();
+        
+        for (timestamp, frame_type, frame) in all_frames.iter() {
+            // Determine armed state from flightModeFlags
+            let armed_state = frame.data.get("flightModeFlags")
+                .map(|flags| flags & 0x01 != 0) // ARMED bit is bit 0
+                .unwrap_or(false);
+                
+            if !filter_options.should_filter_frame(frame, armed_state) {
+                filtered_frames.push((*timestamp, *frame_type, *frame));
+            }
+        }
+        
+        all_frames = filtered_frames;
+        
+        if debug && original_count > 0 {
+            println!(
+                "Applied filtering: {} frames remaining after filtering ({:.1}% of original)",
+                all_frames.len(),
+                (all_frames.len() as f32 / original_count as f32) * 100.0
+            );
+        }
     }
 
     // Write field names header
@@ -1839,6 +1909,7 @@ fn parse_bbl_file_streaming(
     debug: bool,
     export_csv: bool,
     csv_options: &CsvExportOptions,
+    filter_options: &FilterOptions,
 ) -> Result<usize> {
     if debug {
         println!("=== STREAMING BBL FILE PROCESSING ===");
@@ -1905,7 +1976,7 @@ fn parse_bbl_file_streaming(
 
         // Export CSV immediately while data is hot in cache
         if export_csv {
-            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, debug) {
+            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, filter_options, debug) {
                 let filename = file_path
                     .file_name()
                     .and_then(|n| n.to_str())
