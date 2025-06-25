@@ -67,8 +67,8 @@ fn test_csv_field_count_consistency() {
 }
 
 #[test]
-fn test_flag_fields_are_numeric() {
-    // Test that flag fields output numeric values, not text strings
+fn test_flag_fields_are_formatted() {
+    // Test that flag fields output formatted text values, not raw numeric values
     let output_dir = "/tmp/csv_flag_test";
     let input_file = "input/BTFL_BLACKBOX_LOG_20250512_021116_MAMBAF722_2022B.BBL";
 
@@ -116,44 +116,76 @@ fn test_flag_fields_are_numeric() {
 
     assert!(!flag_indices.is_empty(), "No flag fields found");
 
-    // Check first few data rows for numeric flag values
+    // Check first few data rows for formatted flag values
     for (row_num, line) in lines.iter().enumerate().skip(1).take(10) {
         let fields: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
 
         for &flag_idx in &flag_indices {
             if flag_idx < fields.len() {
                 let flag_value = fields[flag_idx];
+                let field_name = field_names[flag_idx];
 
-                // Flag should be numeric (parse as integer)
-                let is_numeric = flag_value.parse::<i32>().is_ok();
-                assert!(
-                    is_numeric,
-                    "Row {} field {} ({}) should be numeric but got: '{}'",
-                    row_num + 1,
-                    flag_idx,
-                    field_names[flag_idx],
-                    flag_value
-                );
+                // Flag should contain expected formatted values, not raw numbers
+                if field_name == "failsafePhase (flags)" {
+                    // Should contain failsafe phase names like "IDLE", "RX_LOSS_DETECTED", etc.
+                    let is_valid_failsafe = flag_value == "IDLE"
+                        || flag_value == "RX_LOSS_DETECTED"
+                        || flag_value == "LANDING"
+                        || flag_value == "LANDED"
+                        || flag_value == "RX_LOSS_MONITORING"
+                        || flag_value == "RX_LOSS_RECOVERED"
+                        || flag_value == "GPS_RESCUE"
+                        || flag_value.parse::<i32>().is_ok(); // Allow numeric fallback for unknown values
 
-                // Flag should not contain text like "ARM", "SERVO1", etc.
-                let has_text_flags = flag_value.contains("ARM")
-                    || flag_value.contains("SERVO")
-                    || flag_value.contains("IDLE")
-                    || flag_value.contains("ANGLE");
+                    assert!(
+                        is_valid_failsafe,
+                        "Row {} field {} should contain valid failsafe phase but got: '{}'",
+                        row_num + 1,
+                        field_name,
+                        flag_value
+                    );
+                } else if field_name == "flightModeFlags (flags)" {
+                    // Should contain flight mode names or "0" for no flags
+                    let is_valid_flight_mode = flag_value == "0"
+                        || flag_value.contains("ANGLE_MODE")
+                        || flag_value.contains("HORIZON_MODE")
+                        || flag_value.contains("MAG")
+                        || flag_value.contains("BARO")
+                        || flag_value.contains("GPS_HOLD")
+                        || flag_value.contains("HEADFREE")
+                        || flag_value.contains("PASSTHRU")
+                        || flag_value.contains("FAILSAFE_MODE")
+                        || flag_value.contains("GPS_RESCUE_MODE");
 
-                assert!(
-                    !has_text_flags,
-                    "Row {} field {} ({}) contains text flags: '{}'",
-                    row_num + 1,
-                    flag_idx,
-                    field_names[flag_idx],
-                    flag_value
-                );
+                    assert!(
+                        is_valid_flight_mode,
+                        "Row {} field {} should contain valid flight modes but got: '{}'",
+                        row_num + 1,
+                        field_name,
+                        flag_value
+                    );
+                } else if field_name == "stateFlags (flags)" {
+                    // Should contain state flag names or "0" for no flags
+                    let is_valid_state = flag_value == "0"
+                        || flag_value.contains("GPS_FIX_HOME")
+                        || flag_value.contains("GPS_FIX")
+                        || flag_value.contains("CALIBRATE_MAG")
+                        || flag_value.contains("SMALL_ANGLE")
+                        || flag_value.contains("FIXED_WING");
+
+                    assert!(
+                        is_valid_state,
+                        "Row {} field {} should contain valid state flags but got: '{}'",
+                        row_num + 1,
+                        field_name,
+                        flag_value
+                    );
+                }
             }
         }
     }
 
-    println!("✅ All flag fields contain numeric values (no text strings)");
+    println!("✅ All flag fields contain properly formatted text values");
 }
 
 #[test]
