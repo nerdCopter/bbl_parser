@@ -1133,7 +1133,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             } else if csv_name == "energyCumulative (mAh)" {
                 write!(writer, "{:5}", cumulative_energy_mah as i32)?;
             } else if csv_name.ends_with(" (flags)") {
-                // Handle flag fields - output text values like blackbox_decode.c 
+                // Handle flag fields - output text values like blackbox_decode.c
                 let raw_value = frame
                     .data
                     .get(lookup_name)
@@ -1834,6 +1834,203 @@ fn convert_amperage_to_amps(raw_value: i32) -> f32 {
     raw_value as f32 / 100.0
 }
 
+fn parse_bbl_file_streaming(
+    file_path: &Path,
+    debug: bool,
+    export_csv: bool,
+    csv_options: &CsvExportOptions,
+) -> Result<usize> {
+    if debug {
+        println!("=== STREAMING BBL FILE PROCESSING ===");
+        let metadata = std::fs::metadata(file_path)?;
+        println!(
+            "File size: {} bytes ({:.2} MB)",
+            metadata.len(),
+            metadata.len() as f64 / 1024.0 / 1024.0
+        );
+    }
+
+    let file_data = std::fs::read(file_path)?;
+
+    // Look for multiple logs by searching for log start markers
+    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
+    let mut log_positions = Vec::new();
+
+    // Find all log start positions
+    for i in 0..file_data.len() {
+        if i + log_start_marker.len() <= file_data.len()
+            && &file_data[i..i + log_start_marker.len()] == log_start_marker
+        {
+            log_positions.push(i);
+        }
+    }
+
+    if log_positions.is_empty() {
+        return Err(anyhow::anyhow!("No blackbox log headers found in file"));
+    }
+
+    if debug {
+        println!("Found {} log(s) in file", log_positions.len());
+    }
+
+    let mut processed_logs = 0;
+
+    for (log_index, &start_pos) in log_positions.iter().enumerate() {
+        if debug {
+            println!(
+                "Processing log {} starting at position {}",
+                log_index + 1,
+                start_pos
+            );
+        }
+
+        // Determine end position (start of next log or end of file)
+        let end_pos = log_positions
+            .get(log_index + 1)
+            .copied()
+            .unwrap_or(file_data.len());
+        let log_data = &file_data[start_pos..end_pos];
+
+        // Parse this individual log
+        let log = parse_single_log(
+            log_data,
+            log_index + 1,
+            log_positions.len(),
+            debug,
+            export_csv,
+        )?;
+
+        // Display log info immediately
+        display_log_info(&log);
+
+        // Export CSV immediately while data is hot in cache
+        if export_csv {
+            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, debug) {
+                let filename = file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                eprintln!(
+                    "Warning: Failed to export CSV for {filename} log {}: {e}",
+                    log_index + 1
+                );
+            }
+        }
+
+        processed_logs += 1;
+
+        // Add separator between logs for clarity
+        if log_index + 1 < log_positions.len() {
+            println!();
+        }
+
+        // Log goes out of scope here, memory is freed immediately
+    }
+
+    Ok(processed_logs)
+}
+
+fn format_flight_mode_flags(flags: i32) -> String {
+    let mut modes = Vec::new();
+
+    // Based on Betaflight firmware runtime_config.h flightModeFlags_e enum
+    // This matches the blackbox-tools implementation exactly:
+    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+
+    // FLIGHT_LOG_FLIGHT_MODE_NAME array from blackbox-tools
+    if (flags & (1 << 0)) != 0 {
+        modes.push("ANGLE_MODE"); // ANGLE_MODE = (1 << 0)
+    }
+    if (flags & (1 << 1)) != 0 {
+        modes.push("HORIZON_MODE"); // HORIZON_MODE = (1 << 1)
+    }
+    if (flags & (1 << 2)) != 0 {
+        modes.push("MAG"); // MAG_MODE = (1 << 2)
+    }
+    if (flags & (1 << 3)) != 0 {
+        modes.push("BARO"); // ALT_HOLD_MODE = (1 << 3) (old name BARO)
+    }
+    if (flags & (1 << 4)) != 0 {
+        modes.push("GPS_HOME"); // GPS_HOME_MODE (disabled in current firmware)
+    }
+    if (flags & (1 << 5)) != 0 {
+        modes.push("GPS_HOLD"); // POS_HOLD_MODE = (1 << 5) (old name GPS_HOLD)
+    }
+    if (flags & (1 << 6)) != 0 {
+        modes.push("HEADFREE"); // HEADFREE_MODE = (1 << 6)
+    }
+    if (flags & (1 << 7)) != 0 {
+        modes.push("UNUSED"); // CHIRP_MODE = (1 << 7) (old autotune, now unused)
+    }
+    if (flags & (1 << 8)) != 0 {
+        modes.push("PASSTHRU"); // PASSTHRU_MODE = (1 << 8)
+    }
+    if (flags & (1 << 9)) != 0 {
+        modes.push("RANGEFINDER_MODE"); // RANGEFINDER_MODE (disabled in current firmware)
+    }
+    if (flags & (1 << 10)) != 0 {
+        modes.push("FAILSAFE_MODE"); // FAILSAFE_MODE = (1 << 10)
+    }
+    if (flags & (1 << 11)) != 0 {
+        modes.push("GPS_RESCUE_MODE"); // GPS_RESCUE_MODE = (1 << 11) (new in current firmware)
+    }
+
+    if modes.is_empty() {
+        "0".to_string()
+    } else {
+        modes.join("|") // Use pipe separator to avoid breaking CSV format
+    }
+}
+
+fn format_state_flags(flags: i32) -> String {
+    let mut states = Vec::new();
+
+    // Based on Betaflight firmware runtime_config.h stateFlags_t enum
+    // This matches the blackbox-tools implementation exactly:
+    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+
+    // FLIGHT_LOG_FLIGHT_STATE_NAME array from blackbox-tools
+    if (flags & (1 << 0)) != 0 {
+        states.push("GPS_FIX_HOME"); // GPS_FIX_HOME = (1 << 0)
+    }
+    if (flags & (1 << 1)) != 0 {
+        states.push("GPS_FIX"); // GPS_FIX = (1 << 1)
+    }
+    if (flags & (1 << 2)) != 0 {
+        states.push("CALIBRATE_MAG"); // GPS_FIX_EVER = (1 << 2) but old name CALIBRATE_MAG
+    }
+    if (flags & (1 << 3)) != 0 {
+        states.push("SMALL_ANGLE"); // Used in blackbox-tools for compatibility
+    }
+    if (flags & (1 << 4)) != 0 {
+        states.push("FIXED_WING"); // Used in blackbox-tools for compatibility
+    }
+
+    if states.is_empty() {
+        "0".to_string()
+    } else {
+        states.join("|") // Use pipe separator to avoid breaking CSV format
+    }
+}
+
+fn format_failsafe_phase(phase: i32) -> String {
+    // Based on Betaflight firmware failsafe.h failsafePhase_e enum
+    // This matches the blackbox-tools implementation exactly:
+    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+
+    // FLIGHT_LOG_FAILSAFE_PHASE_NAME array from blackbox-tools
+    match phase {
+        0 => "IDLE".to_string(),               // FAILSAFE_IDLE = 0
+        1 => "RX_LOSS_DETECTED".to_string(),   // FAILSAFE_RX_LOSS_DETECTED
+        2 => "LANDING".to_string(),            // FAILSAFE_LANDING
+        3 => "LANDED".to_string(),             // FAILSAFE_LANDED
+        4 => "RX_LOSS_MONITORING".to_string(), // FAILSAFE_RX_LOSS_MONITORING (new in current firmware)
+        5 => "RX_LOSS_RECOVERED".to_string(), // FAILSAFE_RX_LOSS_RECOVERED (new in current firmware)
+        6 => "GPS_RESCUE".to_string(),        // FAILSAFE_GPS_RESCUE (new in current firmware)
+        _ => phase.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1972,21 +2169,21 @@ mod tests {
     fn test_format_flight_mode_flags() {
         // Test no flags
         assert_eq!(format_flight_mode_flags(0), "0");
-        
+
         // Test single flags - matches Betaflight flightModeFlags_e enum
-        assert_eq!(format_flight_mode_flags(1), "ANGLE_MODE");             // bit 0 = ANGLE_MODE
-        assert_eq!(format_flight_mode_flags(2), "HORIZON_MODE");           // bit 1 = HORIZON_MODE  
-        assert_eq!(format_flight_mode_flags(4), "MAG");                    // bit 2 = MAG_MODE
-        assert_eq!(format_flight_mode_flags(8), "BARO");                   // bit 3 = ALT_HOLD_MODE (old name BARO)
-        assert_eq!(format_flight_mode_flags(32), "GPS_HOLD");              // bit 5 = POS_HOLD_MODE (old name GPS_HOLD)
-        assert_eq!(format_flight_mode_flags(64), "HEADFREE");              // bit 6 = HEADFREE_MODE
-        assert_eq!(format_flight_mode_flags(256), "PASSTHRU");             // bit 8 = PASSTHRU_MODE
-        assert_eq!(format_flight_mode_flags(1024), "FAILSAFE_MODE");       // bit 10 = FAILSAFE_MODE
-        assert_eq!(format_flight_mode_flags(2048), "GPS_RESCUE_MODE");     // bit 11 = GPS_RESCUE_MODE
-        
+        assert_eq!(format_flight_mode_flags(1), "ANGLE_MODE"); // bit 0 = ANGLE_MODE
+        assert_eq!(format_flight_mode_flags(2), "HORIZON_MODE"); // bit 1 = HORIZON_MODE
+        assert_eq!(format_flight_mode_flags(4), "MAG"); // bit 2 = MAG_MODE
+        assert_eq!(format_flight_mode_flags(8), "BARO"); // bit 3 = ALT_HOLD_MODE (old name BARO)
+        assert_eq!(format_flight_mode_flags(32), "GPS_HOLD"); // bit 5 = POS_HOLD_MODE (old name GPS_HOLD)
+        assert_eq!(format_flight_mode_flags(64), "HEADFREE"); // bit 6 = HEADFREE_MODE
+        assert_eq!(format_flight_mode_flags(256), "PASSTHRU"); // bit 8 = PASSTHRU_MODE
+        assert_eq!(format_flight_mode_flags(1024), "FAILSAFE_MODE"); // bit 10 = FAILSAFE_MODE
+        assert_eq!(format_flight_mode_flags(2048), "GPS_RESCUE_MODE"); // bit 11 = GPS_RESCUE_MODE
+
         // Test multiple flags (pipe-separated to avoid breaking CSV format)
         assert_eq!(format_flight_mode_flags(3), "ANGLE_MODE|HORIZON_MODE"); // bits 0+1
-        assert_eq!(format_flight_mode_flags(6), "HORIZON_MODE|MAG");      // bits 1+2
+        assert_eq!(format_flight_mode_flags(6), "HORIZON_MODE|MAG"); // bits 1+2
         assert_eq!(format_flight_mode_flags(7), "ANGLE_MODE|HORIZON_MODE|MAG"); // bits 0+1+2
     }
 
@@ -1994,228 +2191,33 @@ mod tests {
     fn test_format_state_flags() {
         // Test no flags
         assert_eq!(format_state_flags(0), "0");
-        
+
         // Test single flags - matches Betaflight stateFlags_t enum
-        assert_eq!(format_state_flags(1), "GPS_FIX_HOME");                 // bit 0 = GPS_FIX_HOME
-        assert_eq!(format_state_flags(2), "GPS_FIX");                      // bit 1 = GPS_FIX
-        assert_eq!(format_state_flags(4), "CALIBRATE_MAG");                // bit 2 = GPS_FIX_EVER (old name)
-        assert_eq!(format_state_flags(8), "SMALL_ANGLE");                  // bit 3 = compatibility
-        assert_eq!(format_state_flags(16), "FIXED_WING");                  // bit 4 = compatibility
-        
+        assert_eq!(format_state_flags(1), "GPS_FIX_HOME"); // bit 0 = GPS_FIX_HOME
+        assert_eq!(format_state_flags(2), "GPS_FIX"); // bit 1 = GPS_FIX
+        assert_eq!(format_state_flags(4), "CALIBRATE_MAG"); // bit 2 = GPS_FIX_EVER (old name)
+        assert_eq!(format_state_flags(8), "SMALL_ANGLE"); // bit 3 = compatibility
+        assert_eq!(format_state_flags(16), "FIXED_WING"); // bit 4 = compatibility
+
         // Test multiple flags (pipe-separated to avoid breaking CSV format)
-        assert_eq!(format_state_flags(3), "GPS_FIX_HOME|GPS_FIX");        // bits 0+1
-        assert_eq!(format_state_flags(7), "GPS_FIX_HOME|GPS_FIX|CALIBRATE_MAG"); // bits 0+1+2
+        assert_eq!(format_state_flags(3), "GPS_FIX_HOME|GPS_FIX"); // bits 0+1
+        assert_eq!(format_state_flags(7), "GPS_FIX_HOME|GPS_FIX|CALIBRATE_MAG");
+        // bits 0+1+2
     }
 
     #[test]
     fn test_format_failsafe_phase() {
         // Test known phases - matches Betaflight failsafePhase_e enum
-        assert_eq!(format_failsafe_phase(0), "IDLE");                      // FAILSAFE_IDLE
-        assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED");          // FAILSAFE_RX_LOSS_DETECTED
-        assert_eq!(format_failsafe_phase(2), "LANDING");                   // FAILSAFE_LANDING
-        assert_eq!(format_failsafe_phase(3), "LANDED");                    // FAILSAFE_LANDED
-        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING");        // FAILSAFE_RX_LOSS_MONITORING (new)
-        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED");         // FAILSAFE_RX_LOSS_RECOVERED (new)
-        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE");                // FAILSAFE_GPS_RESCUE (new)
-        
+        assert_eq!(format_failsafe_phase(0), "IDLE"); // FAILSAFE_IDLE
+        assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED"); // FAILSAFE_RX_LOSS_DETECTED
+        assert_eq!(format_failsafe_phase(2), "LANDING"); // FAILSAFE_LANDING
+        assert_eq!(format_failsafe_phase(3), "LANDED"); // FAILSAFE_LANDED
+        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING"); // FAILSAFE_RX_LOSS_MONITORING (new)
+        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED"); // FAILSAFE_RX_LOSS_RECOVERED (new)
+        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE"); // FAILSAFE_GPS_RESCUE (new)
+
         // Test unknown phases (should return numeric string)
         assert_eq!(format_failsafe_phase(99), "99");
         assert_eq!(format_failsafe_phase(-1), "-1");
-    }
-}
-fn parse_bbl_file_streaming(
-    file_path: &Path,
-    debug: bool,
-    export_csv: bool,
-    csv_options: &CsvExportOptions,
-) -> Result<usize> {
-    if debug {
-        println!("=== STREAMING BBL FILE PROCESSING ===");
-        let metadata = std::fs::metadata(file_path)?;
-        println!(
-            "File size: {} bytes ({:.2} MB)",
-            metadata.len(),
-            metadata.len() as f64 / 1024.0 / 1024.0
-        );
-    }
-
-    let file_data = std::fs::read(file_path)?;
-
-    // Look for multiple logs by searching for log start markers
-    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
-    let mut log_positions = Vec::new();
-
-    // Find all log start positions
-    for i in 0..file_data.len() {
-        if i + log_start_marker.len() <= file_data.len()
-            && &file_data[i..i + log_start_marker.len()] == log_start_marker
-        {
-            log_positions.push(i);
-        }
-    }
-
-    if log_positions.is_empty() {
-        return Err(anyhow::anyhow!("No blackbox log headers found in file"));
-    }
-
-    if debug {
-        println!("Found {} log(s) in file", log_positions.len());
-    }
-
-    let mut processed_logs = 0;
-
-    for (log_index, &start_pos) in log_positions.iter().enumerate() {
-        if debug {
-            println!(
-                "Processing log {} starting at position {}",
-                log_index + 1,
-                start_pos
-            );
-        }
-
-        // Determine end position (start of next log or end of file)
-        let end_pos = log_positions
-            .get(log_index + 1)
-            .copied()
-            .unwrap_or(file_data.len());
-        let log_data = &file_data[start_pos..end_pos];
-
-        // Parse this individual log
-        let log = parse_single_log(
-            log_data,
-            log_index + 1,
-            log_positions.len(),
-            debug,
-            export_csv,
-        )?;
-
-        // Display log info immediately
-        display_log_info(&log);
-
-        // Export CSV immediately while data is hot in cache
-        if export_csv {
-            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, debug) {
-                let filename = file_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                eprintln!(
-                    "Warning: Failed to export CSV for {filename} log {}: {e}",
-                    log_index + 1
-                );
-            }
-        }
-
-        processed_logs += 1;
-
-        // Add separator between logs for clarity
-        if log_index + 1 < log_positions.len() {
-            println!();
-        }
-
-        // Log goes out of scope here, memory is freed immediately
-    }
-
-    Ok(processed_logs)
-}
-
-fn format_flight_mode_flags(flags: i32) -> String {
-    let mut modes = Vec::new();
-
-    // Based on Betaflight firmware runtime_config.h flightModeFlags_e enum
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
-    
-    // FLIGHT_LOG_FLIGHT_MODE_NAME array from blackbox-tools
-    if (flags & (1 << 0)) != 0 {
-        modes.push("ANGLE_MODE");      // ANGLE_MODE = (1 << 0)
-    }
-    if (flags & (1 << 1)) != 0 {
-        modes.push("HORIZON_MODE");    // HORIZON_MODE = (1 << 1)
-    }
-    if (flags & (1 << 2)) != 0 {
-        modes.push("MAG");             // MAG_MODE = (1 << 2)
-    }
-    if (flags & (1 << 3)) != 0 {
-        modes.push("BARO");            // ALT_HOLD_MODE = (1 << 3) (old name BARO)
-    }
-    if (flags & (1 << 4)) != 0 {
-        modes.push("GPS_HOME");        // GPS_HOME_MODE (disabled in current firmware)
-    }
-    if (flags & (1 << 5)) != 0 {
-        modes.push("GPS_HOLD");        // POS_HOLD_MODE = (1 << 5) (old name GPS_HOLD)
-    }
-    if (flags & (1 << 6)) != 0 {
-        modes.push("HEADFREE");        // HEADFREE_MODE = (1 << 6)
-    }
-    if (flags & (1 << 7)) != 0 {
-        modes.push("UNUSED");          // CHIRP_MODE = (1 << 7) (old autotune, now unused)
-    }
-    if (flags & (1 << 8)) != 0 {
-        modes.push("PASSTHRU");        // PASSTHRU_MODE = (1 << 8)
-    }
-    if (flags & (1 << 9)) != 0 {
-        modes.push("RANGEFINDER_MODE"); // RANGEFINDER_MODE (disabled in current firmware)
-    }
-    if (flags & (1 << 10)) != 0 {
-        modes.push("FAILSAFE_MODE");   // FAILSAFE_MODE = (1 << 10)
-    }
-    if (flags & (1 << 11)) != 0 {
-        modes.push("GPS_RESCUE_MODE"); // GPS_RESCUE_MODE = (1 << 11) (new in current firmware)
-    }
-
-    if modes.is_empty() {
-        "0".to_string()
-    } else {
-        modes.join("|") // Use pipe separator to avoid breaking CSV format
-    }
-}
-
-fn format_state_flags(flags: i32) -> String {
-    let mut states = Vec::new();
-
-    // Based on Betaflight firmware runtime_config.h stateFlags_t enum  
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
-    
-    // FLIGHT_LOG_FLIGHT_STATE_NAME array from blackbox-tools
-    if (flags & (1 << 0)) != 0 {
-        states.push("GPS_FIX_HOME");   // GPS_FIX_HOME = (1 << 0)
-    }
-    if (flags & (1 << 1)) != 0 {
-        states.push("GPS_FIX");        // GPS_FIX = (1 << 1)
-    }
-    if (flags & (1 << 2)) != 0 {
-        states.push("CALIBRATE_MAG");  // GPS_FIX_EVER = (1 << 2) but old name CALIBRATE_MAG
-    }
-    if (flags & (1 << 3)) != 0 {
-        states.push("SMALL_ANGLE");    // Used in blackbox-tools for compatibility
-    }
-    if (flags & (1 << 4)) != 0 {
-        states.push("FIXED_WING");     // Used in blackbox-tools for compatibility
-    }
-
-    if states.is_empty() {
-        "0".to_string()
-    } else {
-        states.join("|") // Use pipe separator to avoid breaking CSV format
-    }
-}
-
-fn format_failsafe_phase(phase: i32) -> String {
-    // Based on Betaflight firmware failsafe.h failsafePhase_e enum
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
-    
-    // FLIGHT_LOG_FAILSAFE_PHASE_NAME array from blackbox-tools
-    match phase {
-        0 => "IDLE".to_string(),                // FAILSAFE_IDLE = 0
-        1 => "RX_LOSS_DETECTED".to_string(),    // FAILSAFE_RX_LOSS_DETECTED
-        2 => "LANDING".to_string(),             // FAILSAFE_LANDING
-        3 => "LANDED".to_string(),              // FAILSAFE_LANDED
-        4 => "RX_LOSS_MONITORING".to_string(),  // FAILSAFE_RX_LOSS_MONITORING (new in current firmware)
-        5 => "RX_LOSS_RECOVERED".to_string(),   // FAILSAFE_RX_LOSS_RECOVERED (new in current firmware)
-        6 => "GPS_RESCUE".to_string(),          // FAILSAFE_GPS_RESCUE (new in current firmware)
-        _ => phase.to_string(),
     }
 }
