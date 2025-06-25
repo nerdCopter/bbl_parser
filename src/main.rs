@@ -104,6 +104,11 @@ struct FrameStats {
     end_time_us: u64,
     failed_frames: u32,
     missing_iterations: u64,
+    // Additional blackbox_decode compatibility tracking
+    corrupted_frames: u32,
+    invalid_frame_types: u32,
+    frame_validation_failures: u32,
+    unknown_frame_bytes: Vec<u8>, // Track unknown frame type bytes for analysis
 }
 
 #[derive(Debug, Clone)]
@@ -879,6 +884,24 @@ fn display_log_info(log: &BBLLog) {
     }
     println!("Frames     {:6}", stats.total_frames);
 
+    // Display blackbox_decode compatibility analysis
+    if stats.failed_frames > 0 || stats.frame_validation_failures > 0 || stats.invalid_frame_types > 0 {
+        println!("\nBlackbox_decode Compatibility Analysis:");
+        if stats.failed_frames > 0 {
+            println!("Failed frames       {:6} (parsing errors)", stats.failed_frames);
+        }
+        if stats.frame_validation_failures > 0 {
+            println!("Validation failures {:6} (technical validation)", stats.frame_validation_failures);
+        }
+        if stats.invalid_frame_types > 0 {
+            println!("Invalid frame types {:6}", stats.invalid_frame_types);
+        }
+        if !stats.unknown_frame_bytes.is_empty() {
+            println!("Unknown frame bytes: {:?}", 
+                     stats.unknown_frame_bytes.iter().take(10).map(|b| format!("0x{:02X}", b)).collect::<Vec<_>>());
+        }
+    }
+
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
         let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
@@ -1180,6 +1203,98 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     Ok(())
 }
 
+/// Validates frame data according to blackbox_decode standards
+/// Only performs technical validation, not flight state filtering
+fn is_frame_technically_valid(
+    frame_type: char,
+    frame_data: &HashMap<String, i32>,
+    header: &BBLHeader,
+    debug: bool,
+) -> bool {
+    // Check if frame type is supported
+    match frame_type {
+        'I' | 'P' | 'S' | 'H' | 'G' | 'E' => {
+            // Valid frame types
+        }
+        _ => {
+            if debug {
+                println!("Invalid frame type: '{}'", frame_type);
+            }
+            return false;
+        }
+    }
+
+    // Check if frame has required fields based on frame type
+    match frame_type {
+        'I' | 'P' => {
+            // Main frames should have time field
+            if !frame_data.contains_key("time") {
+                if debug {
+                    println!("Main frame missing 'time' field");
+                }
+                return false;
+            }
+            
+            // Check for loop iteration field
+            if !frame_data.contains_key("loopIteration") {
+                if debug {
+                    println!("Main frame missing 'loopIteration' field");
+                }
+                return false;
+            }
+        }
+        'S' => {
+            // S-frames should have flight mode or state data
+            if !frame_data.contains_key("flightModeFlags") && 
+               !frame_data.contains_key("stateFlags") {
+                if debug {
+                    println!("S-frame missing state information");
+                }
+                return false;
+            }
+        }
+        'G' | 'H' => {
+            // GPS frames validation would go here
+            // For now, accept all GPS frames
+        }
+        'E' => {
+            // Event frames - always valid if properly parsed
+        }
+        _ => return false,
+    }
+
+    // Field existence validation - check if fields exist in frame definitions
+    match frame_type {
+        'I' => {
+            if header.i_frame_def.count == 0 {
+                if debug {
+                    println!("I-frame data present but no I-frame definition");
+                }
+                return false;
+            }
+        }
+        'P' => {
+            if header.p_frame_def.count == 0 {
+                if debug {
+                    println!("P-frame data present but no P-frame definition");
+                }
+                return false;
+            }
+        }
+        'S' => {
+            if header.s_frame_def.count == 0 {
+                if debug {
+                    println!("S-frame data present but no S-frame definition");
+                }
+                return false;
+            }
+        }
+        _ => {}
+    }
+
+    true
+}
+
 type ParseFramesResult = Result<(
     FrameStats,
     Vec<DecodedFrame>,
@@ -1241,6 +1356,10 @@ fn parse_frames(
                     'E' => 'E',
                     'S' => 'S',
                     _ => {
+                        // Track unknown frame bytes for blackbox_decode compatibility analysis
+                        stats.unknown_frame_bytes.push(frame_type_byte);
+                        stats.invalid_frame_types += 1;
+                        
                         if debug && stats.failed_frames < 3 {
                             println!(
                                 "Unknown frame type byte 0x{:02X} ('{:?}') at offset {}",
@@ -1455,6 +1574,16 @@ fn parse_frames(
 
                 if !parsing_success {
                     stats.failed_frames += 1;
+                } else {
+                    // Apply blackbox_decode technical validation
+                    if !is_frame_technically_valid(frame_type, &frame_data, header, debug) {
+                        stats.frame_validation_failures += 1;
+                        if debug && stats.frame_validation_failures < 5 {
+                            println!("Frame validation failed for {} frame", frame_type);
+                        }
+                        parsing_success = false; // Mark as failed
+                        stats.failed_frames += 1;
+                    }
                 }
 
                 stats.total_frames += 1;
@@ -1560,7 +1689,14 @@ fn parse_frames(
                     }
                 }
             }
-            Err(_) => break,
+            Err(_) => {
+                // Stream read error - likely corrupted data
+                stats.corrupted_frames += 1;
+                if debug && stats.corrupted_frames < 5 {
+                    println!("Stream read error at position {} - corrupted data", stream.pos);
+                }
+                break;
+            }
         }
 
         // More aggressive safety limits to prevent hanging
