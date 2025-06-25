@@ -845,7 +845,7 @@ fn display_debug_info(logs: &[BBLLog]) {
     display_frame_data(logs);
 }
 
-fn display_log_info(log: &BBLLog) {
+fn display_log_info(log: &BBLLog, debug: bool) {
     let stats = &log.stats;
     let header = &log.header;
 
@@ -884,17 +884,22 @@ fn display_log_info(log: &BBLLog) {
     }
     println!("Frames     {:6}", stats.total_frames);
 
-    // Display blackbox_decode compatibility analysis
-    if stats.failed_frames > 0 || stats.frame_validation_failures > 0 || stats.invalid_frame_types > 0 {
+    // Show basic failed frames count for all users
+    if stats.failed_frames > 0 {
+        println!("Failed frames       {:6} (parsing errors)", stats.failed_frames);
+    }
+
+    // Display detailed blackbox_decode compatibility analysis only in debug mode
+    if debug && (stats.frame_validation_failures > 0 || stats.invalid_frame_types > 0 || stats.corrupted_frames > 0) {
         println!("\nBlackbox_decode Compatibility Analysis:");
-        if stats.failed_frames > 0 {
-            println!("Failed frames       {:6} (parsing errors)", stats.failed_frames);
-        }
         if stats.frame_validation_failures > 0 {
             println!("Validation failures {:6} (technical validation)", stats.frame_validation_failures);
         }
         if stats.invalid_frame_types > 0 {
             println!("Invalid frame types {:6}", stats.invalid_frame_types);
+        }
+        if stats.corrupted_frames > 0 {
+            println!("Corrupted frames    {:6} (stream errors)", stats.corrupted_frames);
         }
         if !stats.unknown_frame_bytes.is_empty() {
             println!("Unknown frame bytes: {:?}", 
@@ -2037,7 +2042,7 @@ fn parse_bbl_file_streaming(
         )?;
 
         // Display log info immediately
-        display_log_info(&log);
+        display_log_info(&log, debug);
 
         // Export CSV immediately while data is hot in cache
         if export_csv {
