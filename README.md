@@ -156,6 +156,25 @@ P-frame data (50 frames):
 timeout 60s ./target/release/bbl_parser logs/*.BBL
 ```
 
+## Betaflight Firmware Compatibility
+
+✅ **Firmware-Accurate Flag Formatting**: This parser outputs flight mode flags, state flags, and failsafe phases that match the current Betaflight firmware exactly.
+
+- **Flight Mode Flags**: Uses the correct `flightModeFlags_e` enum from Betaflight runtime_config.h
+  - Supports current modes: ANGLE_MODE, HORIZON_MODE, MAG, BARO, GPS_HOLD, HEADFREE, PASSTHRU, FAILSAFE_MODE, GPS_RESCUE_MODE
+  - Output format: `"ANGLE_MODE|HORIZON_MODE"` (pipe-separated for CSV compatibility)
+  - Includes new GPS_RESCUE_MODE flag (bit 11) from current firmware
+
+- **State Flags**: Uses the correct `stateFlags_t` enum from Betaflight runtime_config.h  
+  - Supports: GPS_FIX_HOME, GPS_FIX, CALIBRATE_MAG, SMALL_ANGLE, FIXED_WING
+  - Output format: `"GPS_FIX_HOME|GPS_FIX"` (pipe-separated for CSV compatibility)
+
+- **Failsafe Phase**: Uses the correct `failsafePhase_e` enum from Betaflight failsafe.h
+  - Supports all phases: IDLE, RX_LOSS_DETECTED, LANDING, LANDED, RX_LOSS_MONITORING, RX_LOSS_RECOVERED, GPS_RESCUE
+  - Includes new phases 4-6 from current firmware
+
+**Compatibility**: Verified against [blackbox-tools pull request #60](https://github.com/betaflight/blackbox-tools/pull/60) and current Betaflight master branch.
+
 ## Overview
 
 - [GOALS.md](./GOALS.md)
