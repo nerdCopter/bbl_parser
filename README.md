@@ -12,22 +12,22 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official referen
 - **Multi-Log Processing**: Detects and processes multiple flight logs within single files
 - **Streaming Architecture**: Memory-efficient processing for large files (500K+ frames)
 - **Frame Prediction**: Full predictor implementation (PREVIOUS, STRAIGHT_LINE, AVERAGE_2, MINTHROTTLE, etc.)
-- **CSV Export**: Export flight data to CSV format with separate header files for H frames
+- **CSV Export**: Export flight data to CSV format with separate header files
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
-- **High Performance**: Reference-equivalent accuracy (100.02%), superior file compatibility (91.3% vs 43.5% success rate)
+- **High Performance**: Comprehensive blackbox_decode compatibility with equivalent output quality
+- **CSV Export Compatibility**: Field-trimmed headers and format matching for cross-tool compatibility
 
 ## CSV Export Format
 
-The `--csv` option exports blackbox logs to CSV format with Betaflight-compatible field ordering:
+The `--csv` option exports blackbox logs to CSV format with blackbox_decode compatibility:
 
-- **`.XX.csv`**: Main flight data file containing I, P, S, G frame data
+- **`.XX.csv`**: Main flight data file containing I, P, S frame data
   - Field names header row in the same order as Betaflight blackbox-log-viewer
   - Field names are trimmed of leading/trailing spaces
   - Time field labeled as "time (us)" to indicate microsecond units
   - I frame fields first (main flight loop data)
   - S frame fields second (slow/status data)  
-  - G frame fields third (GPS data, excluding duplicate time field)
   - Time-sorted data rows with all blackbox fields
 - **`.XX.headers.csv`**: Plaintext headers file containing all BBL header information
   - Field,Value format with all configuration parameters
