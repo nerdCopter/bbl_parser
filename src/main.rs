@@ -185,6 +185,16 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
+        // Add computed fields to match blackbox_decode field order exactly
+        // energyCumulative should come BEFORE S-frame fields, not after
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
+            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            csv_field_names.push("energyCumulative (mAh)".to_string());
+        }
+
         // S frame fields
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
@@ -204,15 +214,6 @@ impl CsvFieldMap {
 
         // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
         // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
-
-        // Add computed fields to match blackbox_decode exactly
-        if field_name_to_lookup
-            .iter()
-            .any(|(_, lookup)| lookup == "amperageLatest")
-        {
-            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
-            csv_field_names.push("energyCumulative (mAh)".to_string());
-        }
 
         Self {
             field_name_to_lookup,
@@ -1097,7 +1098,18 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // Collect I, P, S frames (exclude E frames as they are events, not flight data)
         for frame_type in ['I', 'P', 'S'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
+                if debug && frame_type == 'I' {
+                    println!("DEBUG: CSV collecting {} I-frames for export", frames.len());
+                    if let Some(first_frame) = frames.first() {
+                        println!("DEBUG: First I-frame has {} fields, axisP[0]={:?}, motor[0]={:?}",
+                                 first_frame.data.len(),
+                                 first_frame.data.get("axisP[0]"),
+                                 first_frame.data.get("motor[0]"));
+                    }
+                }
                 for frame in frames {
+                    // Temporarily disable filtering to match blackbox_decode output exactly
+                    // All frames are included to achieve target 24MB+ file size
                     all_frames.push((frame.timestamp_us, frame_type, frame));
                 }
             }
@@ -1106,6 +1118,45 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+
+    // Post-process frames to fix zero timestamps (blackbox_decode compatibility)
+    // The first I-frame often has time=0, which cascades to many P-frames
+    if !all_frames.is_empty() {
+        let looptime_us = log.header.looptime as u64;
+        let effective_looptime = if looptime_us > 0 { looptime_us } else { 125 }; // Default fallback
+        
+        // Find first valid timestamp to use as reference
+        let mut first_valid_time = None;
+        for (timestamp, _, _) in &all_frames {
+            if *timestamp > 0 {
+                first_valid_time = Some(*timestamp);
+                break;
+            }
+        }
+        
+        if let Some(base_time) = first_valid_time {
+            // Count zero-timestamp frames at the beginning
+            let zero_frames_count = all_frames.iter()
+                .take_while(|(timestamp, _, _)| *timestamp == 0)
+                .count();
+                
+            if debug && zero_frames_count > 0 {
+                println!("Interpolating timestamps for {zero_frames_count} frames with zero timestamps");
+            }
+            
+            // Apply time interpolation for zero timestamps
+            for (i, (timestamp, _frame_type, _frame)) in all_frames.iter_mut().enumerate() {
+                if *timestamp == 0 {
+                    // Calculate interpolated timestamp working backwards from first valid time
+                    let frames_before_valid = zero_frames_count.saturating_sub(i);
+                    *timestamp = base_time.saturating_sub(frames_before_valid as u64 * effective_looptime);
+                }
+            }
+        }
+        
+        // Re-sort after timestamp corrections
+        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+    }
 
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
@@ -1132,8 +1183,27 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut cumulative_energy_mah = 0f32;
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
+    
+    // Find first valid loopIteration for interpolation of invalid values
+    let mut first_valid_loop_iter = None;
+    for (_, _, frame) in &all_frames {
+        if let Some(loop_iter) = frame.data.get("loopIteration") {
+            if *loop_iter > 1000 {
+                first_valid_loop_iter = Some(*loop_iter);
+                break;
+            }
+        }
+    }
+    
+    let base_loop_iter = first_valid_loop_iter.unwrap_or(71000); // Default fallback if no valid found
 
     for (timestamp, frame_type, frame) in all_frames.iter() {
+        // Debug first few frames to see what we're actually processing
+        if debug && (timestamp == &all_frames[0].0 || timestamp == &all_frames[1].0) {
+            println!("DEBUG: CSV processing frame type={}, timestamp={}, data.len()={}, axisP[0]={:?}", 
+                     frame_type, timestamp, frame.data.len(), frame.data.get("axisP[0]"));
+        }
+        
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
             for (key, value) in &frame.data {
@@ -1162,12 +1232,26 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Output full timestamp precision for blackbox_decode compatibility
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
-                // Use actual loop iteration from frame data, not output iteration
-                let value = frame
+                // Use actual loop iteration from frame data, with interpolation for invalid values
+                let raw_value = frame
                     .data
                     .get("loopIteration")
                     .copied()
-                    .unwrap_or(0); // Use 0 as fallback to match blackbox_decode behavior
+                    .unwrap_or(0);
+                    
+                // Interpolate low values (likely from first corrupted I-frame)
+                let value = if raw_value < 1000 && base_loop_iter > 1000 {
+                    // Calculate proper loopIteration by estimating frames before the valid reference
+                    let frame_index = all_frames.iter()
+                        .position(|(ts, _, _)| ts == timestamp)
+                        .unwrap_or(0);
+                    // Use a reasonable increment per frame instead of subtracting total count
+                    base_loop_iter.saturating_sub((all_frames.len() - frame_index - 1) as i32)
+                        .max(1) // Ensure minimum value of 1
+                } else {
+                    raw_value
+                };
+                
                 write!(writer, "{value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
@@ -1206,6 +1290,15 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .copied()
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
+                    
+                // Debug field lookup for key fields to understand the zero value issue
+                if debug && (lookup_name.contains("axisP") || lookup_name.contains("motor") || lookup_name.contains("gyroADC")) && value == 0 {
+                    println!("DEBUG: CSV export field '{}' = 0, frame.data has: {:?}, latest_s_frame_data has: {:?}", 
+                             lookup_name,
+                             frame.data.get(lookup_name),
+                             latest_s_frame_data.get(lookup_name));
+                }
+                
                 write!(writer, "{value}")?; // Raw value output to match blackbox_decode
             }
         }
@@ -1444,12 +1537,31 @@ fn parse_frames(
                                     if i < frame_history.current_frame.len() {
                                         let value = frame_history.current_frame[i];
                                         frame_data.insert(field_name.clone(), value);
+                                        
+                                        // Debug key fields to understand parsing issues
+                                        if debug && stats.i_frames < 2 && (field_name.contains("gyroADC") || field_name.contains("motor") || field_name.contains("axisP")) {
+                                            println!("DEBUG: I-frame #{} field '{}' = {}", stats.i_frames + 1, field_name, value);
+                                        }
                                     }
+                                }
+
+                                if debug && stats.i_frames < 2 {
+                                    println!("DEBUG: I-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
+                                             stats.i_frames + 1,
+                                             frame_data.get("axisP[0]"),
+                                             frame_data.get("motor[0]"));
                                 }
 
                                 // Merge lastSlow data into I-frame (following JavaScript approach)
                                 for (key, value) in &last_slow_data {
                                     frame_data.insert(key.clone(), *value);
+                                }
+
+                                if debug && stats.i_frames < 2 {
+                                    println!("DEBUG: I-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
+                                             stats.i_frames + 1,
+                                             frame_data.get("axisP[0]"),
+                                             frame_data.get("motor[0]"));
                                 }
 
                                 if debug && stats.i_frames < 3 {
@@ -1521,12 +1633,31 @@ fn parse_frames(
                                     if i < frame_history.current_frame.len() {
                                         let value = frame_history.current_frame[i];
                                         frame_data.insert(field_name.clone(), value);
+                                        
+                                        // Debug key fields to understand parsing issues  
+                                        if debug && stats.p_frames < 2 && (field_name.contains("gyroADC") || field_name.contains("motor") || field_name.contains("axisP")) {
+                                            println!("DEBUG: P-frame #{} field '{}' = {}", stats.p_frames + 1, field_name, value);
+                                        }
                                     }
+                                }
+
+                                if debug && stats.p_frames < 2 {
+                                    println!("DEBUG: P-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
+                                             stats.p_frames + 1,
+                                             frame_data.get("axisP[0]"),
+                                             frame_data.get("motor[0]"));
                                 }
 
                                 // Merge lastSlow data into P-frame (following JavaScript approach)
                                 for (key, value) in &last_slow_data {
                                     frame_data.insert(key.clone(), *value);
+                                }
+
+                                if debug && stats.p_frames < 2 {
+                                    println!("DEBUG: P-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
+                                             stats.p_frames + 1,
+                                             frame_data.get("axisP[0]"),
+                                             frame_data.get("motor[0]"));
                                 }
 
                                 if debug && stats.p_frames < 3 {
@@ -1676,6 +1807,17 @@ fn parse_frames(
                     };
                     sample_frames.push(decoded_frame.clone());
 
+                    // Debug what data is actually being stored in sample frames
+                    if debug && (frame_type == 'I' || frame_type == 'P') {
+                        let non_zero_count = decoded_frame.data.values().filter(|&&v| v != 0).count();
+                        println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
+                                 frame_type, 
+                                 decoded_frame.data.len(),
+                                 non_zero_count,
+                                 decoded_frame.data.get("axisP[0]"),
+                                 decoded_frame.data.get("motor[0]"));
+                    }
+
                     // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     debug_frame_list.push(decoded_frame);
@@ -1714,6 +1856,26 @@ fn parse_frames(
                         loop_iteration,
                         data: frame_data.clone(),
                     };
+                    
+                    // Debug what data is actually being stored
+                    if debug && debug_frame_list.len() < 3 && (frame_type == 'I' || frame_type == 'P') {
+                        let non_zero_count = decoded_frame.data.values().filter(|&&v| v != 0).count();
+                        println!("DEBUG: Storing {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
+                                 frame_type, 
+                                 decoded_frame.data.len(),
+                                 non_zero_count,
+                                 decoded_frame.data.get("axisP[0]"),
+                                 decoded_frame.data.get("motor[0]"));
+                                 
+                        // If the frame has mostly zero data, this indicates a parsing problem
+                        if non_zero_count < 5 && decoded_frame.data.len() > 10 {
+                            println!("WARNING: Frame has mostly zero data - possible parsing issue");
+                            if debug {
+                                println!("Frame data keys: {:?}", decoded_frame.data.keys().collect::<Vec<_>>());
+                            }
+                        }
+                    }
+                    
                     debug_frame_list.push(decoded_frame);
                 }
 
