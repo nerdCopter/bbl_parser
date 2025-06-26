@@ -2356,11 +2356,9 @@ fn parse_bbl_file_streaming(
 fn format_flight_mode_flags(flags: i32) -> String {
     let mut modes = Vec::new();
 
-    // Based on Betaflight firmware runtime_config.h flightModeFlags_e enum
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+    // Based on Betaflight firmware runtime_config.h flightModeFlags_e enum (12 flags total, 0-11)
+    // Reference: https://github.com/betaflight/betaflight/blob/master/src/main/fc/runtime_config.h
 
-    // FLIGHT_LOG_FLIGHT_MODE_NAME array from blackbox-tools
     if (flags & (1 << 0)) != 0 {
         modes.push("ANGLE_MODE"); // ANGLE_MODE = (1 << 0)
     }
@@ -2371,31 +2369,27 @@ fn format_flight_mode_flags(flags: i32) -> String {
         modes.push("MAG"); // MAG_MODE = (1 << 2)
     }
     if (flags & (1 << 3)) != 0 {
-        modes.push("BARO"); // ALT_HOLD_MODE = (1 << 3) (old name BARO)
+        modes.push("ALTHOLD"); // ALT_HOLD_MODE = (1 << 3)
     }
-    if (flags & (1 << 4)) != 0 {
-        modes.push("GPS_HOME"); // GPS_HOME_MODE (disabled in current firmware)
-    }
+    // Bit 4: GPS_HOME_MODE is commented out in current Betaflight firmware
     if (flags & (1 << 5)) != 0 {
-        modes.push("GPS_HOLD"); // POS_HOLD_MODE = (1 << 5) (old name GPS_HOLD)
+        modes.push("POSHOLD"); // POS_HOLD_MODE = (1 << 5)
     }
     if (flags & (1 << 6)) != 0 {
         modes.push("HEADFREE"); // HEADFREE_MODE = (1 << 6)
     }
     if (flags & (1 << 7)) != 0 {
-        modes.push("UNUSED"); // CHIRP_MODE = (1 << 7) (old autotune, now unused)
+        modes.push("CHIRP"); // CHIRP_MODE = (1 << 7)
     }
     if (flags & (1 << 8)) != 0 {
         modes.push("PASSTHRU"); // PASSTHRU_MODE = (1 << 8)
     }
-    if (flags & (1 << 9)) != 0 {
-        modes.push("RANGEFINDER_MODE"); // RANGEFINDER_MODE (disabled in current firmware)
-    }
+    // Bit 9: RANGEFINDER_MODE is commented out in current Betaflight firmware
     if (flags & (1 << 10)) != 0 {
-        modes.push("FAILSAFE_MODE"); // FAILSAFE_MODE = (1 << 10)
+        modes.push("FAILSAFE"); // FAILSAFE_MODE = (1 << 10)
     }
     if (flags & (1 << 11)) != 0 {
-        modes.push("GPS_RESCUE_MODE"); // GPS_RESCUE_MODE = (1 << 11) (new in current firmware)
+        modes.push("GPS_RESCUE"); // GPS_RESCUE_MODE = (1 << 11)
     }
 
     if modes.is_empty() {

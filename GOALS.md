@@ -5,7 +5,7 @@
 Based on comprehensive testing against blackbox_decode reference, significant data parsing inaccuracies have been identified:
 
 ### **Data Integrity Issues:**
-- ❌ **loopIteration mismatch**: RUST starts at 1, blackbox_decode starts at 0
+- ✅ **loopIteration mismatch**: FIXED - Now starts from 0 to match blackbox_decode
 - ❌ **Timestamp differences**: Different starting time values between implementations  
 - ❌ **Data value discrepancies**: Fundamental parsing logic errors causing incorrect field values
 - ❌ **Missing GPS/Event export**: blackbox_decode produces .gps.csv, .event, .gpx files not present in RUST output
@@ -13,10 +13,11 @@ Based on comprehensive testing against blackbox_decode reference, significant da
 ### **Critical Comparison Results:**
 ```
 Feature               | RUST        | blackbox_decode | Status
-loopIteration        | Starts at 1 | Starts at 0     | ❌ MISMATCH
+loopIteration        | Starts at 0 | Starts at 0     | ✅ FIXED
 time (us)            | Different   | Different       | ❌ MISMATCH  
 Data Values          | Inconsistent| Reference       | ❌ INCORRECT
-CSV Headers          | Field,Value | fieldname,fieldvalue | ⚠️ MINOR
+CSV Headers          | fieldname,fieldvalue | fieldname,fieldvalue | ✅ FIXED
+Flight Mode Flags    | 12 flags (0-11) | 12 flags (0-11) | ✅ CORRECT
 GPS Export           | None        | .gps.csv,.gpx   | ❌ MISSING
 Event Export         | None        | .event          | ❌ MISSING
 ```
@@ -37,7 +38,7 @@ Event Export         | None        | .event          | ❌ MISSING
 ## 🔧 **IMMEDIATE PRIORITIES (Critical Fixes):**
 
 ### **P0 - Data Accuracy (BLOCKING)**
-1. **Fix loopIteration indexing**: Start from 0 to match blackbox_decode
+1. ✅ **Fix loopIteration indexing**: COMPLETED - Start from 0 to match blackbox_decode
 2. **Correct timestamp calculation**: Investigate time offset/calculation differences
 3. **Validate I/P frame parsing**: Ensure predictor logic matches JavaScript reference exactly
 4. **Fix field value parsing**: Root cause analysis of data value discrepancies
@@ -45,7 +46,8 @@ Event Export         | None        | .event          | ❌ MISSING
 ### **P1 - Export Compatibility**
 5. **Implement GPS export**: Add .gps.csv and .gpx file generation
 6. **Implement Event export**: Add .event file generation  
-7. **Fix CSV headers**: Use "fieldname,fieldvalue" format to match blackbox_decode exactly
+7. ✅ **Fix CSV headers**: COMPLETED - Use "fieldname,fieldvalue" format to match blackbox_decode exactly
+8. ✅ **Correct flight mode flags**: COMPLETED - Use only 12 flags (0-11) matching Betaflight firmware
 
 ### **P2 - Code Quality**
 8. Replace unwrap() calls with proper error handling

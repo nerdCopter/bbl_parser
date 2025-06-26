@@ -160,10 +160,10 @@ timeout 60s ./target/release/bbl_parser logs/*.BBL
 
 ✅ **Firmware-Accurate Flag Formatting**: This parser outputs flight mode flags, state flags, and failsafe phases that match the current Betaflight firmware exactly.
 
-- **Flight Mode Flags**: Uses the correct `flightModeFlags_e` enum from Betaflight runtime_config.h
-  - Supports current modes: ANGLE_MODE, HORIZON_MODE, MAG, BARO, GPS_HOLD, HEADFREE, PASSTHRU, FAILSAFE_MODE, GPS_RESCUE_MODE
-  - Output format: `"ANGLE_MODE|HORIZON_MODE"` (pipe-separated for CSV compatibility)
-  - Includes new GPS_RESCUE_MODE flag (bit 11) from current firmware
+- **Flight Mode Flags**: Uses the correct `flightModeFlags_e` enum from Betaflight runtime_config.h (12 flags total, 0-11)
+  - Supports current modes: ANGLE_MODE, HORIZON_MODE, MAG, ALTHOLD, POSHOLD, HEADFREE, CHIRP, PASSTHRU, FAILSAFE, GPS_RESCUE
+  - Output format: `"ANGLE_MODE|HORIZON_MODE"` (pipe-separated for CSV compatibility)  
+  - Correctly implements only the 12 actual flight mode flags (not 42 like incorrect implementations)
 
 - **State Flags**: Uses the correct `stateFlags_t` enum from Betaflight runtime_config.h  
   - Supports: GPS_FIX_HOME, GPS_FIX, CALIBRATE_MAG, SMALL_ANGLE, FIXED_WING
