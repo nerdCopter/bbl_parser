@@ -1065,8 +1065,8 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path, _debug: bool) -
         .with_context(|| format!("Failed to create headers CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
 
-    // Write CSV header
-    writeln!(writer, "Field,Value")?;
+    // Write CSV header to match blackbox_decode format
+    writeln!(writer, "fieldname,fieldvalue")?;
 
     // Parse and write all header lines
     for header_line in &header.all_headers {
@@ -1286,9 +1286,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     // Use a reasonable increment per frame instead of subtracting total count
                     base_loop_iter
                         .saturating_sub((all_frames.len() - frame_index - 1) as i32)
-                        .max(1) // Ensure minimum value of 1
+                        .max(0) // Start from 0 to match blackbox_decode
                 } else {
-                    raw_value
+                    // Subtract 1 to match blackbox_decode indexing (starts from 0, not 1)
+                    raw_value.saturating_sub(1)
                 };
 
                 write!(writer, "{value}")?;

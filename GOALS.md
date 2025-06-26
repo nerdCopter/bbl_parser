@@ -1,79 +1,115 @@
 ## Current Implementation Status (June 2025)
 
-✅ **COMPLETED GOALS:**
-- Full BBL binary format parsing using JavaScript blackbox-log-viewer reference
-- Complete I, P, S frame parsing with proper predictor implementation
-- Header parsing and field definition extraction
-- CSV export with 100%+ accuracy vs reference implementation (based on tested files)
-- Main CSV export with Betaflight-compatible field ordering
-- Headers CSV export by default (--save-headers equivalent)
-- Proper field encoding/decoding (signed VB, unsigned VB, etc.)
-- Motor value prediction fix (100% accuracy achieved)
-- S-frame timestamp inheritance and data merging
-- Multi-log detection and separate file generation
-- Basic unit conversions (voltage, current)
-- Energy calculation (energyCumulative field)
-- Time-sorted CSV output with proper chronological ordering
-- Debug mode with frame-by-frame analysis
-- Large file streaming support (432K+ frames)
-- **Betaflight firmware-accurate flag formatting** (flightModeFlags, stateFlags, failsafePhase)
-- **100% test success rate** (21/21 files in comprehensive testing)
+## 🚨 **CRITICAL ISSUES IDENTIFIED**
 
-🔧 **REMAINING WORK:**
-- Code refinement: Replace unwrap() calls with proper error handling
-- Complete missing implementations in frame parsing
-- S-frame field association (rxSignalReceived, rxFlightChannelsValid)  
-- G-frame (GPS) parsing and GPS CSV export
-- E-frame (event) parsing optimization and JSON event export
-- GPX file export for GPS track visualization
-- Unit conversion options (time, voltage, current, height, speed, rotation, acceleration)
-- IMU simulation (roll/pitch/yaw angle computation from gyro/accel/mag)
-- Current meter simulation and energy integration
-- GPS merge option (integrate GPS data into main CSV)
-- Raw mode output (unprocessed sensor values)
-- Statistics output (frame counts, timing, loop statistics)
-- Full RUST CRATE for Reusability and Modularity
-- Comprehensive error handling and edge case testing
+Based on comprehensive testing against blackbox_decode reference, significant data parsing inaccuracies have been identified:
 
-📊 **CURRENT ACCURACY:** 100.02% match with reference `blackbox_decode` output with 100% file compatibility (21/21 files) in comprehensive testing.
+### **Data Integrity Issues:**
+- ❌ **loopIteration mismatch**: RUST starts at 1, blackbox_decode starts at 0
+- ❌ **Timestamp differences**: Different starting time values between implementations  
+- ❌ **Data value discrepancies**: Fundamental parsing logic errors causing incorrect field values
+- ❌ **Missing GPS/Event export**: blackbox_decode produces .gps.csv, .event, .gpx files not present in RUST output
+
+### **Critical Comparison Results:**
+```
+Feature               | RUST        | blackbox_decode | Status
+loopIteration        | Starts at 1 | Starts at 0     | ❌ MISMATCH
+time (us)            | Different   | Different       | ❌ MISMATCH  
+Data Values          | Inconsistent| Reference       | ❌ INCORRECT
+CSV Headers          | Field,Value | fieldname,fieldvalue | ⚠️ MINOR
+GPS Export           | None        | .gps.csv,.gpx   | ❌ MISSING
+Event Export         | None        | .event          | ❌ MISSING
+```
+
+**CONCLUSION**: Current RUST implementation is **NOT an effective replacement** for blackbox_decode due to data parsing inaccuracies.
 
 ---
 
-Implement the actual BBL binary format specification by explicitly replicating the JavaScript code from the Betaflight blackbox-log-viewer repository using the following sources:
-https://github.com/betaflight/blackbox-log-viewer/tree/master/src
-https://raw.githubusercontent.com/betaflight/blackbox-log-viewer/master/src/flightlog.js
-https://raw.githubusercontent.com/betaflight/blackbox-log-viewer/master/src/flightlog_parser.js
-https://raw.githubusercontent.com/betaflight/blackbox-log-viewer/master/src/datastream.js
-https://raw.githubusercontent.com/betaflight/blackbox-log-viewer/master/src/decoders.js
+## ✅ **WORKING COMPONENTS:**
+- BBL binary format reading and header parsing
+- Frame type detection (I, P, S, E, G, H frames)
+- Multi-log detection and file generation
+- CSV structure and field ordering
+- Graphical analysis compatibility (identical PNG output)
+- Debug mode functionality
+- Large file handling (streaming architecture)
 
-The goal is to fully read, parse and decode binary BBL files. Do not re-invent, explicitly use the javascript as a source to create the RUST project's code.
+## 🔧 **IMMEDIATE PRIORITIES (Critical Fixes):**
 
-Every BBL contains headers in plaintext which contain important information about the aircraft's settings, but more importantly, they contain details about the binary data and how to decode them:
-`Field I name`
-`Field I signed`
-`Field I predictor`
-`Field I encoding`
-`Field P predictor`
-`Field P encoding`
-`Field S name`
-`Field S signed`
-`Field S predictor`
-`Field S encoding`
+### **P0 - Data Accuracy (BLOCKING)**
+1. **Fix loopIteration indexing**: Start from 0 to match blackbox_decode
+2. **Correct timestamp calculation**: Investigate time offset/calculation differences
+3. **Validate I/P frame parsing**: Ensure predictor logic matches JavaScript reference exactly
+4. **Fix field value parsing**: Root cause analysis of data value discrepancies
 
-Each BBL may or may not contains multiple flights logs. Each flight log starts with it's own set of plaintext headers. Each flight log within a BBL will contain I frames and P frames, and maybe contain E frames and S frames and G frames. G frames are GPS. H frames are GPS home position markers.
+### **P1 - Export Compatibility**
+5. **Implement GPS export**: Add .gps.csv and .gpx file generation
+6. **Implement Event export**: Add .event file generation  
+7. **Fix CSV headers**: Use "fieldname,fieldvalue" format to match blackbox_decode exactly
 
-**IMPLEMENTATION NOTE:** Our RUST parser successfully handles I, P, S frames with high accuracy. E-frames (events) are parsed but not included in CSV output as they represent discrete events rather than continuous flight data.
+### **P2 - Code Quality**
+8. Replace unwrap() calls with proper error handling
+9. Add comprehensive unit tests with known good data
+10. Implement reference data validation tests
 
-Binary utility `blackbox_decode` outputs useful statistics and creates `.csv`, `.gpx`, and `.event` files that contain the flightlog data.  We can use it for data comparison, but do not embed nor call binary tools from within the RUST program. `blackbox_decode --limits` can be used for any `*.BBL` file.  The `--limits` is only useful to see the min and max `loopIteration` and `time`.
+---
 
-**TESTING STATUS:** Parser successfully processes both Betaflight and EmuFlight BBL files with 98%+ accuracy compared to reference implementations.
+## 📊 **TESTING REQUIREMENTS:**
 
-Please use `timeout` when testing BBL parsing. I would expect it not to take over 60s unless debug output slows the process. Do not set a timeout less than 15s because it is too short.
+### **Data Validation Tests:**
+- Compare first 10 rows of CSV output with blackbox_decode reference
+- Validate loopIteration, timestamp, and key sensor values
+- Test multiple BBL files across different firmware versions
+- Automated regression testing against blackbox_decode output
 
-We can use the older blackbox_decode (a.k.a blackbox-tools) project https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_decode.c for further analysis and comaprison.
+### **Export Completeness Tests:**
+- Verify all file types produced (.csv, .headers.csv, .gps.csv, .event, .gpx)
+- Compare file counts and sizes with blackbox_decode reference
+- Test GPS and Event data extraction accuracy
 
-Two RUST projects on github that may help or may hinder, i do not know. I never inspected the first, and the second is betaflight version specific and not up to date for Betaflight 4.6.
- 1) https://github.com/ilya-epifanov/fc-blackbox
- 2) https://github.com/blackbox-log/blackbox-log
+---
 
-Use `.github/copilot-instructions.md`; request clarification if needed.
+## 🎯 **IMPLEMENTATION APPROACH:**
+
+### **Reference Sources (MANDATORY):**
+- Primary: [blackbox-log-viewer JavaScript](https://github.com/betaflight/blackbox-log-viewer/blob/master/src/flightlog.js)
+- Secondary: [blackbox-tools C reference](https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_decode.c)
+
+### **Debugging Strategy:**
+1. Add extensive debug logging for frame parsing
+2. Implement side-by-side comparison with blackbox_decode output
+3. Create minimal test cases with known expected outputs
+4. Validate predictor algorithms step-by-step
+
+### **Quality Gates:**
+- **Accuracy**: 100% data match with blackbox_decode for test cases
+- **Completeness**: Generate all file types that blackbox_decode produces
+- **Compatibility**: Handle all BBL formats (Betaflight, EmuFlight, INAV)
+
+---
+
+## 🚫 **CONSTRAINTS:**
+- Do not embed or call external binaries from RUST code
+- Do not re-invent algorithms - follow JavaScript reference exactly
+- Maintain streaming architecture for large files
+- Use timeout protection for all BBL parsing operations (15-60s)
+
+---
+
+## 📈 **SUCCESS CRITERIA:**
+
+**MUST HAVE (v1.0):**
+- ✅ Identical CSV data output to blackbox_decode (byte-for-byte comparison)
+- ✅ Complete file export parity (.csv, .headers.csv, .gps.csv, .event, .gpx)
+- ✅ 100% test file compatibility
+- ✅ Zero data parsing errors vs reference
+
+**SHOULD HAVE (v1.1):**
+- Production-ready error handling
+- Performance optimization
+- Additional unit conversions
+- IMU simulation features
+
+**Current Status**: 🚨 **CRITICAL ISSUES** - Data parsing accuracy must be fixed before production use.
+
+The RUST implementation currently replicates graphical analysis but fails at core data parsing, making it unsuitable as a blackbox_decode replacement until critical issues are resolved.
