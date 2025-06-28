@@ -149,6 +149,29 @@ fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool
     left_side < frame_interval_p_num as u32
 }
 
+// Based on the log sampling rate, work out how many frames would have been skipped after the last frame that was
+// parsed until we get to the iteration with the given index.
+fn count_intentionally_skipped_frames_to(
+    target_iteration: i32,
+    last_main_frame_iteration: i32,
+    sysconfig: &HashMap<String, i32>,
+) -> u32 {
+    let mut count = 0;
+    if last_main_frame_iteration == -1 {
+        // Haven't parsed a frame yet so there's no frames to skip
+        return 0;
+    } else {
+        let mut frame_index = last_main_frame_iteration + 1;
+        while frame_index < target_iteration {
+            if !should_have_frame(frame_index as u32, sysconfig) {
+                count += 1;
+            }
+            frame_index += 1;
+        }
+    }
+    count
+}
+
 #[derive(Debug, Clone)]
 struct CsvExportOptions {
     output_dir: Option<String>,
@@ -1251,15 +1274,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 cumulative_energy_mah += energy_increment;
 
                 // Debug energy calculation for first few frames
-                if debug && cumulative_energy_mah < 1.0 && last_timestamp_us > 0 {
-                    println!("DEBUG: Energy calc - raw_current={}, amps={:.3}, time_delta_us={}, energy_inc={:.6}, total={:.3}", 
-                             current_raw, current_amps, *timestamp - last_timestamp_us, energy_increment, cumulative_energy_mah);
-                }
+                
             }
             // Always update timestamp for next calculation, even on first frame
             last_timestamp_us = *timestamp;
-        } else if debug && last_timestamp_us == 0 {
-            println!("DEBUG: amperageLatest not found in frame data for energy calculation");
         }
 
         // Write data row using optimized field mapping
@@ -1295,8 +1313,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                // Convert to volts to match blackbox_decode exactly
-                write!(writer, "{:.1}", convert_vbat_to_volts(raw_value))?;
+                let converted_volts = convert_vbat_to_volts(raw_value);
+
+                
+                write!(writer, "{converted_volts:.1}")?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 // Convert to amps to match blackbox_decode exactly
@@ -1331,18 +1351,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
 
-                // Debug field lookup for key fields to understand the zero value issue
-                if debug
-                    && (lookup_name.contains("axisP")
-                        || lookup_name.contains("motor")
-                        || lookup_name.contains("gyroADC"))
-                    && value == 0
-                {
-                    println!("DEBUG: CSV export field '{}' = 0, frame.data has: {:?}, latest_s_frame_data has: {:?}", 
-                             lookup_name,
-                             frame.data.get(lookup_name),
-                             latest_s_frame_data.get(lookup_name));
-                }
+                
 
                 write!(writer, "{value:3}")?; // Right-aligned with 3-character field width to match blackbox_decode
             }
@@ -1498,18 +1507,15 @@ fn parse_frames(
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
+    // Details about the last main frame that was successfully parsed
+    let mut last_main_frame_iteration: i32 = -1;
+    let mut last_main_frame_time: i32 = -1;
+    
+
     // Decide whether to store all frames based on CSV export requirement
     let store_all_frames = csv_export; // Store all frames when CSV export is requested
 
-    if debug {
-        println!("Binary data size: {} bytes", binary_data.len());
-        if !binary_data.is_empty() {
-            println!(
-                "First 16 bytes: {:02X?}",
-                &binary_data[..16.min(binary_data.len())]
-            );
-        }
-    }
+    
 
     if binary_data.is_empty() {
         return Ok((stats, sample_frames, Some(debug_frames)));
@@ -1527,7 +1533,7 @@ fn parse_frames(
 
     // Main frame parsing loop - process frames as a stream, don't store all
     while !stream.eof {
-        let frame_start_pos = stream.pos;
+        let _frame_start_pos = stream.pos;
 
         match stream.read_byte() {
             Ok(frame_type_byte) => {
@@ -1543,20 +1549,13 @@ fn parse_frames(
                         stats.unknown_frame_bytes.push(frame_type_byte);
                         stats.invalid_frame_types += 1;
 
-                        if debug && stats.failed_frames < 3 {
-                            println!(
-                                "Unknown frame type byte 0x{:02X} ('{:?}') at offset {}",
-                                frame_type_byte, frame_type_byte as char, frame_start_pos
-                            );
-                        }
+                        
                         stats.failed_frames += 1;
                         continue;
                     }
                 };
 
-                if debug && stats.total_frames < 3 {
-                    println!("Found frame type '{frame_type}' at offset {frame_start_pos}");
-                }
+                
 
                 // Parse frame using proper streaming logic
                 let mut frame_data = HashMap::new();
@@ -1568,16 +1567,23 @@ fn parse_frames(
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
 
+                            let skipped_frames = count_intentionally_skipped_frames_to(
+                                frame_data.get("loopIteration").copied().unwrap_or(0),
+                                last_main_frame_iteration,
+                                &header.sysconfig,
+                            );
+
                             if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
                                 None, // I-frames don't use prediction
                                 None,
-                                0,
+                                skipped_frames,
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                last_main_frame_time,
                             )
                             .is_ok()
                             {
@@ -1588,46 +1594,12 @@ fn parse_frames(
                                     if i < frame_history.current_frame.len() {
                                         let value = frame_history.current_frame[i];
                                         frame_data.insert(field_name.clone(), value);
-
-                                        // Debug key fields to understand parsing issues
-                                        if debug
-                                            && stats.i_frames < 2
-                                            && (field_name.contains("gyroADC")
-                                                || field_name.contains("motor")
-                                                || field_name.contains("axisP"))
-                                        {
-                                            println!(
-                                                "DEBUG: I-frame #{} field '{}' = {}",
-                                                stats.i_frames + 1,
-                                                field_name,
-                                                value
-                                            );
-                                        }
                                     }
-                                }
-
-                                if debug && stats.i_frames < 2 {
-                                    println!("DEBUG: I-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.i_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
                                 }
 
                                 // Merge lastSlow data into I-frame (following JavaScript approach)
                                 for (key, value) in &last_slow_data {
                                     frame_data.insert(key.clone(), *value);
-                                }
-
-                                if debug && stats.i_frames < 2 {
-                                    println!("DEBUG: I-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.i_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
-                                }
-
-                                if debug && stats.i_frames < 3 {
-                                    println!("DEBUG: I-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
-                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
                                 }
 
                                 // Update history for future P-frames
@@ -1642,6 +1614,13 @@ fn parse_frames(
                                 frame_history.valid = true;
                                 parsing_success = true;
                                 stats.i_frames += 1;
+
+                                // Update last main frame iteration and time
+                                last_main_frame_iteration = frame_data
+                                    .get("loopIteration")
+                                    .copied()
+                                    .unwrap_or(0);
+                                last_main_frame_time = frame_data.get("time").copied().unwrap_or(0);
                             }
                         }
                     }
@@ -1649,16 +1628,23 @@ fn parse_frames(
                         if header.p_frame_def.count > 0 && frame_history.valid {
                             let mut p_frame_values = vec![0i32; header.p_frame_def.count];
 
+                            let skipped_frames = count_intentionally_skipped_frames_to(
+                                frame_data.get("loopIteration").copied().unwrap_or(0),
+                                last_main_frame_iteration,
+                                &header.sysconfig,
+                            );
+
                             if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
                                 &mut p_frame_values,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
-                                0,     // TODO: Calculate skipped frames properly
+                                skipped_frames,
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                last_main_frame_time,
                             )
                             .is_ok()
                             {
@@ -1694,46 +1680,12 @@ fn parse_frames(
                                     if i < frame_history.current_frame.len() {
                                         let value = frame_history.current_frame[i];
                                         frame_data.insert(field_name.clone(), value);
-
-                                        // Debug key fields to understand parsing issues
-                                        if debug
-                                            && stats.p_frames < 2
-                                            && (field_name.contains("gyroADC")
-                                                || field_name.contains("motor")
-                                                || field_name.contains("axisP"))
-                                        {
-                                            println!(
-                                                "DEBUG: P-frame #{} field '{}' = {}",
-                                                stats.p_frames + 1,
-                                                field_name,
-                                                value
-                                            );
-                                        }
                                     }
-                                }
-
-                                if debug && stats.p_frames < 2 {
-                                    println!("DEBUG: P-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.p_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
                                 }
 
                                 // Merge lastSlow data into P-frame (following JavaScript approach)
                                 for (key, value) in &last_slow_data {
                                     frame_data.insert(key.clone(), *value);
-                                }
-
-                                if debug && stats.p_frames < 2 {
-                                    println!("DEBUG: P-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.p_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
-                                }
-
-                                if debug && stats.p_frames < 3 {
-                                    println!("DEBUG: P-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
-                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
                                 }
 
                                 // Update history
@@ -1745,6 +1697,13 @@ fn parse_frames(
                                     .copy_from_slice(&frame_history.current_frame);
                                 parsing_success = true;
                                 stats.p_frames += 1;
+
+                                // Update last main frame iteration and time
+                                last_main_frame_iteration = frame_data
+                                    .get("loopIteration")
+                                    .copied()
+                                    .unwrap_or(0);
+                                last_main_frame_time = frame_data.get("time").copied().unwrap_or(0);
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history
@@ -1757,18 +1716,8 @@ fn parse_frames(
                             if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug)
                             {
                                 // Following JavaScript approach: update lastSlow data
-                                if debug && stats.s_frames < 3 {
-                                    println!("DEBUG: Processing S-frame with data: {data:?}");
-                                }
-
                                 for (key, value) in &data {
                                     last_slow_data.insert(key.clone(), *value);
-                                }
-
-                                if debug && stats.s_frames < 3 {
-                                    println!(
-                                        "DEBUG: S-frame data updated lastSlow: {last_slow_data:?}"
-                                    );
                                 }
 
                                 frame_data = data;
@@ -1819,9 +1768,7 @@ fn parse_frames(
                     // Apply blackbox_decode technical validation
                     if !is_frame_technically_valid(frame_type, &frame_data, header, debug) {
                         stats.frame_validation_failures += 1;
-                        if debug && stats.frame_validation_failures < 5 {
-                            println!("Frame validation failed for {frame_type} frame");
-                        }
+                        
                         parsing_success = false; // Mark as failed
                         stats.failed_frames += 1;
                     }
@@ -1830,7 +1777,7 @@ fn parse_frames(
                 stats.total_frames += 1;
 
                 // Show progress for large files
-                if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
+                if stats.total_frames % 100000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
                     std::io::stdout().flush().unwrap_or_default();
                 }
@@ -1854,21 +1801,7 @@ fn parse_frames(
                         timestamp_us
                     };
 
-                    if debug && (frame_type == 'I' || frame_type == 'P') && sample_frames.len() < 3
-                    {
-                        println!(
-                            "DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}",
-                            frame_type,
-                            timestamp_us,
-                            frame_data.keys().collect::<Vec<_>>()
-                        );
-                        if let Some(time_val) = frame_data.get("time") {
-                            println!("DEBUG: 'time' field value: {time_val}");
-                        }
-                        if let Some(loop_val) = frame_data.get("loopIteration") {
-                            println!("DEBUG: 'loopIteration' field value: {loop_val}");
-                        }
-                    }
+                    
 
                     let decoded_frame = DecodedFrame {
                         frame_type,
@@ -1879,16 +1812,7 @@ fn parse_frames(
                     sample_frames.push(decoded_frame.clone());
 
                     // Debug what data is actually being stored in sample frames
-                    if debug && (frame_type == 'I' || frame_type == 'P') {
-                        let non_zero_count =
-                            decoded_frame.data.values().filter(|&&v| v != 0).count();
-                        println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
-                                 frame_type,
-                                 decoded_frame.data.len(),
-                                 non_zero_count,
-                                 decoded_frame.data.get("axisP[0]"),
-                                 decoded_frame.data.get("motor[0]"));
-                    }
+                    
 
                     // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
@@ -1913,14 +1837,7 @@ fn parse_frames(
                         timestamp_us
                     };
 
-                    if debug && timestamp_us == 0 && debug_frame_list.len() < 5 {
-                        println!(
-                            "DEBUG: Non-sample frame {:?} has timestamp 0->{}. Fields: {:?}",
-                            frame_type,
-                            final_timestamp,
-                            frame_data.keys().collect::<Vec<_>>()
-                        );
-                    }
+                    
 
                     let decoded_frame = DecodedFrame {
                         frame_type,
@@ -1930,32 +1847,7 @@ fn parse_frames(
                     };
 
                     // Debug what data is actually being stored
-                    if debug
-                        && debug_frame_list.len() < 3
-                        && (frame_type == 'I' || frame_type == 'P')
-                    {
-                        let non_zero_count =
-                            decoded_frame.data.values().filter(|&&v| v != 0).count();
-                        println!("DEBUG: Storing {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
-                                 frame_type,
-                                 decoded_frame.data.len(),
-                                 non_zero_count,
-                                 decoded_frame.data.get("axisP[0]"),
-                                 decoded_frame.data.get("motor[0]"));
-
-                        // If the frame has mostly zero data, this indicates a parsing problem
-                        if non_zero_count < 5 && decoded_frame.data.len() > 10 {
-                            println!(
-                                "WARNING: Frame has mostly zero data - possible parsing issue"
-                            );
-                            if debug {
-                                println!(
-                                    "Frame data keys: {:?}",
-                                    decoded_frame.data.keys().collect::<Vec<_>>()
-                                );
-                            }
-                        }
-                    }
+                    
 
                     debug_frame_list.push(decoded_frame);
                 }
@@ -1974,12 +1866,7 @@ fn parse_frames(
             Err(_) => {
                 // Stream read error - likely corrupted data
                 stats.corrupted_frames += 1;
-                if debug && stats.corrupted_frames < 5 {
-                    println!(
-                        "Stream read error at position {} - corrupted data",
-                        stream.pos
-                    );
-                }
+                
                 break;
             }
         }
@@ -2386,10 +2273,10 @@ fn format_flight_mode_flags(flags: i32) -> String {
     }
     // Bit 9: RANGEFINDER_MODE is commented out in current Betaflight firmware
     if (flags & (1 << 10)) != 0 {
-        modes.push("FAILSAFE"); // FAILSAFE_MODE = (1 << 10)
+        modes.push("FAILSAFE_MODE"); // FAILSAFE_MODE = (1 << 10)
     }
     if (flags & (1 << 11)) != 0 {
-        modes.push("GPS_RESCUE"); // GPS_RESCUE_MODE = (1 << 11)
+        modes.push("GPS_RESCUE_MODE"); // GPS_RESCUE_MODE = (1 << 11)
     }
 
     if modes.is_empty() {
@@ -2591,8 +2478,8 @@ mod tests {
         assert_eq!(format_flight_mode_flags(1), "ANGLE_MODE"); // bit 0 = ANGLE_MODE
         assert_eq!(format_flight_mode_flags(2), "HORIZON_MODE"); // bit 1 = HORIZON_MODE
         assert_eq!(format_flight_mode_flags(4), "MAG"); // bit 2 = MAG_MODE
-        assert_eq!(format_flight_mode_flags(8), "BARO"); // bit 3 = ALT_HOLD_MODE (old name BARO)
-        assert_eq!(format_flight_mode_flags(32), "GPS_HOLD"); // bit 5 = POS_HOLD_MODE (old name GPS_HOLD)
+        assert_eq!(format_flight_mode_flags(8), "ALTHOLD"); // bit 3 = ALT_HOLD_MODE (old name BARO)
+        assert_eq!(format_flight_mode_flags(32), "POSHOLD"); // bit 5 = POS_HOLD_MODE (old name GPS_HOLD)
         assert_eq!(format_flight_mode_flags(64), "HEADFREE"); // bit 6 = HEADFREE_MODE
         assert_eq!(format_flight_mode_flags(256), "PASSTHRU"); // bit 8 = PASSTHRU_MODE
         assert_eq!(format_flight_mode_flags(1024), "FAILSAFE_MODE"); // bit 10 = FAILSAFE_MODE

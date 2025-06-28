@@ -6,7 +6,7 @@ Based on comprehensive testing against blackbox_decode reference, significant da
 
 ### **Data Integrity Issues:**
 - ✅ **loopIteration mismatch**: FIXED - Now starts from 0 to match blackbox_decode
-- ❌ **Timestamp differences**: Different starting time values between implementations  
+- ✅ **Timestamp differences**: Implemented logic for time offset/calculation differences
 - ❌ **Data value discrepancies**: Fundamental parsing logic errors causing incorrect field values
 - ❌ **Missing GPS/Event export**: blackbox_decode produces .gps.csv, .event, .gpx files not present in RUST output
 

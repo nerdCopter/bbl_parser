@@ -27,7 +27,7 @@ pub const PREDICT_VBATREF: u8 = 9;
 #[allow(dead_code)]
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
-
+#[allow(dead_code)]
 pub struct BBLDataStream<'a> {
     data: &'a [u8],
     pub pos: usize,
@@ -316,6 +316,7 @@ pub fn apply_predictor(
     skipped_frames: u32,
     sysconfig: &HashMap<String, i32>,
     field_names: &[String],
+    last_main_frame_time: i32,
 ) -> i32 {
     match predictor {
         PREDICT_0 => raw_value,
@@ -407,6 +408,8 @@ pub fn apply_predictor(
             raw_value + minmotor
         }
 
+        PREDICT_LAST_MAIN_FRAME_TIME => raw_value + last_main_frame_time,
+
         _ => raw_value,
     }
 }
@@ -443,6 +446,7 @@ pub fn parse_frame_data(
     raw: bool,
     data_version: u8,
     sysconfig: &HashMap<String, i32>,
+    last_main_frame_time: i32,
 ) -> Result<()> {
     let mut i = 0;
     let mut values = [0i32; 8];
@@ -461,6 +465,7 @@ pub fn parse_frame_data(
                 skipped_frames,
                 sysconfig,
                 &frame_def.field_names,
+                last_main_frame_time,
             );
             i += 1;
             continue;
@@ -493,6 +498,7 @@ pub fn parse_frame_data(
                         skipped_frames,
                         sysconfig,
                         &frame_def.field_names,
+                        last_main_frame_time,
                     );
                 }
                 i += 4;
@@ -522,6 +528,7 @@ pub fn parse_frame_data(
                         skipped_frames,
                         sysconfig,
                         &frame_def.field_names,
+                        last_main_frame_time,
                     );
                 }
                 i += 3;
@@ -560,6 +567,7 @@ pub fn parse_frame_data(
                         skipped_frames,
                         sysconfig,
                         &frame_def.field_names,
+                        last_main_frame_time,
                     );
                 }
                 i += group_count;
@@ -579,6 +587,7 @@ pub fn parse_frame_data(
                     skipped_frames,
                     sysconfig,
                     &frame_def.field_names,
+                    last_main_frame_time,
                 );
             }
         }
