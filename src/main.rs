@@ -1164,49 +1164,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
 
-    // Post-process frames to fix zero timestamps (blackbox_decode compatibility)
-    // The first I-frame often has time=0, which cascades to many P-frames
-    if !all_frames.is_empty() {
-        let looptime_us = log.header.looptime as u64;
-        let effective_looptime = if looptime_us > 0 { looptime_us } else { 125 }; // Default fallback
-
-        // Find first valid timestamp to use as reference
-        let mut first_valid_time = None;
-        for (timestamp, _, _) in &all_frames {
-            if *timestamp > 0 {
-                first_valid_time = Some(*timestamp);
-                break;
-            }
-        }
-
-        if let Some(base_time) = first_valid_time {
-            // Count zero-timestamp frames at the beginning
-            let zero_frames_count = all_frames
-                .iter()
-                .take_while(|(timestamp, _, _)| *timestamp == 0)
-                .count();
-
-            if debug && zero_frames_count > 0 {
-                println!(
-                    "Interpolating timestamps for {zero_frames_count} frames with zero timestamps"
-                );
-            }
-
-            // Apply time interpolation for zero timestamps
-            for (i, (timestamp, _frame_type, _frame)) in all_frames.iter_mut().enumerate() {
-                if *timestamp == 0 {
-                    // Calculate interpolated timestamp working backwards from first valid time
-                    let frames_before_valid = zero_frames_count.saturating_sub(i);
-                    *timestamp =
-                        base_time.saturating_sub(frames_before_valid as u64 * effective_looptime);
-                }
-            }
-        }
-
-        // Re-sort after timestamp corrections
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-    }
-
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
         for frame in &log.sample_frames {
@@ -1234,17 +1191,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
     // Find first valid loopIteration for interpolation of invalid values
-    let mut first_valid_loop_iter = None;
-    for (_, _, frame) in &all_frames {
-        if let Some(loop_iter) = frame.data.get("loopIteration") {
-            if *loop_iter > 1000 {
-                first_valid_loop_iter = Some(*loop_iter);
-                break;
-            }
-        }
-    }
-
-    let base_loop_iter = first_valid_loop_iter.unwrap_or(71000); // Default fallback if no valid found
 
     for (timestamp, frame_type, frame) in all_frames.iter() {
         // Debug first few frames to see what we're actually processing
@@ -1274,7 +1220,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 cumulative_energy_mah += energy_increment;
 
                 // Debug energy calculation for first few frames
-                
             }
             // Always update timestamp for next calculation, even on first frame
             last_timestamp_us = *timestamp;
@@ -1291,31 +1236,13 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Output full timestamp precision for blackbox_decode compatibility
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
-                // Use actual loop iteration from frame data, with interpolation for invalid values
-                let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-
-                // Interpolate low values (likely from first corrupted I-frame)
-                let value = if raw_value < 1000 && base_loop_iter > 1000 {
-                    // Calculate proper loopIteration by estimating frames before the valid reference
-                    let frame_index = all_frames
-                        .iter()
-                        .position(|(ts, _, _)| ts == timestamp)
-                        .unwrap_or(0);
-                    // Use a reasonable increment per frame instead of subtracting total count
-                    base_loop_iter
-                        .saturating_sub((all_frames.len() - frame_index - 1) as i32)
-                        .max(0) // Start from 0 to match blackbox_decode
-                } else {
-                    // Subtract 1 to match blackbox_decode indexing (starts from 0, not 1)
-                    raw_value.saturating_sub(1)
-                };
-
+                // Use actual loop iteration from frame data, matching blackbox_decode.c
+                let value = frame.data.get("loopIteration").copied().unwrap_or(0);
                 write!(writer, "{value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 let converted_volts = convert_vbat_to_volts(raw_value);
 
-                
                 write!(writer, "{converted_volts:.1}")?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
@@ -1350,8 +1277,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .copied()
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
-
-                
 
                 write!(writer, "{value:3}")?; // Right-aligned with 3-character field width to match blackbox_decode
             }
@@ -1510,12 +1435,9 @@ fn parse_frames(
     // Details about the last main frame that was successfully parsed
     let mut last_main_frame_iteration: i32 = -1;
     let mut last_main_frame_time: i32 = -1;
-    
 
     // Decide whether to store all frames based on CSV export requirement
     let store_all_frames = csv_export; // Store all frames when CSV export is requested
-
-    
 
     if binary_data.is_empty() {
         return Ok((stats, sample_frames, Some(debug_frames)));
@@ -1549,13 +1471,10 @@ fn parse_frames(
                         stats.unknown_frame_bytes.push(frame_type_byte);
                         stats.invalid_frame_types += 1;
 
-                        
                         stats.failed_frames += 1;
                         continue;
                     }
                 };
-
-                
 
                 // Parse frame using proper streaming logic
                 let mut frame_data = HashMap::new();
@@ -1616,10 +1535,8 @@ fn parse_frames(
                                 stats.i_frames += 1;
 
                                 // Update last main frame iteration and time
-                                last_main_frame_iteration = frame_data
-                                    .get("loopIteration")
-                                    .copied()
-                                    .unwrap_or(0);
+                                last_main_frame_iteration =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0);
                                 last_main_frame_time = frame_data.get("time").copied().unwrap_or(0);
                             }
                         }
@@ -1699,10 +1616,8 @@ fn parse_frames(
                                 stats.p_frames += 1;
 
                                 // Update last main frame iteration and time
-                                last_main_frame_iteration = frame_data
-                                    .get("loopIteration")
-                                    .copied()
-                                    .unwrap_or(0);
+                                last_main_frame_iteration =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0);
                                 last_main_frame_time = frame_data.get("time").copied().unwrap_or(0);
                             }
                         } else {
@@ -1768,7 +1683,7 @@ fn parse_frames(
                     // Apply blackbox_decode technical validation
                     if !is_frame_technically_valid(frame_type, &frame_data, header, debug) {
                         stats.frame_validation_failures += 1;
-                        
+
                         parsing_success = false; // Mark as failed
                         stats.failed_frames += 1;
                     }
@@ -1801,8 +1716,6 @@ fn parse_frames(
                         timestamp_us
                     };
 
-                    
-
                     let decoded_frame = DecodedFrame {
                         frame_type,
                         timestamp_us: final_timestamp,
@@ -1812,7 +1725,6 @@ fn parse_frames(
                     sample_frames.push(decoded_frame.clone());
 
                     // Debug what data is actually being stored in sample frames
-                    
 
                     // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
@@ -1837,8 +1749,6 @@ fn parse_frames(
                         timestamp_us
                     };
 
-                    
-
                     let decoded_frame = DecodedFrame {
                         frame_type,
                         timestamp_us: final_timestamp,
@@ -1847,7 +1757,6 @@ fn parse_frames(
                     };
 
                     // Debug what data is actually being stored
-                    
 
                     debug_frame_list.push(decoded_frame);
                 }
@@ -1866,7 +1775,7 @@ fn parse_frames(
             Err(_) => {
                 // Stream read error - likely corrupted data
                 stats.corrupted_frames += 1;
-                
+
                 break;
             }
         }
