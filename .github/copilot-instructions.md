@@ -26,12 +26,23 @@
 ## Goals & Resources
 - **Goals:** Reference project goals in `GOALS.md` and request clarification if needed.
 - **Source Code Resources:**  
-  - Primary: [blackbox-log-viewer (BBE)](https://github.com/betaflight/blackbox-log-viewer/blob/master/src/flightlog.js)
-  - Fallback: [blackbox_decode (blackbox-tools)](https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_decode.c)
+  - Primary: [blackbox_decode (blackbox-tools)](https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_decode.c)
+  - Fallback: [blackbox-log-viewer (BBE)](https://github.com/betaflight/blackbox-log-viewer/blob/master/src/flightlog.js)
+
+## Data Validation
+- **REQUIRED:**  The CSV output must precisely match the format and header order of blackbox_decode CSV files.
 
 ## Committing Rules
-- **Commit Conditions:** Only commit if there are no errors or warnings.
-- **Files to Commit:** Only `src/**/*.rs`, `Cargo.*`, `Readme.md`, and `.gitignore` — never `git add .` or `git add -A`.
-- **Pre-Commit Check:** Check `git diff --cached` before committing.
+- **Commit Conditions:** Only commit if:
+  - `cargo clippy -- -D warnings` passes.
+  - `cargo fmt --all -- --check` passes.
+  - `cargo test --verbose` passes.
+  - `cargo test --features=cli --verbose` passes.
+- **Files to Commit:**
+  - Only `src/**/*.rs`, `Cargo.*`, `README.md`, `OVERVIEW.md` and `.gitignore` — never `git add .` or `git add -A`.
+  - Follow `.gitignore`.
 - **User Confirmation:** Ask user before committing.
-- **Commit Message:** Use concise commit messages and descriptions.
+- **Commit Message:**
+  - Check `git diff --cached` before committing.
+  - Use concise commit messages and descriptions.
+  - Use `feat:`, `fix:`, `docs:` where applicable.
