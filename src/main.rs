@@ -486,6 +486,18 @@ fn parse_single_log(
         stats.end_time_us = frames.last().unwrap().timestamp_us;
     }
 
+    if debug {
+        // Debug: Show I-frame field order to compare with C implementation
+        println!("DEBUG: I-frame field order:");
+        for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
+            println!("  [{}]: {}", i, field_name);
+            if i > 5 { // Only show first few to avoid spam
+                println!("  ... ({} total fields)", header.i_frame_def.field_names.len());
+                break;
+            }
+        }
+    }
+
     let log = BBLLog {
         log_number,
         total_logs,
@@ -1114,6 +1126,13 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
 
+    // Use sample_frames instead of debug_frames for testing
+    for frame in &log.sample_frames {
+        all_frames.push((frame.timestamp_us, frame.frame_type, frame));
+    }
+
+    // Temporarily disable debug_frames to test if they have different values
+    /*
     if let Some(ref debug_frames) = log.debug_frames {
         // Collect I, P, S frames (exclude E frames as they are events, not flight data)
         for frame_type in ['I', 'P', 'S'] {
@@ -1137,6 +1156,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             }
         }
     }
+    */
 
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
@@ -1221,7 +1241,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         }
     }
 
-    let base_loop_iter = first_valid_loop_iter.unwrap_or(71000); // Default fallback if no valid found
+    let _base_loop_iter = first_valid_loop_iter.unwrap_or(71000); // Default fallback if no valid found
 
     for (timestamp, frame_type, frame) in all_frames.iter() {
         // Debug first few frames to see what we're actually processing
@@ -1273,26 +1293,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Output full timestamp precision for blackbox_decode compatibility
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
-                // Use actual loop iteration from frame data, with interpolation for invalid values
+                // Output loopIteration exactly as stored in frame data - no adjustment like blackbox_decode.c
                 let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-
-                // Interpolate low values (likely from first corrupted I-frame)
-                let value = if raw_value < 1000 && base_loop_iter > 1000 {
-                    // Calculate proper loopIteration by estimating frames before the valid reference
-                    let frame_index = all_frames
-                        .iter()
-                        .position(|(ts, _, _)| ts == timestamp)
-                        .unwrap_or(0);
-                    // Use a reasonable increment per frame instead of subtracting total count
-                    base_loop_iter
-                        .saturating_sub((all_frames.len() - frame_index - 1) as i32)
-                        .max(0) // Start from 0 to match blackbox_decode
-                } else {
-                    // Subtract 1 to match blackbox_decode indexing (starts from 0, not 1)
-                    raw_value.saturating_sub(1)
-                };
-
-                write!(writer, "{value}")?;
+                write!(writer, "{raw_value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 // Convert to volts to match blackbox_decode exactly
@@ -2171,7 +2174,7 @@ fn parse_g_frame(
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
             bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
+                               -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
             }
             bbl_format::ENCODING_NULL => 0,
             _ => {
