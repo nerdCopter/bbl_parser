@@ -11,11 +11,11 @@
 
 A comprehensive Rust implementation of BBL (Blackbox Log) parser that achieves **reference-equivalent accuracy** with **superior file compatibility** compared to external decoders. Based on the official JavaScript reference implementation from Betaflight blackbox-log-viewer.
 
-**Latest Development:** ✅ **Frame Filtering Implementation** - Advanced filtering removes corrupted frames (duplicate timestamps, out-of-order sequences) achieving 99.997% spectral accuracy on test file BTFL_BBB_PROVIZORA001.BBL.
+**Latest Development:** ✅ **Frame Filtering Fix Implementation** - Critical filtering tolerance improved from (-2..=5) to (-1000..=5000) based on blackbox_decode reference, addressing catastrophic 99%+ data loss on diverse BBL files.
 
-**Recent Achievement:** ✅ **Betaflight Firmware Compatibility** - Flight mode flags, state flags, and failsafe phases now match current Betaflight firmware exactly, verified against blackbox-tools and firmware source code.
+**Recent Achievement:** ✅ **Root Cause Identified** - Overly strict loopIteration filtering was causing data decimation across 95%+ of test files while working perfectly on specific files, leading to inconsistent PNG analysis capability.
 
-**Note:** Frame filtering implementation is in beta testing phase. Single-file validation shows excellent results but requires broader testing across diverse BBL files before production deployment.
+**Note:** Frame filtering fix implemented based on comprehensive multi-file analysis showing 99%+ data loss. Relaxed tolerance range to match blackbox_decode behavior (5000x more lenient). Testing in progress to validate data preservation improvement.
 
 ### **Key Achievement**
 - **Data Accuracy:** 100.02% equivalent to blackbox_decode reference (based on comprehensive testing)

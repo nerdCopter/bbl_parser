@@ -1223,18 +1223,24 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             // Check loopIteration sequence for main frames (I, P)
             if should_include && (*frame_type == 'I' || *frame_type == 'P') {
                 if let Some(current_loop_iter) = frame.data.get("loopIteration") {
-                    // Strict sequence validation - reject frames that break ordering
+                    // Relaxed sequence validation - be much more tolerant like blackbox_decode
                     let iter_diff = *current_loop_iter - expected_loop_iter;
-                    if !(-2..=5).contains(&iter_diff) {
-                        // Frame is out of order or has large gap - likely corruption
+                    if !(-1000..=5000).contains(&iter_diff) {
+                        // Only reject frames with truly massive gaps - likely log corruption or restart
                         out_of_order_count += 1;
                         should_include = false;
                         if debug && out_of_order_count <= 5 {
-                            println!("FILTERING: Out-of-order loopIteration {current_loop_iter} (expected ~{expected_loop_iter})");
+                            println!("FILTERING: Massive loopIteration gap {current_loop_iter} (expected ~{expected_loop_iter})");
                         }
                     } else if should_include {
-                        // Update expected sequence based on current frame
-                        expected_loop_iter = *current_loop_iter + 1;
+                        // Update expected sequence based on current frame (handle gaps gracefully)
+                        expected_loop_iter = if iter_diff > 100 {
+                            // Large gap - reset expectation
+                            *current_loop_iter + 1
+                        } else {
+                            // Normal sequence
+                            (*current_loop_iter).max(expected_loop_iter) + 1
+                        };
                     }
                 }
             }
