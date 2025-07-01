@@ -1,3 +1,15 @@
-/target
-**/*_temp.rs
-INFORMATION/
+# Ignore everything by default
+*
+
+# Whitelist specific files in root directory
+!README.md
+!OVERVIEW.md
+!GOALS.md
+!FRAMES.md
+!Cargo.*
+!.gitignore
+
+# Whitelist src directory and all Rust files within it
+!src/
+!src/*.rs
+!src/**/*.rs
