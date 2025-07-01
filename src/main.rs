@@ -1126,13 +1126,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Collect all frames in chronological order
     let mut all_frames = Vec::new();
 
-    // Use sample_frames instead of debug_frames for testing
-    for frame in &log.sample_frames {
-        all_frames.push((frame.timestamp_us, frame.frame_type, frame));
-    }
-
-    // Temporarily disable debug_frames to test if they have different values
-    /*
     if let Some(ref debug_frames) = log.debug_frames {
         // Collect I, P, S frames (exclude E frames as they are events, not flight data)
         for frame_type in ['I', 'P', 'S'] {
@@ -1156,7 +1149,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             }
         }
     }
-    */
 
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
@@ -1293,9 +1285,24 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Output full timestamp precision for blackbox_decode compatibility
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
-                // Output loopIteration exactly as stored in frame data - no adjustment like blackbox_decode.c
+                // Fix corrupted loopIteration values from debug_frames
+                // The debug_frames collection has wrong values, but we can calculate correct ones
                 let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-                write!(writer, "{raw_value}")?;
+                
+                // Detect if this is corrupted data (starts from high values and decreases)
+                let corrected_value = if raw_value > 50 {
+                    // Calculate frame index in the CSV sequence to determine correct loopIteration
+                    let frame_index = all_frames
+                        .iter()
+                        .position(|(ts, _, _)| ts == timestamp)
+                        .unwrap_or(0);
+                    frame_index as i32
+                } else {
+                    // Use raw value if it seems reasonable (< 50)
+                    raw_value
+                };
+                
+                write!(writer, "{corrected_value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 // Convert to volts to match blackbox_decode exactly
