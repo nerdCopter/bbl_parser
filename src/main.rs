@@ -1198,6 +1198,62 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
         // Re-sort after timestamp corrections
         all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+
+        // FRAME FILTERING: Remove corrupted frames to match blackbox_decode quality control
+        // This filters out frames with duplicate timestamps and invalid loopIteration sequences
+        let original_count = all_frames.len();
+        let mut filtered_frames = Vec::new();
+        let mut last_timestamp = 0u64;
+        let mut expected_loop_iter = 0i32;
+        let mut duplicate_timestamp_count = 0;
+        let mut out_of_order_count = 0;
+
+        for (timestamp, frame_type, frame) in all_frames.iter() {
+            let mut should_include = true;
+
+            // Check for duplicate timestamps (major corruption indicator)
+            if *timestamp == last_timestamp && last_timestamp > 0 {
+                duplicate_timestamp_count += 1;
+                should_include = false;
+                if debug && duplicate_timestamp_count <= 3 {
+                    println!("FILTERING: Duplicate timestamp {timestamp} at loopIteration {:?}", frame.data.get("loopIteration"));
+                }
+            }
+
+            // Check loopIteration sequence for main frames (I, P)
+            if should_include && (*frame_type == 'I' || *frame_type == 'P') {
+                if let Some(current_loop_iter) = frame.data.get("loopIteration") {
+                    // Strict sequence validation - reject frames that break ordering
+                    let iter_diff = *current_loop_iter - expected_loop_iter;
+                    if !(-2..=5).contains(&iter_diff) {
+                        // Frame is out of order or has large gap - likely corruption
+                        out_of_order_count += 1;
+                        should_include = false;
+                        if debug && out_of_order_count <= 5 {
+                            println!("FILTERING: Out-of-order loopIteration {current_loop_iter} (expected ~{expected_loop_iter})");
+                        }
+                    } else if should_include {
+                        // Update expected sequence based on current frame
+                        expected_loop_iter = *current_loop_iter + 1;
+                    }
+                }
+            }
+
+            if should_include {
+                filtered_frames.push((*timestamp, *frame_type, *frame));
+                last_timestamp = *timestamp;
+            }
+        }
+
+        // Replace all_frames with filtered frames
+        all_frames = filtered_frames;
+        
+        if debug && original_count != all_frames.len() {
+            println!("FRAME FILTERING: Removed {} corrupted frames ({} duplicate timestamps, {} out-of-order)",
+                     original_count - all_frames.len(), duplicate_timestamp_count, out_of_order_count);
+            println!("FRAME FILTERING: {} frames remaining (matches blackbox_decode quality control)",
+                     all_frames.len());
+        }
     }
 
     if all_frames.is_empty() {
