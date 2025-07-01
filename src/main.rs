@@ -1216,7 +1216,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 duplicate_timestamp_count += 1;
                 should_include = false;
                 if debug && duplicate_timestamp_count <= 3 {
-                    println!("FILTERING: Duplicate timestamp {timestamp} at loopIteration {:?}", frame.data.get("loopIteration"));
+                    println!(
+                        "FILTERING: Duplicate timestamp {timestamp} at loopIteration {:?}",
+                        frame.data.get("loopIteration")
+                    );
                 }
             }
 
@@ -1253,12 +1256,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
         // Replace all_frames with filtered frames
         all_frames = filtered_frames;
-        
+
         if debug && original_count != all_frames.len() {
             println!("FRAME FILTERING: Removed {} corrupted frames ({} duplicate timestamps, {} out-of-order)",
                      original_count - all_frames.len(), duplicate_timestamp_count, out_of_order_count);
-            println!("FRAME FILTERING: {} frames remaining (matches blackbox_decode quality control)",
-                     all_frames.len());
+            println!(
+                "FRAME FILTERING: {} frames remaining (matches blackbox_decode quality control)",
+                all_frames.len()
+            );
         }
     }
 
@@ -1352,14 +1357,12 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
                 // Normalize loopIteration to start from 0 for each log (like blackbox_decode)
-                let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-                
                 // Calculate normalized frame index (0, 1, 2, 3...)
                 let frame_index = all_frames
                     .iter()
                     .position(|(ts, _, _)| ts == timestamp)
                     .unwrap_or(0);
-                
+
                 write!(writer, "{frame_index}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
