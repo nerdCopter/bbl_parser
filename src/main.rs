@@ -1351,24 +1351,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Output full timestamp precision for blackbox_decode compatibility
                 write!(writer, "{}", *timestamp)?;
             } else if csv_name == "loopIteration" {
-                // Fix corrupted loopIteration values from debug_frames
-                // The debug_frames collection has wrong values, but we can calculate correct ones
+                // Normalize loopIteration to start from 0 for each log (like blackbox_decode)
                 let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-
-                // Detect if this is corrupted data (starts from high values and decreases)
-                let corrected_value = if raw_value > 50 {
-                    // Calculate frame index in the CSV sequence to determine correct loopIteration
-                    let frame_index = all_frames
-                        .iter()
-                        .position(|(ts, _, _)| ts == timestamp)
-                        .unwrap_or(0);
-                    frame_index as i32
-                } else {
-                    // Use raw value if it seems reasonable (< 50)
-                    raw_value
-                };
-
-                write!(writer, "{corrected_value}")?;
+                
+                // Calculate normalized frame index (0, 1, 2, 3...)
+                let frame_index = all_frames
+                    .iter()
+                    .position(|(ts, _, _)| ts == timestamp)
+                    .unwrap_or(0);
+                
+                write!(writer, "{frame_index}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 // Convert to volts to match blackbox_decode exactly

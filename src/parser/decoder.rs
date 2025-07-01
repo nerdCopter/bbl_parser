@@ -58,35 +58,60 @@ pub fn apply_predictor(
     value: i32,
     field_index: usize,
     current_frame: &[i32],
-    previous_frame: &[i32],
-    previous2_frame: &[i32],
+    previous_frame: Option<&[i32]>,
+    previous2_frame: Option<&[i32]>,
+    skipped_frames: u32,
     sysconfig: &std::collections::HashMap<String, i32>,
 ) -> Result<i32> {
     match predictor {
         PREDICT_0 => Ok(value),
         PREDICT_PREVIOUS => {
-            if field_index < previous_frame.len() {
-                Ok(value + previous_frame[field_index])
+            if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    Ok(value + prev[field_index])
+                } else {
+                    Ok(value)
+                }
             } else {
                 Ok(value)
             }
         }
         PREDICT_STRAIGHT_LINE => {
-            if field_index < previous_frame.len() && field_index < previous2_frame.len() {
-                let prediction = 2 * previous_frame[field_index] - previous2_frame[field_index];
-                Ok(value + prediction)
-            } else if field_index < previous_frame.len() {
-                Ok(value + previous_frame[field_index])
+            if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
+                if field_index < prev.len() && field_index < prev2.len() {
+                    let prediction = 2 * prev[field_index] - prev2[field_index];
+                    Ok(value + prediction)
+                } else if field_index < prev.len() {
+                    Ok(value + prev[field_index])
+                } else {
+                    Ok(value)
+                }
+            } else if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    Ok(value + prev[field_index])
+                } else {
+                    Ok(value)
+                }
             } else {
                 Ok(value)
             }
         }
         PREDICT_AVERAGE_2 => {
-            if field_index < previous_frame.len() && field_index < previous2_frame.len() {
-                let average = (previous_frame[field_index] + previous2_frame[field_index]) / 2;
-                Ok(value + average)
-            } else if field_index < previous_frame.len() {
-                Ok(value + previous_frame[field_index])
+            if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
+                if field_index < prev.len() && field_index < prev2.len() {
+                    let average = (prev[field_index] + prev2[field_index]) / 2;
+                    Ok(value + average)
+                } else if field_index < prev.len() {
+                    Ok(value + prev[field_index])
+                } else {
+                    Ok(value)
+                }
+            } else if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    Ok(value + prev[field_index])
+                } else {
+                    Ok(value)
+                }
             } else {
                 Ok(value)
             }
@@ -107,11 +132,15 @@ pub fn apply_predictor(
             }
         }
         PREDICT_INC => {
-            if field_index < previous_frame.len() {
-                Ok(previous_frame[field_index] + value)
-            } else {
-                Ok(value)
+            // PREDICT_INC for loopIteration: skippedFrames + 1 + previous_frame[field_index]
+            // This matches the C implementation exactly
+            let mut result = skipped_frames as i32 + 1;
+            if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    result += prev[field_index];
+                }
             }
+            Ok(result)
         }
         PREDICT_HOME_COORD => {
             // GPS home coordinate prediction - for now just return value
