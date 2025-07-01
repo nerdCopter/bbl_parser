@@ -490,9 +490,13 @@ fn parse_single_log(
         // Debug: Show I-frame field order to compare with C implementation
         println!("DEBUG: I-frame field order:");
         for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
-            println!("  [{}]: {}", i, field_name);
-            if i > 5 { // Only show first few to avoid spam
-                println!("  ... ({} total fields)", header.i_frame_def.field_names.len());
+            println!("  [{i}]: {field_name}");
+            if i > 5 {
+                // Only show first few to avoid spam
+                println!(
+                    "  ... ({} total fields)",
+                    header.i_frame_def.field_names.len()
+                );
                 break;
             }
         }
@@ -1288,7 +1292,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 // Fix corrupted loopIteration values from debug_frames
                 // The debug_frames collection has wrong values, but we can calculate correct ones
                 let raw_value = frame.data.get("loopIteration").copied().unwrap_or(0);
-                
+
                 // Detect if this is corrupted data (starts from high values and decreases)
                 let corrected_value = if raw_value > 50 {
                     // Calculate frame index in the CSV sequence to determine correct loopIteration
@@ -1301,7 +1305,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     // Use raw value if it seems reasonable (< 50)
                     raw_value
                 };
-                
+
                 write!(writer, "{corrected_value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
@@ -2181,7 +2185,7 @@ fn parse_g_frame(
             bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
             bbl_format::ENCODING_NEG_14BIT => {
-                               -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
+                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
             }
             bbl_format::ENCODING_NULL => 0,
             _ => {
@@ -2601,12 +2605,12 @@ mod tests {
         assert_eq!(format_flight_mode_flags(1), "ANGLE_MODE"); // bit 0 = ANGLE_MODE
         assert_eq!(format_flight_mode_flags(2), "HORIZON_MODE"); // bit 1 = HORIZON_MODE
         assert_eq!(format_flight_mode_flags(4), "MAG"); // bit 2 = MAG_MODE
-        assert_eq!(format_flight_mode_flags(8), "BARO"); // bit 3 = ALT_HOLD_MODE (old name BARO)
-        assert_eq!(format_flight_mode_flags(32), "GPS_HOLD"); // bit 5 = POS_HOLD_MODE (old name GPS_HOLD)
+        assert_eq!(format_flight_mode_flags(8), "ALTHOLD"); // bit 3 = ALT_HOLD_MODE
+        assert_eq!(format_flight_mode_flags(32), "POSHOLD"); // bit 5 = POS_HOLD_MODE
         assert_eq!(format_flight_mode_flags(64), "HEADFREE"); // bit 6 = HEADFREE_MODE
         assert_eq!(format_flight_mode_flags(256), "PASSTHRU"); // bit 8 = PASSTHRU_MODE
-        assert_eq!(format_flight_mode_flags(1024), "FAILSAFE_MODE"); // bit 10 = FAILSAFE_MODE
-        assert_eq!(format_flight_mode_flags(2048), "GPS_RESCUE_MODE"); // bit 11 = GPS_RESCUE_MODE
+        assert_eq!(format_flight_mode_flags(1024), "FAILSAFE"); // bit 10 = FAILSAFE_MODE
+        assert_eq!(format_flight_mode_flags(2048), "GPS_RESCUE"); // bit 11 = GPS_RESCUE_MODE
 
         // Test multiple flags (pipe-separated to avoid breaking CSV format)
         assert_eq!(format_flight_mode_flags(3), "ANGLE_MODE|HORIZON_MODE"); // bits 0+1
