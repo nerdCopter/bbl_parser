@@ -1157,51 +1157,25 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
 
-    // Post-process frames to fix zero timestamps (blackbox_decode compatibility)
-    // The first I-frame often has time=0, which cascades to many P-frames
+    // Remove frames with zero timestamps like blackbox_decode does
+    // blackbox_decode filters out frames with invalid timestamps rather than interpolating them
     if !all_frames.is_empty() {
-        let looptime_us = log.header.looptime as u64;
-        let effective_looptime = if looptime_us > 0 { looptime_us } else { 125 }; // Default fallback
+        let original_count = all_frames.len();
+        all_frames.retain(|(timestamp, _, _)| *timestamp > 0);
 
-        // Find first valid timestamp to use as reference
-        let mut first_valid_time = None;
-        for (timestamp, _, _) in &all_frames {
-            if *timestamp > 0 {
-                first_valid_time = Some(*timestamp);
-                break;
-            }
+        if debug && original_count != all_frames.len() {
+            println!(
+                "FILTERING: Removed {} frames with zero timestamps (blackbox_decode compatibility)",
+                original_count - all_frames.len()
+            );
         }
 
-        if let Some(base_time) = first_valid_time {
-            // Count zero-timestamp frames at the beginning
-            let zero_frames_count = all_frames
-                .iter()
-                .take_while(|(timestamp, _, _)| *timestamp == 0)
-                .count();
-
-            if debug && zero_frames_count > 0 {
-                println!(
-                    "Interpolating timestamps for {zero_frames_count} frames with zero timestamps"
-                );
-            }
-
-            // Apply time interpolation for zero timestamps
-            for (i, (timestamp, _frame_type, _frame)) in all_frames.iter_mut().enumerate() {
-                if *timestamp == 0 {
-                    // Calculate interpolated timestamp working backwards from first valid time
-                    let frames_before_valid = zero_frames_count.saturating_sub(i);
-                    *timestamp =
-                        base_time.saturating_sub(frames_before_valid as u64 * effective_looptime);
-                }
-            }
-        }
-
-        // Re-sort after timestamp corrections
+        // Sort by timestamp after filtering
         all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
 
         // FRAME FILTERING: Remove corrupted frames to match blackbox_decode quality control
         // This filters out frames with duplicate timestamps and invalid loopIteration sequences
-        let original_count = all_frames.len();
+        let filtered_original_count = all_frames.len();
         let mut filtered_frames = Vec::new();
         let mut last_timestamp = 0u64;
         let mut expected_loop_iter = 0i32;
@@ -1257,9 +1231,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // Replace all_frames with filtered frames
         all_frames = filtered_frames;
 
-        if debug && original_count != all_frames.len() {
+        if debug && filtered_original_count != all_frames.len() {
             println!("FRAME FILTERING: Removed {} corrupted frames ({} duplicate timestamps, {} out-of-order)",
-                     original_count - all_frames.len(), duplicate_timestamp_count, out_of_order_count);
+                     filtered_original_count - all_frames.len(), duplicate_timestamp_count, out_of_order_count);
             println!(
                 "FRAME FILTERING: {} frames remaining (matches blackbox_decode quality control)",
                 all_frames.len()
@@ -1594,6 +1568,10 @@ fn parse_frames(
         valid: false,
     };
 
+    // CRITICAL: Add blackbox_decode validation state tracking
+    let mut last_main_frame_iteration: Option<u32> = None;
+    let mut last_main_frame_time: Option<u64> = None;
+
     let mut stream = bbl_format::BBLDataStream::new(binary_data);
 
     // Main frame parsing loop - process frames as a stream, don't store all
@@ -1906,13 +1884,32 @@ fn parse_frames(
                     std::io::stdout().flush().unwrap_or_default();
                 }
 
-                // Store only a few sample frames for display purposes
-                if parsing_success && sample_frames.len() < 10 {
-                    // Extract timing before moving frame_data
-                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                    let loop_iteration =
-                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                // CRITICAL FIX: Apply blackbox_decode frame validation for main frames
+                let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
+                let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
+                // Apply strict blackbox_decode frame validation for main frames (I/P)
+                let mut frame_is_valid = parsing_success;
+
+                if parsing_success && (frame_type == 'I' || frame_type == 'P') {
+                    // Apply blackbox_decode validation logic - reject frames that fail validation
+                    if !validate_main_frame_values(
+                        &frame_data,
+                        last_main_frame_iteration,
+                        last_main_frame_time,
+                        debug,
+                    ) {
+                        // Frame failed blackbox_decode validation - reject it
+                        frame_is_valid = false;
+                        stats.frame_validation_failures += 1;
+                        if debug && stats.frame_validation_failures < 10 {
+                            println!("BLACKBOX_DECODE VALIDATION: Rejecting frame {frame_type} with invalid iteration/time progression");
+                        }
+                    }
+                }
+
+                // Only store valid frames (apply blackbox_decode filtering)
+                if frame_is_valid {
                     // Update last timestamp for main frames (I, P)
                     if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
                         last_main_frame_timestamp = timestamp_us;
@@ -1941,104 +1938,67 @@ fn parse_frames(
                         }
                     }
 
-                    let decoded_frame = DecodedFrame {
-                        frame_type,
-                        timestamp_us: final_timestamp,
-                        loop_iteration,
-                        data: frame_data.clone(),
-                    };
-                    sample_frames.push(decoded_frame.clone());
-
-                    // Debug what data is actually being stored in sample frames
-                    if debug && (frame_type == 'I' || frame_type == 'P') {
-                        let non_zero_count =
-                            decoded_frame.data.values().filter(|&&v| v != 0).count();
-                        println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
-                                 frame_type,
-                                 decoded_frame.data.len(),
-                                 non_zero_count,
-                                 decoded_frame.data.get("axisP[0]"),
-                                 decoded_frame.data.get("motor[0]"));
-                    }
-
-                    // Store debug frames (always store for sample frames)
-                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    debug_frame_list.push(decoded_frame);
-                } else if parsing_success && store_all_frames {
-                    // Store ALL frames for CSV export when requested
-                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    // Store all frames for complete CSV export - memory usage managed by processing in chunks
-                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                    let loop_iteration =
-                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-
-                    // Update last timestamp for main frames (I, P)
-                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
-                        last_main_frame_timestamp = timestamp_us;
-                    }
-
-                    // S frames inherit timestamp from last main frame
-                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
-                        last_main_frame_timestamp
-                    } else {
-                        timestamp_us
-                    };
-
-                    if debug && timestamp_us == 0 && debug_frame_list.len() < 5 {
-                        println!(
-                            "DEBUG: Non-sample frame {:?} has timestamp 0->{}. Fields: {:?}",
+                    // Store sample frames for display purposes (only first 10)
+                    if sample_frames.len() < 10 {
+                        let decoded_frame = DecodedFrame {
                             frame_type,
-                            final_timestamp,
-                            frame_data.keys().collect::<Vec<_>>()
-                        );
-                    }
+                            timestamp_us: final_timestamp,
+                            loop_iteration,
+                            data: frame_data.clone(),
+                        };
+                        sample_frames.push(decoded_frame.clone());
 
-                    let decoded_frame = DecodedFrame {
-                        frame_type,
-                        timestamp_us: final_timestamp,
-                        loop_iteration,
-                        data: frame_data.clone(),
-                    };
-
-                    // Debug what data is actually being stored
-                    if debug
-                        && debug_frame_list.len() < 3
-                        && (frame_type == 'I' || frame_type == 'P')
-                    {
-                        let non_zero_count =
-                            decoded_frame.data.values().filter(|&&v| v != 0).count();
-                        println!("DEBUG: Storing {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
-                                 frame_type,
-                                 decoded_frame.data.len(),
-                                 non_zero_count,
-                                 decoded_frame.data.get("axisP[0]"),
-                                 decoded_frame.data.get("motor[0]"));
-
-                        // If the frame has mostly zero data, this indicates a parsing problem
-                        if non_zero_count < 5 && decoded_frame.data.len() > 10 {
-                            println!(
-                                "WARNING: Frame has mostly zero data - possible parsing issue"
+                        // Debug what data is actually being stored in sample frames
+                        if debug && (frame_type == 'I' || frame_type == 'P') {
+                            let non_zero_count =
+                                decoded_frame.data.values().filter(|&&v| v != 0).count();
+                            println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
+                             frame_type,
+                             decoded_frame.data.len(),
+                             non_zero_count,
+                             decoded_frame.data.get("axisP[0]"),
+                             decoded_frame.data.get("motor[0]")
                             );
-                            if debug {
-                                println!(
-                                    "Frame data keys: {:?}",
-                                    decoded_frame.data.keys().collect::<Vec<_>>()
-                                );
-                            }
                         }
+
+                        // Store debug frames (always store for sample frames)
+                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
+                        debug_frame_list.push(decoded_frame);
                     }
 
-                    debug_frame_list.push(decoded_frame);
+                    // Store ALL frames for CSV export when requested
+                    if store_all_frames {
+                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
+                        let decoded_frame = DecodedFrame {
+                            frame_type,
+                            timestamp_us: final_timestamp,
+                            loop_iteration,
+                            data: frame_data.clone(),
+                        };
+                        debug_frame_list.push(decoded_frame);
+                    }
+                } else {
+                    // Frame failed validation - increment failed frame count
+                    stats.failed_frames += 1;
                 }
 
                 // Update timing from first and last valid frames with time data
-                if parsing_success {
+                if frame_is_valid {
                     if let Some(time_us) = frame_data.get("time") {
                         let time_val = *time_us as u64;
                         if stats.start_time_us == 0 {
                             stats.start_time_us = time_val;
                         }
                         stats.end_time_us = time_val;
+                    }
+
+                    // CRITICAL: Update blackbox_decode validation state for main frames
+                    if frame_type == 'I' || frame_type == 'P' {
+                        last_main_frame_iteration = Some(loop_iteration);
+                        last_main_frame_time = Some(timestamp_us);
+                        if debug && stats.total_frames < 5 {
+                            println!("Updated validation state: iteration={loop_iteration}, time={timestamp_us}");
+                        }
                     }
                 }
             }
@@ -2394,6 +2354,18 @@ fn parse_bbl_file_streaming(
             export_csv,
         )?;
 
+        // CRITICAL FIX: Skip logs with no meaningful data (like blackbox_decode does)
+        let has_meaningful_data = log.stats.i_frames > 0 || log.stats.p_frames > 0;
+        if !has_meaningful_data {
+            if debug {
+                println!(
+                    "Skipping log {} - no main frame data (blackbox_decode compatibility)",
+                    log_index + 1
+                );
+            }
+            continue;
+        }
+
         // Display log info immediately
         display_log_info(&log, debug);
 
@@ -2424,6 +2396,52 @@ fn parse_bbl_file_streaming(
     Ok(processed_logs)
 }
 
+// blackbox_decode validation constants (from parser.c)
+const MAXIMUM_TIME_JUMP_BETWEEN_FRAMES: u64 = 10 * 1_000_000; // 10 seconds in microseconds
+const MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES: u32 = 500 * 10; // 5000 iterations
+
+// Frame validation using blackbox_decode logic - this is the critical missing piece
+fn validate_main_frame_values(
+    frame_data: &HashMap<String, i32>,
+    last_iteration: Option<u32>,
+    last_time: Option<u64>,
+    debug: bool,
+) -> bool {
+    // Get current frame values
+    let current_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+    let current_time = frame_data.get("time").copied().unwrap_or(0) as u64;
+
+    // If we have previous frame data, validate against it (like blackbox_decode does)
+    if let (Some(last_iter), Some(last_tm)) = (last_iteration, last_time) {
+        // blackbox_decode validation: iteration count and time must not move backwards
+        // and must not jump forward too much
+        let iteration_valid = current_iteration >= last_iter
+            && current_iteration < last_iter + MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES;
+
+        let time_valid =
+            current_time >= last_tm && current_time < last_tm + MAXIMUM_TIME_JUMP_BETWEEN_FRAMES;
+
+        if !iteration_valid {
+            if debug {
+                println!(
+                    "VALIDATION: Invalid iteration jump: {last_iter} -> {current_iteration} (max jump: {MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES})"
+                );
+            }
+            return false;
+        }
+
+        if !time_valid {
+            if debug {
+                println!(
+                    "VALIDATION: Invalid time jump: {last_tm} -> {current_time} (max jump: {MAXIMUM_TIME_JUMP_BETWEEN_FRAMES}μs)"
+                );
+            }
+            return false;
+        }
+    }
+
+    true
+}
 fn format_flight_mode_flags(flags: i32) -> String {
     let mut modes = Vec::new();
 
@@ -2700,9 +2718,9 @@ mod tests {
         assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED"); // FAILSAFE_RX_LOSS_DETECTED
         assert_eq!(format_failsafe_phase(2), "LANDING"); // FAILSAFE_LANDING
         assert_eq!(format_failsafe_phase(3), "LANDED"); // FAILSAFE_LANDED
-        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING"); // FAILSAFE_RX_LOSS_MONITORING (new)
-        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED"); // FAILSAFE_RX_LOSS_RECOVERED (new)
-        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE"); // FAILSAFE_GPS_RESCUE (new)
+        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING"); // FAILSAFE_RX_LOSS_MONITORING (new in current firmware)
+        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED"); // FAILSAFE_RX_LOSS_RECOVERED (new in current firmware)
+        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE"); // FAILSAFE_GPS_RESCUE (new in current firmware)
 
         // Test unknown phases (should return numeric string)
         assert_eq!(format_failsafe_phase(99), "99");
