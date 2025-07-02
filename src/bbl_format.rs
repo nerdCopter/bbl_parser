@@ -318,10 +318,12 @@ pub fn apply_predictor(
     field_names: &[String],
 ) -> i32 {
     // Safety check for empty arrays - always return raw value if arrays are empty or too short
-    let prev_valid = previous_frame.is_some_and(|prev| !prev.is_empty() && field_index < prev.len());
-    let prev2_valid = previous2_frame.is_some_and(|prev2| !prev2.is_empty() && field_index < prev2.len());
-    
-    match predictor {
+    let prev_valid =
+        previous_frame.is_some_and(|prev| !prev.is_empty() && field_index < prev.len());
+    let prev2_valid =
+        previous2_frame.is_some_and(|prev2| !prev2.is_empty() && field_index < prev2.len());
+
+    let result = match predictor {
         PREDICT_0 => raw_value,
 
         PREDICT_PREVIOUS => {
@@ -337,14 +339,28 @@ pub fn apply_predictor(
         }
 
         PREDICT_STRAIGHT_LINE => {
-            if prev_valid && prev2_valid {
-                if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
-                    raw_value + 2 * prev[field_index] - prev2[field_index]
+            // TEMPORARY FIX: For time field (index 1), use PREDICT_PREVIOUS logic to avoid instability
+            if field_index == 1 {
+                if prev_valid {
+                    if let Some(prev) = previous_frame {
+                        raw_value + prev[field_index]
+                    } else {
+                        raw_value
+                    }
                 } else {
                     raw_value
                 }
             } else {
-                raw_value
+                // Use normal straight-line prediction for other fields
+                if prev_valid && prev2_valid {
+                    if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
+                        raw_value + 2 * prev[field_index] - prev2[field_index]
+                    } else {
+                        raw_value
+                    }
+                } else {
+                    raw_value
+                }
             }
         }
 
@@ -411,8 +427,23 @@ pub fn apply_predictor(
             raw_value + minmotor
         }
 
+        PREDICT_LAST_MAIN_FRAME_TIME => {
+            // Time prediction: add delta to previous frame time
+            if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    prev[field_index] + raw_value
+                } else {
+                    raw_value
+                }
+            } else {
+                raw_value
+            }
+        }
+
         _ => raw_value,
-    }
+    };
+
+    result
 }
 
 pub fn decode_frame_field(
@@ -460,8 +491,8 @@ pub fn parse_frame_data(
                 current_frame[i] = apply_predictor(
                     i,
                     field.predictor,
-                    0,
-                    current_frame,
+                    0,   // Raw value is 0 for PREDICT_INC (no binary data read)
+                    &[], // FIXED: Pass empty slice since PREDICT_INC doesn't need current frame
                     previous_frame,
                     previous2_frame,
                     skipped_frames,
@@ -655,7 +686,7 @@ mod tests {
     fn test_apply_predictor_predict_previous() {
         let current_frame = vec![0, 0, 0];
         let previous_frame = vec![10, 20, 30];
-        
+
         let result = apply_predictor(
             1,
             PREDICT_PREVIOUS,
@@ -674,7 +705,7 @@ mod tests {
     fn test_apply_predictor_predict_previous_empty_array() {
         let current_frame = vec![0, 0, 0];
         let previous_frame = vec![];
-        
+
         let result = apply_predictor(
             0,
             PREDICT_PREVIOUS,
@@ -693,7 +724,7 @@ mod tests {
     fn test_apply_predictor_predict_minthrottle() {
         let mut sysconfig = HashMap::new();
         sysconfig.insert("minthrottle".to_string(), 1000);
-        
+
         let result = apply_predictor(
             0,
             PREDICT_MINTHROTTLE,
@@ -728,7 +759,7 @@ mod tests {
     fn test_bbl_data_stream_creation() {
         let data = vec![0x01, 0x02, 0x03, 0x04];
         let stream = BBLDataStream::new(&data);
-        
+
         assert_eq!(stream.pos, 0);
         assert_eq!(stream.end, 4);
         assert!(!stream.eof);
@@ -738,14 +769,14 @@ mod tests {
     fn test_bbl_data_stream_read_byte() {
         let data = vec![0x01, 0x02, 0x03];
         let mut stream = BBLDataStream::new(&data);
-        
+
         assert_eq!(stream.read_byte().unwrap(), 0x01);
         assert_eq!(stream.pos, 1);
         assert!(!stream.eof);
-        
+
         assert_eq!(stream.read_byte().unwrap(), 0x02);
         assert_eq!(stream.read_byte().unwrap(), 0x03);
-        
+
         // Should error on EOF
         assert!(stream.read_byte().is_err());
         assert!(stream.eof);

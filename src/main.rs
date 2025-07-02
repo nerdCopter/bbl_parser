@@ -1335,17 +1335,13 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
             // Fast path for special fields using pre-computed indices
             if csv_name == "time (us)" {
-                // Output full timestamp precision for blackbox_decode compatibility
-                write!(writer, "{}", *timestamp)?;
+                // Use the actual parsed time value from frame data, not timestamp_us
+                let time_value = frame.data.get("time").copied().unwrap_or(0);
+                write!(writer, "{time_value}")?;
             } else if csv_name == "loopIteration" {
-                // Normalize loopIteration to start from 0 for each log (like blackbox_decode)
-                // Calculate normalized frame index (0, 1, 2, 3...)
-                let frame_index = all_frames
-                    .iter()
-                    .position(|(ts, _, _)| ts == timestamp)
-                    .unwrap_or(0);
-
-                write!(writer, "{frame_index}")?;
+                // Use the actual parsed loopIteration value, not frame position
+                let loop_value = frame.data.get("loopIteration").copied().unwrap_or(0);
+                write!(writer, "{loop_value}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 // Convert to volts to match blackbox_decode exactly
@@ -1647,6 +1643,21 @@ fn parse_frames(
                                         let value = frame_history.current_frame[i];
                                         frame_data.insert(field_name.clone(), value);
 
+                                        // Debug critical timing fields
+                                        if debug
+                                            && stats.i_frames < 1
+                                            && (field_name == "loopIteration"
+                                                || field_name == "time")
+                                        {
+                                            println!(
+                                                "DEBUG: I-frame #{} CRITICAL field '{}' (index {}) = {}",
+                                                stats.i_frames + 1,
+                                                field_name,
+                                                i,
+                                                value
+                                            );
+                                        }
+
                                         // Debug key fields to understand parsing issues
                                         if debug
                                             && stats.i_frames < 2
@@ -1675,10 +1686,46 @@ fn parse_frames(
                                 // I-frames are complete, add to sample frames
                                 sample_frames.push(DecodedFrame {
                                     frame_type,
-                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
                                     data: frame_data.clone(),
                                 });
+
+                                // Debug timestamp and loop iteration extraction for verification
+                                if debug && stats.i_frames < 1 {
+                                    println!(
+                                        "DEBUG: I-frame #{} Frame data contains {} fields",
+                                        stats.i_frames + 1,
+                                        frame_data.len()
+                                    );
+                                    println!(
+                                        "DEBUG: I-frame #{} Looking for 'time' field: {:?}",
+                                        stats.i_frames + 1,
+                                        frame_data.get("time")
+                                    );
+                                    println!("DEBUG: I-frame #{} Looking for 'loopIteration' field: {:?}", stats.i_frames + 1, frame_data.get("loopIteration"));
+                                    println!(
+                                        "DEBUG: I-frame #{} Final timestamp_us: {}",
+                                        stats.i_frames + 1,
+                                        frame_data.get("time").copied().unwrap_or(0) as u64
+                                    );
+                                    println!(
+                                        "DEBUG: I-frame #{} Final loop_iteration: {}",
+                                        stats.i_frames + 1,
+                                        frame_data.get("loopIteration").copied().unwrap_or(0)
+                                            as u32
+                                    );
+
+                                    // Check what's in frame_history.current_frame
+                                    if frame_history.current_frame.len() > 1 {
+                                        println!("DEBUG: I-frame #{} frame_history.current_frame[1] (time index): {}", stats.i_frames + 1, frame_history.current_frame[1]);
+                                    }
+                                }
 
                                 // Debug what data is actually being stored in sample frames
                                 if debug && (frame_type == 'I' || frame_type == 'P') {
@@ -1690,7 +1737,7 @@ fn parse_frames(
                                              non_zero_count,
                                              frame_data.get("axisP[0]"),
                                              frame_data.get("motor[0]"));
-                                    
+
                                     // If the frame has mostly zero data, this indicates a parsing problem
                                     if non_zero_count < 5 && frame_data.len() > 10 {
                                         println!(
@@ -1707,6 +1754,25 @@ fn parse_frames(
 
                                 // Initialize debug frame storage
                                 debug_frames.insert('I', Vec::new());
+
+                                // Add I-frame to debug frames for CSV export
+                                debug_frames.entry('I').or_default().push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
+                                    data: frame_data.clone(),
+                                });
+
+                                // CRITICAL FIX: Update frame history for I-frames (was missing!)
+                                frame_history.previous2_frame =
+                                    frame_history.previous_frame.clone();
+                                frame_history.previous_frame = frame_history.current_frame.clone();
+                                frame_history.valid = true;
 
                                 // Mark parsing success
                                 parsing_success = true;
@@ -1729,7 +1795,7 @@ fn parse_frames(
                                 &header.p_frame_def,
                                 &mut frame_history.current_frame,
                                 Some(&predictor),
-                                None,
+                                Some(&frame_history.previous2_frame), // Pass previous2_frame for PREDICT_STRAIGHT_LINE
                                 0,
                                 false, // Not raw
                                 header.data_version,
@@ -1737,18 +1803,75 @@ fn parse_frames(
                             )
                             .is_ok()
                             {
+                                // Update frame data from parsed values (MISSING - THIS WAS THE BUG!)
+                                for (i, field_name) in
+                                    header.i_frame_def.field_names.iter().enumerate()
+                                {
+                                    if i < frame_history.current_frame.len() {
+                                        let value = frame_history.current_frame[i];
+                                        frame_data.insert(field_name.clone(), value);
+
+                                        // Debug critical timing fields for P-frames
+                                        if debug
+                                            && stats.p_frames < 1
+                                            && (field_name == "loopIteration"
+                                                || field_name == "time")
+                                        {
+                                            println!(
+                                                "DEBUG: P-frame #{} CRITICAL field '{}' (index {}) = {}",
+                                                stats.p_frames + 1,
+                                                field_name,
+                                                i,
+                                                value
+                                            );
+                                        }
+                                    }
+                                }
+
                                 // Update frame history
-                                frame_history.previous2_frame = frame_history.previous_frame.clone();
+                                frame_history.previous2_frame =
+                                    frame_history.previous_frame.clone();
                                 frame_history.previous_frame = frame_history.current_frame.clone();
                                 frame_history.valid = true;
 
                                 // Add parsed frame to sample frames
                                 sample_frames.push(DecodedFrame {
                                     frame_type,
-                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
                                     data: frame_data.clone(),
                                 });
+
+                                // Debug timestamp and loop iteration extraction for verification
+                                if debug && stats.p_frames < 2 {
+                                    println!(
+                                        "DEBUG: P-frame #{} Frame data contains {} fields",
+                                        stats.p_frames + 1,
+                                        frame_data.len()
+                                    );
+                                    println!(
+                                        "DEBUG: P-frame #{} Looking for 'time' field: {:?}",
+                                        stats.p_frames + 1,
+                                        frame_data.get("time")
+                                    );
+                                    println!("DEBUG: P-frame #{} Looking for 'loopIteration' field: {:?}", stats.p_frames + 1, frame_data.get("loopIteration"));
+                                    println!(
+                                        "DEBUG: P-frame #{} Final timestamp_us: {}",
+                                        stats.p_frames + 1,
+                                        frame_data.get("time").copied().unwrap_or(0) as u64
+                                    );
+                                    println!(
+                                        "DEBUG: P-frame #{} Final loop_iteration: {}",
+                                        stats.p_frames + 1,
+                                        frame_data.get("loopIteration").copied().unwrap_or(0)
+                                            as u32
+                                    );
+                                }
 
                                 // Debug what data is actually being stored in sample frames
                                 if debug && (frame_type == 'I' || frame_type == 'P') {
@@ -1760,7 +1883,7 @@ fn parse_frames(
                                              non_zero_count,
                                              frame_data.get("axisP[0]"),
                                              frame_data.get("motor[0]"));
-                                    
+
                                     // If the frame has mostly zero data, this indicates a parsing problem
                                     if non_zero_count < 5 && frame_data.len() > 10 {
                                         println!(
@@ -1778,8 +1901,13 @@ fn parse_frames(
                                 // Initialize debug frame storage
                                 debug_frames.entry('P').or_default().push(DecodedFrame {
                                     frame_type,
-                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
                                     data: frame_data.clone(),
                                 });
 
@@ -1805,25 +1933,40 @@ fn parse_frames(
                             .is_ok()
                             {
                                 // Update latest S-frame data for export
-                                for (i, field_name) in header.s_frame_def.field_names.iter().enumerate() {
+                                for (i, field_name) in
+                                    header.s_frame_def.field_names.iter().enumerate()
+                                {
                                     if i < frame_history.current_frame.len() {
-                                        last_slow_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                        last_slow_data.insert(
+                                            field_name.clone(),
+                                            frame_history.current_frame[i],
+                                        );
                                     }
                                 }
 
                                 // Add parsed S-frame to sample frames
                                 sample_frames.push(DecodedFrame {
                                     frame_type,
-                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
                                     data: frame_data.clone(),
                                 });
 
                                 // Initialize debug frame storage
                                 debug_frames.entry('S').or_default().push(DecodedFrame {
                                     frame_type,
-                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
-                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0)
+                                        as u64,
+                                    loop_iteration: frame_data
+                                        .get("loopIteration")
+                                        .copied()
+                                        .unwrap_or(0)
+                                        as u32,
                                     data: frame_data.clone(),
                                 });
 
@@ -1837,7 +1980,13 @@ fn parse_frames(
                         // TODO: Implement proper parsing if needed
                         // Skip until next frame start is found
                         while let Ok(byte) = stream.read_byte() {
-                            if byte == b'E' || byte == b'S' || byte == b'I' || byte == b'P' || byte == b'H' || byte == b'G' {
+                            if byte == b'E'
+                                || byte == b'S'
+                                || byte == b'I'
+                                || byte == b'P'
+                                || byte == b'H'
+                                || byte == b'G'
+                            {
                                 stream.pos -= 1; // Back up one position to reread the frame type
                                 break;
                             }
@@ -1854,7 +2003,13 @@ fn parse_frames(
                     }
                     // Skip until next frame start is found
                     while let Ok(byte) = stream.read_byte() {
-                        if byte == b'E' || byte == b'S' || byte == b'I' || byte == b'P' || byte == b'H' || byte == b'G' {
+                        if byte == b'E'
+                            || byte == b'S'
+                            || byte == b'I'
+                            || byte == b'P'
+                            || byte == b'H'
+                            || byte == b'G'
+                        {
                             stream.pos -= 1; // Back up one position to reread the frame type
                             break;
                         }
@@ -1877,8 +2032,7 @@ fn parse_frames(
                     if debug {
                         println!(
                             "Parsed {} frame: {:?}",
-                            frame_type,
-                            frame_history.current_frame
+                            frame_type, frame_history.current_frame
                         );
                     }
                 }
@@ -1908,7 +2062,10 @@ fn debug_output_frames(log: &BBLLog, debug: bool) {
         println!("  H-frames: {}", log.stats.h_frames);
         println!("  E-frames: {}", log.stats.e_frames);
         println!("  Failed frames: {}", log.stats.failed_frames);
-        println!("  Frame validation failures: {}", log.stats.frame_validation_failures);
+        println!(
+            "  Frame validation failures: {}",
+            log.stats.frame_validation_failures
+        );
     }
 
     // If we have debug frames, output them
@@ -1917,13 +2074,19 @@ fn debug_output_frames(log: &BBLLog, debug: bool) {
         if let Some(i_frames) = debug_frames.get(&'I') {
             println!("\nI-Frames (Intra):");
             for (i, frame) in i_frames.iter().enumerate() {
-                println!("I-Frame {}: time={}, iteration={}, fields={:?}", 
-                         i + 1, frame.timestamp_us, frame.loop_iteration, 
-                         frame.data.iter()
-                             .map(|(k, v)| format!("{k}:{v}"))
-                             .collect::<Vec<_>>()
-                             .join(", "));
-                
+                println!(
+                    "I-Frame {}: time={}, iteration={}, fields={:?}",
+                    i + 1,
+                    frame.timestamp_us,
+                    frame.loop_iteration,
+                    frame
+                        .data
+                        .iter()
+                        .map(|(k, v)| format!("{k}:{v}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+
                 // Only show a few frames to avoid overwhelming output
                 if i >= 9 && i_frames.len() > 20 {
                     println!("... ({} more I-frames)", i_frames.len() - 10);
@@ -1936,13 +2099,19 @@ fn debug_output_frames(log: &BBLLog, debug: bool) {
         if let Some(p_frames) = debug_frames.get(&'P') {
             println!("\nP-Frames (Predicted):");
             for (i, frame) in p_frames.iter().enumerate() {
-                println!("P-Frame {}: time={}, iteration={}, fields={:?}", 
-                         i + 1, frame.timestamp_us, frame.loop_iteration,
-                         frame.data.iter()
-                             .map(|(k, v)| format!("{k}:{v}"))
-                             .collect::<Vec<_>>()
-                             .join(", "));
-                
+                println!(
+                    "P-Frame {}: time={}, iteration={}, fields={:?}",
+                    i + 1,
+                    frame.timestamp_us,
+                    frame.loop_iteration,
+                    frame
+                        .data
+                        .iter()
+                        .map(|(k, v)| format!("{k}:{v}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+
                 // Only show a few frames to avoid overwhelming output
                 if i >= 9 && p_frames.len() > 20 {
                     println!("... ({} more P-frames)", p_frames.len() - 10);
@@ -1955,13 +2124,18 @@ fn debug_output_frames(log: &BBLLog, debug: bool) {
         if let Some(s_frames) = debug_frames.get(&'S') {
             println!("\nS-Frames (Slow):");
             for (i, frame) in s_frames.iter().enumerate() {
-                println!("S-Frame {}: time={}, fields={:?}", 
-                         i + 1, frame.timestamp_us,
-                         frame.data.iter()
-                             .map(|(k, v)| format!("{k}:{v}"))
-                             .collect::<Vec<_>>()
-                             .join(", "));
-                
+                println!(
+                    "S-Frame {}: time={}, fields={:?}",
+                    i + 1,
+                    frame.timestamp_us,
+                    frame
+                        .data
+                        .iter()
+                        .map(|(k, v)| format!("{k}:{v}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+
                 // Only show a few frames
                 if i >= 4 && s_frames.len() > 10 {
                     println!("... ({} more S-frames)", s_frames.len() - 5);
@@ -2064,15 +2238,16 @@ fn parse_bbl_file_streaming(
 
         // Parse binary frame data
         let binary_data = &log_data[header_end..];
-        let (mut stats, frames, debug_frames) = match parse_frames(binary_data, &header, debug, csv_export || frames_only) {
-            Ok(result) => result,
-            Err(e) => {
-                if debug {
-                    println!("Error parsing frames for log {}: {}", log_index + 1, e);
+        let (mut stats, frames, debug_frames) =
+            match parse_frames(binary_data, &header, debug, csv_export || frames_only) {
+                Ok(result) => result,
+                Err(e) => {
+                    if debug {
+                        println!("Error parsing frames for log {}: {}", log_index + 1, e);
+                    }
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
 
         // Update frame stats timing from actual frame data
         if !frames.is_empty() {
@@ -2100,8 +2275,13 @@ fn parse_bbl_file_streaming(
         let has_meaningful_data = stats.i_frames > 0 || stats.p_frames > 0;
 
         if debug {
-            println!("Log {}: has_meaningful_data={}, i_frames={}, p_frames={}", 
-                    log_index + 1, has_meaningful_data, stats.i_frames, stats.p_frames);
+            println!(
+                "Log {}: has_meaningful_data={}, i_frames={}, p_frames={}",
+                log_index + 1,
+                has_meaningful_data,
+                stats.i_frames,
+                stats.p_frames
+            );
         }
 
         if !has_meaningful_data {
@@ -2124,19 +2304,20 @@ fn parse_bbl_file_streaming(
         // Handle frames-only debug output (similar to blackbox_decode -d)
         if frames_only {
             debug_output_frames(&log, debug);
-        } 
-        else {
+        } else {
             // Always show log statistics for all users (more detailed in debug mode)
             display_log_info(&log, debug);
         }
-        
+
         // Handle CSV export if requested (in addition to console output)
         if csv_export {
             export_single_log_to_csv(&log, file_path, csv_options, debug)?;
             // Show brief additional CSV export info in debug mode
             if debug {
-                println!("  → Exported CSV for Log {}: {} total frames", 
-                        log.log_number, log.stats.total_frames);
+                println!(
+                    "  → Exported CSV for Log {}: {} total frames",
+                    log.log_number, log.stats.total_frames
+                );
             }
         }
 
@@ -2224,7 +2405,8 @@ fn format_failsafe_phase(phase: i32) -> String {
         0 => "IDLE".to_string(),
         1 => "RX_LOSS_DETECTED".to_string(),
         2 => "LANDING".to_string(),
-        3 => "LANDED".to_string(),         _ => format!("UNKNOWN({phase})"),
+        3 => "LANDED".to_string(),
+        _ => format!("UNKNOWN({phase})"),
     }
 }
 
@@ -2308,7 +2490,7 @@ mod tests {
         sysconfig.insert("frameIntervalI".to_string(), 32);
         sysconfig.insert("frameIntervalPNum".to_string(), 1);
         sysconfig.insert("frameIntervalPDenom".to_string(), 1);
-        
+
         // Test I-frame interval logic
         assert!(should_have_frame(0, &sysconfig));
         assert!(should_have_frame(1, &sysconfig));
