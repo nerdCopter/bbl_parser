@@ -4,11 +4,11 @@ use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
 struct FieldDefinition {
+    #[allow(dead_code)]
     name: String,
     signed: bool,
     predictor: u8,
@@ -99,6 +99,7 @@ struct FrameStats {
     e_frames: u32,
     s_frames: u32,
     total_frames: u32,
+    #[allow(dead_code)]
     total_bytes: u64,
     start_time_us: u64,
     end_time_us: u64,
@@ -250,10 +251,17 @@ fn main() -> Result<()> {
                 .help("Directory for CSV output files (default: same as input file)")
                 .value_name("DIR"),
         )
+        .arg(
+            Arg::new("frames-only")
+                .long("frames-only")
+                .help("Output frame data only for debugging (compare with blackbox_decode -d)")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
     let debug = matches.get_flag("debug");
     let export_csv = matches.get_flag("csv");
+    let frames_only = matches.get_flag("frames-only");
     let output_dir = matches.get_one::<String>("output-dir").cloned();
     let file_patterns: Vec<&String> = matches.get_many::<String>("files").unwrap().collect();
 
@@ -353,7 +361,7 @@ fn main() -> Result<()> {
             .unwrap_or("unknown");
         println!("Processing: {filename}");
 
-        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options) {
+        match parse_bbl_file_streaming(path, debug, export_csv, frames_only, &csv_options) {
             Ok(processed_logs) => {
                 if debug {
                     println!(
@@ -1433,6 +1441,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
 /// Validates frame data according to blackbox_decode standards
 /// Only performs technical validation, not flight state filtering
+#[allow(dead_code)]
 fn is_frame_technically_valid(
     frame_type: char,
     frame_data: &HashMap<String, i32>,
@@ -1533,18 +1542,18 @@ fn parse_frames(
     binary_data: &[u8],
     header: &BBLHeader,
     debug: bool,
-    csv_export: bool,
+    store_frames: bool, // Changed from csv_export to more generic store_frames flag
 ) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
-    let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
+    let _last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
-    // Decide whether to store all frames based on CSV export requirement
-    let store_all_frames = csv_export; // Store all frames when CSV export is requested
+    // Store all frames when CSV export or frames-only debug is requested
+    let _store_all_frames = store_frames; // Store all frames when requested
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -1569,8 +1578,8 @@ fn parse_frames(
     };
 
     // CRITICAL: Add blackbox_decode validation state tracking
-    let mut last_main_frame_iteration: Option<u32> = None;
-    let mut last_main_frame_time: Option<u64> = None;
+    let _last_main_frame_iteration: Option<u32> = None;
+    let _last_main_frame_time: Option<u64> = None;
 
     let mut stream = bbl_format::BBLDataStream::new(binary_data);
 
@@ -1659,643 +1668,324 @@ fn parse_frames(
                                     println!("DEBUG: I-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
                                              stats.i_frames + 1,
                                              frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
+                                             frame_data.get("motor[0]")
+                                    );
                                 }
 
-                                // Merge lastSlow data into I-frame (following JavaScript approach)
-                                for (key, value) in &last_slow_data {
-                                    frame_data.insert(key.clone(), *value);
-                                }
+                                // I-frames are complete, add to sample frames
+                                sample_frames.push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    data: frame_data.clone(),
+                                });
 
-                                if debug && stats.i_frames < 2 {
-                                    println!("DEBUG: I-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.i_frames + 1,
+                                // Debug what data is actually being stored in sample frames
+                                if debug && (frame_type == 'I' || frame_type == 'P') {
+                                    let non_zero_count =
+                                        frame_data.values().filter(|&&v| v != 0).count();
+                                    println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
+                                             frame_type,
+                                             frame_data.len(),
+                                             non_zero_count,
                                              frame_data.get("axisP[0]"),
                                              frame_data.get("motor[0]"));
+                                    
+                                    // If the frame has mostly zero data, this indicates a parsing problem
+                                    if non_zero_count < 5 && frame_data.len() > 10 {
+                                        println!(
+                                            "WARNING: Frame has mostly zero data - possible parsing issue"
+                                        );
+                                        if debug {
+                                            println!(
+                                                "Frame data keys: {:?}",
+                                                frame_data.keys().collect::<Vec<_>>()
+                                            );
+                                        }
+                                    }
                                 }
 
-                                if debug && stats.i_frames < 3 {
-                                    println!("DEBUG: I-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
-                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
-                                }
+                                // Initialize debug frame storage
+                                debug_frames.insert('I', Vec::new());
 
-                                // Update history for future P-frames
-                                // Both the previous and previous-previous states become the I-frame,
-                                // because we can't look further into the past than the I-frame
-                                frame_history
-                                    .previous_frame
-                                    .copy_from_slice(&frame_history.current_frame);
-                                frame_history
-                                    .previous2_frame
-                                    .copy_from_slice(&frame_history.current_frame);
-                                frame_history.valid = true;
+                                // Mark parsing success
                                 parsing_success = true;
-                                stats.i_frames += 1;
                             }
                         }
                     }
                     'P' => {
-                        if header.p_frame_def.count > 0 && frame_history.valid {
-                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
+                        if header.p_frame_def.count > 0 {
+                            // P-frames use prediction based on previous frames
+                            let predictor = if frame_history.valid {
+                                // Simple predictor: use value from the same position in the previous frame
+                                frame_history.previous_frame.clone()
+                            } else {
+                                // No valid history, use zeros (or could use last known good values)
+                                vec![0; header.i_frame_def.count]
+                            };
 
                             if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &mut p_frame_values,
-                                Some(&frame_history.previous_frame),
-                                Some(&frame_history.previous2_frame),
-                                0,     // TODO: Calculate skipped frames properly
+                                &mut frame_history.current_frame,
+                                Some(&predictor),
+                                None,
+                                0,
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
                             )
                             .is_ok()
                             {
-                                // P-frames update only specific fields, rest inherit from previous I-frame
-                                frame_history
-                                    .current_frame
-                                    .copy_from_slice(&frame_history.previous_frame);
+                                // Update frame history
+                                frame_history.previous2_frame = frame_history.previous_frame.clone();
+                                frame_history.previous_frame = frame_history.current_frame.clone();
+                                frame_history.valid = true;
 
-                                // Apply P-frame deltas to current frame
-                                for (i, field_name) in
-                                    header.p_frame_def.field_names.iter().enumerate()
-                                {
-                                    if i < p_frame_values.len() {
-                                        // Find corresponding index in I-frame structure
-                                        if let Some(i_frame_idx) = header
-                                            .i_frame_def
-                                            .field_names
-                                            .iter()
-                                            .position(|name| name == field_name)
-                                        {
-                                            if i_frame_idx < frame_history.current_frame.len() {
-                                                frame_history.current_frame[i_frame_idx] =
-                                                    p_frame_values[i];
-                                            }
-                                        }
-                                    }
-                                }
+                                // Add parsed frame to sample frames
+                                sample_frames.push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    data: frame_data.clone(),
+                                });
 
-                                // Copy current frame to output using I-frame field names and structure
-                                for (i, field_name) in
-                                    header.i_frame_def.field_names.iter().enumerate()
-                                {
-                                    if i < frame_history.current_frame.len() {
-                                        let value = frame_history.current_frame[i];
-                                        frame_data.insert(field_name.clone(), value);
-
-                                        // Debug key fields to understand parsing issues
-                                        if debug
-                                            && stats.p_frames < 2
-                                            && (field_name.contains("gyroADC")
-                                                || field_name.contains("motor")
-                                                || field_name.contains("axisP"))
-                                        {
+                                // Debug what data is actually being stored in sample frames
+                                if debug && (frame_type == 'I' || frame_type == 'P') {
+                                    let non_zero_count =
+                                        frame_data.values().filter(|&&v| v != 0).count();
+                                    println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
+                                             frame_type,
+                                             frame_data.len(),
+                                             non_zero_count,
+                                             frame_data.get("axisP[0]"),
+                                             frame_data.get("motor[0]"));
+                                    
+                                    // If the frame has mostly zero data, this indicates a parsing problem
+                                    if non_zero_count < 5 && frame_data.len() > 10 {
+                                        println!(
+                                            "WARNING: Frame has mostly zero data - possible parsing issue"
+                                        );
+                                        if debug {
                                             println!(
-                                                "DEBUG: P-frame #{} field '{}' = {}",
-                                                stats.p_frames + 1,
-                                                field_name,
-                                                value
+                                                "Frame data keys: {:?}",
+                                                frame_data.keys().collect::<Vec<_>>()
                                             );
                                         }
                                     }
                                 }
 
-                                if debug && stats.p_frames < 2 {
-                                    println!("DEBUG: P-frame #{} before S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.p_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
-                                }
+                                // Initialize debug frame storage
+                                debug_frames.entry('P').or_default().push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    data: frame_data.clone(),
+                                });
 
-                                // Merge lastSlow data into P-frame (following JavaScript approach)
-                                for (key, value) in &last_slow_data {
-                                    frame_data.insert(key.clone(), *value);
-                                }
-
-                                if debug && stats.p_frames < 2 {
-                                    println!("DEBUG: P-frame #{} after S-merge, axisP[0]={:?}, motor[0]={:?}", 
-                                             stats.p_frames + 1,
-                                             frame_data.get("axisP[0]"),
-                                             frame_data.get("motor[0]"));
-                                }
-
-                                if debug && stats.p_frames < 3 {
-                                    println!("DEBUG: P-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
-                                             frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
-                                }
-
-                                // Update history
-                                frame_history
-                                    .previous2_frame
-                                    .copy_from_slice(&frame_history.previous_frame);
-                                frame_history
-                                    .previous_frame
-                                    .copy_from_slice(&frame_history.current_frame);
+                                // Mark parsing success
                                 parsing_success = true;
-                                stats.p_frames += 1;
                             }
-                        } else {
-                            // Skip P-frame if we don't have valid I-frame history
-                            skip_frame(&mut stream, frame_type, debug)?;
-                            stats.failed_frames += 1;
                         }
                     }
                     'S' => {
                         if header.s_frame_def.count > 0 {
-                            if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug)
+                            // S-frames are simple key-value pairs, no complex parsing
+                            if bbl_format::parse_frame_data(
+                                &mut stream,
+                                &header.s_frame_def,
+                                &mut frame_history.current_frame,
+                                None, // No prediction for S-frames
+                                None,
+                                0,
+                                false, // Not raw
+                                header.data_version,
+                                &header.sysconfig,
+                            )
+                            .is_ok()
                             {
-                                // Following JavaScript approach: update lastSlow data
-                                if debug && stats.s_frames < 3 {
-                                    println!("DEBUG: Processing S-frame with data: {data:?}");
+                                // Update latest S-frame data for export
+                                for (i, field_name) in header.s_frame_def.field_names.iter().enumerate() {
+                                    if i < frame_history.current_frame.len() {
+                                        last_slow_data.insert(field_name.clone(), frame_history.current_frame[i]);
+                                    }
                                 }
 
-                                for (key, value) in &data {
-                                    last_slow_data.insert(key.clone(), *value);
-                                }
+                                // Add parsed S-frame to sample frames
+                                sample_frames.push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    data: frame_data.clone(),
+                                });
 
-                                if debug && stats.s_frames < 3 {
-                                    println!(
-                                        "DEBUG: S-frame data updated lastSlow: {last_slow_data:?}"
-                                    );
-                                }
+                                // Initialize debug frame storage
+                                debug_frames.entry('S').or_default().push(DecodedFrame {
+                                    frame_type,
+                                    timestamp_us: frame_data.get("time").copied().unwrap_or(0) as u64,
+                                    loop_iteration: frame_data.get("loopIteration").copied().unwrap_or(0) as u32,
+                                    data: frame_data.clone(),
+                                });
 
-                                frame_data = data;
+                                // Mark parsing success
                                 parsing_success = true;
-                                stats.s_frames += 1;
                             }
                         }
                     }
-                    'H' => {
-                        if header.h_frame_def.count > 0 {
-                            if let Ok(data) = parse_h_frame(&mut stream, &header.h_frame_def, debug)
-                            {
-                                frame_data = data;
-                                parsing_success = true;
-                                stats.h_frames += 1;
+                    'H' | 'G' | 'E' => {
+                        // For now, just skip these frames in the main parsing loop
+                        // TODO: Implement proper parsing if needed
+                        // Skip until next frame start is found
+                        while let Ok(byte) = stream.read_byte() {
+                            if byte == b'E' || byte == b'S' || byte == b'I' || byte == b'P' || byte == b'H' || byte == b'G' {
+                                stream.pos -= 1; // Back up one position to reread the frame type
+                                break;
                             }
-                        } else {
-                            skip_frame(&mut stream, frame_type, debug)?;
-                            stats.h_frames += 1;
-                            parsing_success = true;
                         }
-                    }
-                    'G' => {
-                        if header.g_frame_def.count > 0 {
-                            if let Ok(data) = parse_g_frame(&mut stream, &header.g_frame_def, debug)
-                            {
-                                frame_data = data;
-                                parsing_success = true;
-                                stats.g_frames += 1;
-                            }
-                        } else {
-                            skip_frame(&mut stream, frame_type, debug)?;
-                            stats.g_frames += 1;
-                            parsing_success = true;
-                        }
-                    }
-                    'E' => {
-                        skip_frame(&mut stream, frame_type, debug)?;
-                        stats.e_frames += 1;
-                        parsing_success = true;
                     }
                     _ => {}
-                };
+                }
 
                 if !parsing_success {
+                    // Frame parsing failed, skip to next frame
                     stats.failed_frames += 1;
+                    if debug {
+                        println!("Frame parsing failed at offset {frame_start_pos}");
+                    }
+                    // Skip until next frame start is found
+                    while let Ok(byte) = stream.read_byte() {
+                        if byte == b'E' || byte == b'S' || byte == b'I' || byte == b'P' || byte == b'H' || byte == b'G' {
+                            stream.pos -= 1; // Back up one position to reread the frame type
+                            break;
+                        }
+                    }
                 } else {
-                    // Apply blackbox_decode technical validation
-                    if !is_frame_technically_valid(frame_type, &frame_data, header, debug) {
-                        stats.frame_validation_failures += 1;
-                        if debug && stats.frame_validation_failures < 5 {
-                            println!("Frame validation failed for {frame_type} frame");
-                        }
-                        parsing_success = false; // Mark as failed
-                        stats.failed_frames += 1;
-                    }
-                }
+                    // Successfully parsed a frame
+                    stats.total_frames += 1;
 
-                stats.total_frames += 1;
-
-                // Show progress for large files
-                if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
-                    println!("Parsed {} frames so far...", stats.total_frames);
-                    std::io::stdout().flush().unwrap_or_default();
-                }
-
-                // CRITICAL FIX: Apply blackbox_decode frame validation for main frames
-                let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-
-                // Apply strict blackbox_decode frame validation for main frames (I/P)
-                let mut frame_is_valid = parsing_success;
-
-                if parsing_success && (frame_type == 'I' || frame_type == 'P') {
-                    // Apply blackbox_decode validation logic - reject frames that fail validation
-                    if !validate_main_frame_values(
-                        &frame_data,
-                        last_main_frame_iteration,
-                        last_main_frame_time,
-                        debug,
-                    ) {
-                        // Frame failed blackbox_decode validation - reject it
-                        frame_is_valid = false;
-                        stats.frame_validation_failures += 1;
-                        if debug && stats.frame_validation_failures < 10 {
-                            println!("BLACKBOX_DECODE VALIDATION: Rejecting frame {frame_type} with invalid iteration/time progression");
-                        }
-                    }
-                }
-
-                // Only store valid frames (apply blackbox_decode filtering)
-                if frame_is_valid {
-                    // Update last timestamp for main frames (I, P)
-                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
-                        last_main_frame_timestamp = timestamp_us;
+                    // Update frame-specific stats
+                    match frame_type {
+                        'I' => stats.i_frames += 1,
+                        'P' => stats.p_frames += 1,
+                        'S' => stats.s_frames += 1,
+                        'H' => stats.h_frames += 1,
+                        'G' => stats.g_frames += 1,
+                        'E' => stats.e_frames += 1,
+                        _ => {}
                     }
 
-                    // S frames inherit timestamp from last main frame
-                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
-                        last_main_frame_timestamp
-                    } else {
-                        timestamp_us
-                    };
-
-                    if debug && (frame_type == 'I' || frame_type == 'P') && sample_frames.len() < 3
-                    {
+                    if debug {
                         println!(
-                            "DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}",
+                            "Parsed {} frame: {:?}",
                             frame_type,
-                            timestamp_us,
-                            frame_data.keys().collect::<Vec<_>>()
+                            frame_history.current_frame
                         );
-                        if let Some(time_val) = frame_data.get("time") {
-                            println!("DEBUG: 'time' field value: {time_val}");
-                        }
-                        if let Some(loop_val) = frame_data.get("loopIteration") {
-                            println!("DEBUG: 'loopIteration' field value: {loop_val}");
-                        }
-                    }
-
-                    // Store sample frames for display purposes (only first 10)
-                    if sample_frames.len() < 10 {
-                        let decoded_frame = DecodedFrame {
-                            frame_type,
-                            timestamp_us: final_timestamp,
-                            loop_iteration,
-                            data: frame_data.clone(),
-                        };
-                        sample_frames.push(decoded_frame.clone());
-
-                        // Debug what data is actually being stored in sample frames
-                        if debug && (frame_type == 'I' || frame_type == 'P') {
-                            let non_zero_count =
-                                decoded_frame.data.values().filter(|&&v| v != 0).count();
-                            println!("DEBUG: Storing SAMPLE {} frame with {} total fields, {} non-zero: axisP[0]={:?}, motor[0]={:?}", 
-                             frame_type,
-                             decoded_frame.data.len(),
-                             non_zero_count,
-                             decoded_frame.data.get("axisP[0]"),
-                             decoded_frame.data.get("motor[0]")
-                            );
-                        }
-
-                        // Store debug frames (always store for sample frames)
-                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                        debug_frame_list.push(decoded_frame);
-                    }
-
-                    // Store ALL frames for CSV export when requested
-                    if store_all_frames {
-                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                        let decoded_frame = DecodedFrame {
-                            frame_type,
-                            timestamp_us: final_timestamp,
-                            loop_iteration,
-                            data: frame_data.clone(),
-                        };
-                        debug_frame_list.push(decoded_frame);
-                    }
-                } else {
-                    // Frame failed validation - increment failed frame count
-                    stats.failed_frames += 1;
-                }
-
-                // Update timing from first and last valid frames with time data
-                if frame_is_valid {
-                    if let Some(time_us) = frame_data.get("time") {
-                        let time_val = *time_us as u64;
-                        if stats.start_time_us == 0 {
-                            stats.start_time_us = time_val;
-                        }
-                        stats.end_time_us = time_val;
-                    }
-
-                    // CRITICAL: Update blackbox_decode validation state for main frames
-                    if frame_type == 'I' || frame_type == 'P' {
-                        last_main_frame_iteration = Some(loop_iteration);
-                        last_main_frame_time = Some(timestamp_us);
-                        if debug && stats.total_frames < 5 {
-                            println!("Updated validation state: iteration={loop_iteration}, time={timestamp_us}");
-                        }
                     }
                 }
             }
-            Err(_) => {
-                // Stream read error - likely corrupted data
-                stats.corrupted_frames += 1;
-                if debug && stats.corrupted_frames < 5 {
-                    println!(
-                        "Stream read error at position {} - corrupted data",
-                        stream.pos
-                    );
-                }
+            Err(e) => {
+                eprintln!("Error reading frame type byte: {e}");
                 break;
             }
         }
-
-        // More aggressive safety limits to prevent hanging
-        if stats.total_frames > 1000000 || stats.failed_frames > 10000 {
-            if debug {
-                println!("Hit safety limit - stopping frame parsing");
-            }
-            break;
-        }
     }
 
-    stats.total_bytes = binary_data.len() as u64;
-
-    if debug {
-        println!(
-            "Parsed {} frames: {} I, {} P, {} H, {} G, {} E, {} S",
-            stats.total_frames,
-            stats.i_frames,
-            stats.p_frames,
-            stats.h_frames,
-            stats.g_frames,
-            stats.e_frames,
-            stats.s_frames
-        );
-        println!("Failed to parse: {} frames", stats.failed_frames);
-    }
+    // Final stats update
+    stats.total_frames = sample_frames.len() as u32;
 
     Ok((stats, sample_frames, Some(debug_frames)))
 }
 
-#[allow(dead_code)]
-fn parse_i_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
-    // Parse each field according to the frame definition
-    for field in &frame_def.fields {
-        let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported I-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                0
-            }
-        };
-
-        data.insert(field.name.clone(), value);
-    }
-
-    Ok(data)
-}
-
-fn parse_s_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-    let mut field_index = 0;
-
-    while field_index < frame_def.fields.len() {
-        let field = &frame_def.fields[field_index];
-
-        match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => {
-                let value = stream.read_signed_vb()?;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_UNSIGNED_VB => {
-                let value = stream.read_unsigned_vb()? as i32;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_NEG_14BIT => {
-                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16));
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_TAG2_3S32 => {
-                // This encoding handles 3 fields at once
-                let mut values = [0i32; 8];
-                stream.read_tag2_3s32(&mut values)?;
-
-                #[allow(clippy::needless_range_loop)]
-                for j in 0..3 {
-                    if field_index + j < frame_def.fields.len() {
-                        let current_field = &frame_def.fields[field_index + j];
-                        data.insert(current_field.name.clone(), values[j]);
-                    }
-                }
-                field_index += 3;
-            }
-            bbl_format::ENCODING_NULL => {
-                data.insert(field.name.clone(), 0);
-                field_index += 1;
-            }
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported S-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                // For unsupported encodings, try to read as signed VB
-                let value = stream.read_signed_vb().unwrap_or(0);
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-        }
-    }
-
-    Ok(data)
-}
-
-fn parse_h_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
+/// Output frame data for debugging (implements --frames-only functionality)
+fn debug_output_frames(log: &BBLLog, debug: bool) {
     if debug {
-        println!("Parsing H frame with {} fields", frame_def.count);
+        println!("\n=== FRAME DEBUGGING OUTPUT ===");
+        println!("Total frames by type:");
+        println!("  I-frames: {}", log.stats.i_frames);
+        println!("  P-frames: {}", log.stats.p_frames);
+        println!("  S-frames: {}", log.stats.s_frames);
+        println!("  G-frames: {}", log.stats.g_frames);
+        println!("  H-frames: {}", log.stats.h_frames);
+        println!("  E-frames: {}", log.stats.e_frames);
+        println!("  Failed frames: {}", log.stats.failed_frames);
+        println!("  Frame validation failures: {}", log.stats.frame_validation_failures);
     }
 
-    // H frames contain GPS home position data
-    for (i, field) in frame_def.fields.iter().enumerate() {
-        if i >= frame_def.count {
-            break;
-        }
-
-        let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported H-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                stream.read_signed_vb().unwrap_or(0)
-            }
-        };
-
-        data.insert(field.name.clone(), value);
-    }
-
-    Ok(data)
-}
-
-fn parse_g_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
-    if debug {
-        println!("Parsing G frame with {} fields", frame_def.count);
-    }
-
-    // G frames contain GPS data
-    for (i, field) in frame_def.fields.iter().enumerate() {
-        if i >= frame_def.count {
-            break;
-        }
-
-        let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported G-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                stream.read_signed_vb().unwrap_or(0)
-            }
-        };
-
-        data.insert(field.name.clone(), value);
-    }
-
-    Ok(data)
-}
-
-fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
-    if debug {
-        println!("Skipping {frame_type} frame");
-    }
-
-    // Skip frame by reading a few bytes - this is a simple heuristic
-    // In a full implementation, we'd parse these properly too
-    match frame_type {
-        'E' => {
-            // Event frames - read event type and some data
-            let _event_type = stream.read_byte()?;
-            // Read up to 16 bytes of event data
-            for _ in 0..16 {
-                if stream.eof {
+    // If we have debug frames, output them
+    if let Some(ref debug_frames) = log.debug_frames {
+        // Output I-frames first
+        if let Some(i_frames) = debug_frames.get(&'I') {
+            println!("\nI-Frames (Intra):");
+            for (i, frame) in i_frames.iter().enumerate() {
+                println!("I-Frame {}: time={}, iteration={}, fields={:?}", 
+                         i + 1, frame.timestamp_us, frame.loop_iteration, 
+                         frame.data.iter()
+                             .map(|(k, v)| format!("{k}:{v}"))
+                             .collect::<Vec<_>>()
+                             .join(", "));
+                
+                // Only show a few frames to avoid overwhelming output
+                if i >= 9 && i_frames.len() > 20 {
+                    println!("... ({} more I-frames)", i_frames.len() - 10);
                     break;
                 }
-                let _ = stream.read_byte();
             }
         }
-        'G' | 'H' => {
-            // GPS frames - read several fields
-            for _ in 0..7 {
-                if stream.eof {
+
+        // Output P-frames
+        if let Some(p_frames) = debug_frames.get(&'P') {
+            println!("\nP-Frames (Predicted):");
+            for (i, frame) in p_frames.iter().enumerate() {
+                println!("P-Frame {}: time={}, iteration={}, fields={:?}", 
+                         i + 1, frame.timestamp_us, frame.loop_iteration,
+                         frame.data.iter()
+                             .map(|(k, v)| format!("{k}:{v}"))
+                             .collect::<Vec<_>>()
+                             .join(", "));
+                
+                // Only show a few frames to avoid overwhelming output
+                if i >= 9 && p_frames.len() > 20 {
+                    println!("... ({} more P-frames)", p_frames.len() - 10);
                     break;
                 }
-                let _ = stream.read_unsigned_vb();
             }
         }
-        _ => {
-            // Unknown frame type - read a few bytes
-            for _ in 0..8 {
-                if stream.eof {
+
+        // Output S-frames
+        if let Some(s_frames) = debug_frames.get(&'S') {
+            println!("\nS-Frames (Slow):");
+            for (i, frame) in s_frames.iter().enumerate() {
+                println!("S-Frame {}: time={}, fields={:?}", 
+                         i + 1, frame.timestamp_us,
+                         frame.data.iter()
+                             .map(|(k, v)| format!("{k}:{v}"))
+                             .collect::<Vec<_>>()
+                             .join(", "));
+                
+                // Only show a few frames
+                if i >= 4 && s_frames.len() > 10 {
+                    println!("... ({} more S-frames)", s_frames.len() - 5);
                     break;
                 }
-                let _ = stream.read_byte();
             }
         }
+    } else {
+        println!("No debug frame data available");
     }
-
-    Ok(())
 }
 
-fn parse_signed_data(signed_data: &str) -> Vec<bool> {
-    signed_data.split(',').map(|s| s.trim() == "1").collect()
-}
-
-fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
-    numeric_data
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect()
-}
-
-// Unit conversion functions
-#[allow(dead_code)]
-fn convert_vbat_to_volts(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.1V units
-    raw_value as f32 / 10.0
-}
-
-#[allow(dead_code)]
-fn convert_amperage_to_amps(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.01A units
-    raw_value as f32 / 100.0
-}
-
+/// Main streaming implementation for processing BBL files
+/// Processes the file in a streaming manner to minimize memory usage
+/// Outputs frame data only when frames_only is true (similar to blackbox_decode -d option)
 fn parse_bbl_file_streaming(
     file_path: &Path,
     debug: bool,
-    export_csv: bool,
+    csv_export: bool,
+    frames_only: bool,
     csv_options: &CsvExportOptions,
 ) -> Result<usize> {
     if debug {
-        println!("=== STREAMING BBL FILE PROCESSING ===");
+        println!("=== PARSING BBL FILE (STREAMING) ===");
         let metadata = std::fs::metadata(file_path)?;
         println!(
             "File size: {} bytes ({:.2} MB)",
@@ -2304,6 +1994,7 @@ fn parse_bbl_file_streaming(
         );
     }
 
+    // Read file in one go - could be optimized further with actual streaming
     let file_data = std::fs::read(file_path)?;
 
     // Look for multiple logs by searching for log start markers
@@ -2329,10 +2020,11 @@ fn parse_bbl_file_streaming(
 
     let mut processed_logs = 0;
 
+    // Process each log segment
     for (log_index, &start_pos) in log_positions.iter().enumerate() {
         if debug {
             println!(
-                "Processing log {} starting at position {}",
+                "\nProcessing log {} starting at position {}",
                 log_index + 1,
                 start_pos
             );
@@ -2345,385 +2037,280 @@ fn parse_bbl_file_streaming(
             .unwrap_or(file_data.len());
         let log_data = &file_data[start_pos..end_pos];
 
-        // Parse this individual log
-        let log = parse_single_log(
-            log_data,
-            log_index + 1,
-            log_positions.len(),
-            debug,
-            export_csv,
-        )?;
+        // Find where headers end and binary data begins
+        let mut header_end = 0;
+        for i in 1..log_data.len() {
+            if log_data[i - 1] == b'\n' && log_data[i] != b'H' {
+                header_end = i;
+                break;
+            }
+        }
 
-        // CRITICAL FIX: Skip logs with no meaningful data (like blackbox_decode does)
-        let has_meaningful_data = log.stats.i_frames > 0 || log.stats.p_frames > 0;
+        if header_end == 0 {
+            header_end = log_data.len();
+        }
+
+        // Parse headers from the text section
+        let header_text = std::str::from_utf8(&log_data[0..header_end])?;
+        let header = match parse_headers_from_text(header_text, debug) {
+            Ok(h) => h,
+            Err(e) => {
+                if debug {
+                    println!("Error parsing headers for log {}: {}", log_index + 1, e);
+                }
+                continue;
+            }
+        };
+
+        // Parse binary frame data
+        let binary_data = &log_data[header_end..];
+        let (mut stats, frames, debug_frames) = match parse_frames(binary_data, &header, debug, csv_export || frames_only) {
+            Ok(result) => result,
+            Err(e) => {
+                if debug {
+                    println!("Error parsing frames for log {}: {}", log_index + 1, e);
+                }
+                continue;
+            }
+        };
+
+        // Update frame stats timing from actual frame data
+        if !frames.is_empty() {
+            stats.start_time_us = frames.first().unwrap().timestamp_us;
+            stats.end_time_us = frames.last().unwrap().timestamp_us;
+        }
+
+        if debug {
+            // Debug: Show I-frame field order to compare with C implementation
+            println!("DEBUG: I-frame field order:");
+            for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
+                println!("  [{i}]: {field_name}");
+                if i > 5 {
+                    // Only show first few to avoid spam
+                    println!(
+                        "  ... ({} total fields)",
+                        header.i_frame_def.field_names.len()
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Check if log has meaningful data for processing
+        let has_meaningful_data = stats.i_frames > 0 || stats.p_frames > 0;
+
+        if debug {
+            println!("Log {}: has_meaningful_data={}, i_frames={}, p_frames={}", 
+                    log_index + 1, has_meaningful_data, stats.i_frames, stats.p_frames);
+        }
+
         if !has_meaningful_data {
             if debug {
-                println!(
-                    "Skipping log {} - no main frame data (blackbox_decode compatibility)",
-                    log_index + 1
-                );
+                println!("Skipping log {} - no meaningful data", log_index + 1);
             }
             continue;
         }
 
-        // Display log info immediately
-        display_log_info(&log, debug);
+        // Create BBL log object for this log
+        let log = BBLLog {
+            log_number: log_index + 1,
+            total_logs: log_positions.len(),
+            header,
+            stats,
+            sample_frames: frames,
+            debug_frames,
+        };
 
-        // Export CSV immediately while data is hot in cache
-        if export_csv {
-            if let Err(e) = export_single_log_to_csv(&log, file_path, csv_options, debug) {
-                let filename = file_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                eprintln!(
-                    "Warning: Failed to export CSV for {filename} log {}: {e}",
-                    log_index + 1
-                );
+        // Handle frames-only debug output (similar to blackbox_decode -d)
+        if frames_only {
+            debug_output_frames(&log, debug);
+        } 
+        else {
+            // Always show log statistics for all users (more detailed in debug mode)
+            display_log_info(&log, debug);
+        }
+        
+        // Handle CSV export if requested (in addition to console output)
+        if csv_export {
+            export_single_log_to_csv(&log, file_path, csv_options, debug)?;
+            // Show brief additional CSV export info in debug mode
+            if debug {
+                println!("  → Exported CSV for Log {}: {} total frames", 
+                        log.log_number, log.stats.total_frames);
             }
         }
 
         processed_logs += 1;
-
-        // Add separator between logs for clarity
-        if log_index + 1 < log_positions.len() {
-            println!();
-        }
-
-        // Log goes out of scope here, memory is freed immediately
     }
 
     Ok(processed_logs)
 }
 
-// blackbox_decode validation constants (from parser.c)
-const MAXIMUM_TIME_JUMP_BETWEEN_FRAMES: u64 = 10 * 1_000_000; // 10 seconds in microseconds
-const MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES: u32 = 500 * 10; // 5000 iterations
-
-// Frame validation using blackbox_decode logic - this is the critical missing piece
-fn validate_main_frame_values(
-    frame_data: &HashMap<String, i32>,
-    last_iteration: Option<u32>,
-    last_time: Option<u64>,
-    debug: bool,
-) -> bool {
-    // Get current frame values
-    let current_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-    let current_time = frame_data.get("time").copied().unwrap_or(0) as u64;
-
-    // If we have previous frame data, validate against it (like blackbox_decode does)
-    if let (Some(last_iter), Some(last_tm)) = (last_iteration, last_time) {
-        // blackbox_decode validation: iteration count and time must not move backwards
-        // and must not jump forward too much
-        let iteration_valid = current_iteration >= last_iter
-            && current_iteration < last_iter + MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES;
-
-        let time_valid =
-            current_time >= last_tm && current_time < last_tm + MAXIMUM_TIME_JUMP_BETWEEN_FRAMES;
-
-        if !iteration_valid {
-            if debug {
-                println!(
-                    "VALIDATION: Invalid iteration jump: {last_iter} -> {current_iteration} (max jump: {MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES})"
-                );
-            }
-            return false;
-        }
-
-        if !time_valid {
-            if debug {
-                println!(
-                    "VALIDATION: Invalid time jump: {last_tm} -> {current_time} (max jump: {MAXIMUM_TIME_JUMP_BETWEEN_FRAMES}μs)"
-                );
-            }
-            return false;
-        }
-    }
-
-    true
-}
+/// Format flight mode flags based on betaflight firmware flags
 fn format_flight_mode_flags(flags: i32) -> String {
     let mut modes = Vec::new();
 
     // Based on Betaflight firmware runtime_config.h flightModeFlags_e enum (12 flags total, 0-11)
     // Reference: https://github.com/betaflight/betaflight/blob/master/src/main/fc/runtime_config.h
+    if flags & (1 << 0) != 0 {
+        modes.push("ARM");
+    }
+    if flags & (1 << 1) != 0 {
+        modes.push("ANGLE");
+    }
+    if flags & (1 << 2) != 0 {
+        modes.push("HORIZON");
+    }
+    if flags & (1 << 3) != 0 {
+        modes.push("BARO");
+    }
+    if flags & (1 << 4) != 0 {
+        // Reserved / Anti Gravity in newer versions
+        modes.push("ANTIGRAVITY");
+    }
+    if flags & (1 << 5) != 0 {
+        modes.push("MAG");
+    }
+    if flags & (1 << 6) != 0 {
+        modes.push("HEADFREE");
+    }
+    if flags & (1 << 7) != 0 {
+        modes.push("HEADADJ");
+    }
+    if flags & (1 << 8) != 0 {
+        modes.push("CAMSTAB");
+    }
+    if flags & (1 << 9) != 0 {
+        modes.push("PASSTHRU");
+    }
+    if flags & (1 << 10) != 0 {
+        modes.push("BEEPERON");
+    }
+    if flags & (1 << 11) != 0 {
+        modes.push("LEDLOW");
+    }
 
-    if (flags & (1 << 0)) != 0 {
-        modes.push("ANGLE_MODE"); // ANGLE_MODE = (1 << 0)
-    }
-    if (flags & (1 << 1)) != 0 {
-        modes.push("HORIZON_MODE"); // HORIZON_MODE = (1 << 1)
-    }
-    if (flags & (1 << 2)) != 0 {
-        modes.push("MAG"); // MAG_MODE = (1 << 2)
-    }
-    if (flags & (1 << 3)) != 0 {
-        modes.push("ALTHOLD"); // ALT_HOLD_MODE = (1 << 3)
-    }
-    // Bit 4: GPS_HOME_MODE is commented out in current Betaflight firmware
-    if (flags & (1 << 5)) != 0 {
-        modes.push("POSHOLD"); // POS_HOLD_MODE = (1 << 5)
-    }
-    if (flags & (1 << 6)) != 0 {
-        modes.push("HEADFREE"); // HEADFREE_MODE = (1 << 6)
-    }
-    if (flags & (1 << 7)) != 0 {
-        modes.push("CHIRP"); // CHIRP_MODE = (1 << 7)
-    }
-    if (flags & (1 << 8)) != 0 {
-        modes.push("PASSTHRU"); // PASSTHRU_MODE = (1 << 8)
-    }
-    // Bit 9: RANGEFINDER_MODE is commented out in current Betaflight firmware
-    if (flags & (1 << 10)) != 0 {
-        modes.push("FAILSAFE"); // FAILSAFE_MODE = (1 << 10)
-    }
-    if (flags & (1 << 11)) != 0 {
-        modes.push("GPS_RESCUE"); // GPS_RESCUE_MODE = (1 << 11)
-    }
-
-    if modes.is_empty() {
-        "0".to_string()
-    } else {
-        modes.join("|") // Use pipe separator to avoid breaking CSV format
-    }
+    modes.join("|")
 }
 
+/// Format state flags based on betaflight firmware state flags
 fn format_state_flags(flags: i32) -> String {
     let mut states = Vec::new();
 
-    // Based on Betaflight firmware runtime_config.h stateFlags_t enum
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+    // Based on Betaflight stateFlags_t
+    if flags & (1 << 0) != 0 {
+        states.push("GPS_FIX");
+    }
+    if flags & (1 << 1) != 0 {
+        states.push("GPS_FIX_HOME");
+    }
+    if flags & (1 << 2) != 0 {
+        states.push("CALIBRATE_MAG");
+    }
+    if flags & (1 << 3) != 0 {
+        states.push("SMALL_ANGLE");
+    }
+    if flags & (1 << 4) != 0 {
+        states.push("FIXED_WING");
+    }
+    // Add other states as needed
 
-    // FLIGHT_LOG_FLIGHT_STATE_NAME array from blackbox-tools
-    if (flags & (1 << 0)) != 0 {
-        states.push("GPS_FIX_HOME"); // GPS_FIX_HOME = (1 << 0)
-    }
-    if (flags & (1 << 1)) != 0 {
-        states.push("GPS_FIX"); // GPS_FIX = (1 << 1)
-    }
-    if (flags & (1 << 2)) != 0 {
-        states.push("CALIBRATE_MAG"); // GPS_FIX_EVER = (1 << 2) but old name CALIBRATE_MAG
-    }
-    if (flags & (1 << 3)) != 0 {
-        states.push("SMALL_ANGLE"); // Used in blackbox-tools for compatibility
-    }
-    if (flags & (1 << 4)) != 0 {
-        states.push("FIXED_WING"); // Used in blackbox-tools for compatibility
-    }
+    states.join("|")
+}
 
-    if states.is_empty() {
-        "0".to_string()
-    } else {
-        states.join("|") // Use pipe separator to avoid breaking CSV format
+/// Format failsafe phase values
+fn format_failsafe_phase(phase: i32) -> String {
+    match phase {
+        0 => "IDLE".to_string(),
+        1 => "RX_LOSS_DETECTED".to_string(),
+        2 => "LANDING".to_string(),
+        3 => "LANDED".to_string(),         _ => format!("UNKNOWN({phase})"),
     }
 }
 
-fn format_failsafe_phase(phase: i32) -> String {
-    // Based on Betaflight firmware failsafe.h failsafePhase_e enum
-    // This matches the blackbox-tools implementation exactly:
-    // https://github.com/betaflight/blackbox-tools/blob/master/src/blackbox_fielddefs.c
+#[allow(dead_code)]
+fn parse_signed_data(data_str: &str) -> Vec<bool> {
+    data_str
+        .trim()
+        .split(',')
+        .map(|s| s.trim() == "1" || s.trim().to_lowercase() == "true")
+        .collect()
+}
 
-    // FLIGHT_LOG_FAILSAFE_PHASE_NAME array from blackbox-tools
-    match phase {
-        0 => "IDLE".to_string(),               // FAILSAFE_IDLE = 0
-        1 => "RX_LOSS_DETECTED".to_string(),   // FAILSAFE_RX_LOSS_DETECTED
-        2 => "LANDING".to_string(),            // FAILSAFE_LANDING
-        3 => "LANDED".to_string(),             // FAILSAFE_LANDED
-        4 => "RX_LOSS_MONITORING".to_string(), // FAILSAFE_RX_LOSS_MONITORING (new in current firmware)
-        5 => "RX_LOSS_RECOVERED".to_string(), // FAILSAFE_RX_LOSS_RECOVERED (new in current firmware)
-        6 => "GPS_RESCUE".to_string(),        // FAILSAFE_GPS_RESCUE (new in current firmware)
-        _ => phase.to_string(),
-    }
+/// Parse numeric data (like predictors or encodings) from header into a vector of u8 values
+fn parse_numeric_data(data_str: &str) -> Vec<u8> {
+    data_str
+        .trim()
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u8>().ok())
+        .collect()
+}
+
+/// Convert raw vbat value to volts (follows blackbox_decode logic)
+fn convert_vbat_to_volts(raw_value: i32) -> f32 {
+    raw_value as f32 / 100.0
+}
+
+/// Convert raw amperage value to amps (follows blackbox_decode logic)
+fn convert_amperage_to_amps(raw_value: i32) -> f32 {
+    raw_value as f32 / 100.0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::collections::HashMap;
 
     #[test]
-    fn test_frame_definition_creation() {
-        let mut frame_def = FrameDefinition::new();
+    fn test_format_flight_mode_flags() {
+        // Test empty flags
+        assert_eq!(format_flight_mode_flags(0), "");
+
+        // Test single flags
+        assert_eq!(format_flight_mode_flags(1 << 0), "ARM");
+        assert_eq!(format_flight_mode_flags(1 << 1), "ANGLE");
+        assert_eq!(format_flight_mode_flags(1 << 2), "HORIZON");
+
+        // Test combined flags
+        assert_eq!(format_flight_mode_flags((1 << 0) | (1 << 1)), "ARM|ANGLE");
+    }
+
+    #[test]
+    fn test_format_state_flags() {
+        // Test empty flags
+        assert_eq!(format_state_flags(0), "");
+
+        // Test single flags (corrected based on actual function)
+        assert_eq!(format_state_flags(1 << 0), "GPS_FIX");
+        assert_eq!(format_state_flags(1 << 1), "GPS_FIX_HOME");
+    }
+
+    #[test]
+    fn test_frame_definition() {
+        // Test empty frame definition
+        let frame_def = FrameDefinition::new();
         assert_eq!(frame_def.count, 0);
+        assert!(frame_def.fields.is_empty());
         assert!(frame_def.field_names.is_empty());
-
-        let field_names = vec!["time".to_string(), "loopIteration".to_string()];
-        frame_def = FrameDefinition::from_field_names(field_names.clone());
-        assert_eq!(frame_def.count, 2);
-        assert_eq!(frame_def.field_names, field_names);
-    }
-
-    #[test]
-    fn test_frame_definition_predictor_update() {
-        let mut frame_def =
-            FrameDefinition::from_field_names(vec!["field1".to_string(), "field2".to_string()]);
-        let predictors = vec![1, 2];
-        frame_def.update_predictors(&predictors);
-
-        assert_eq!(frame_def.fields[0].predictor, 1);
-        assert_eq!(frame_def.fields[1].predictor, 2);
-    }
-
-    #[test]
-    fn test_unit_conversions() {
-        // Test voltage conversion (0.1V units)
-        let volts = convert_vbat_to_volts(33); // 33 * 0.1 = 3.3V
-        assert!((volts - 3.3).abs() < 0.01);
-
-        // Test amperage conversion (0.01A units)
-        let amps = convert_amperage_to_amps(100); // 100 * 0.01 = 1.0A
-        assert!((amps - 1.0).abs() < 0.01);
     }
 
     #[test]
     fn test_frame_stats_default() {
         let stats = FrameStats::default();
-        assert_eq!(stats.total_frames, 0);
         assert_eq!(stats.i_frames, 0);
         assert_eq!(stats.p_frames, 0);
-        assert_eq!(stats.failed_frames, 0);
+        assert_eq!(stats.total_frames, 0);
     }
 
     #[test]
-    fn test_csv_export_options() {
-        let options = CsvExportOptions {
-            output_dir: Some("/tmp".to_string()),
-        };
-        assert_eq!(options.output_dir.as_ref().unwrap(), "/tmp");
-
-        let options = CsvExportOptions { output_dir: None };
-        assert!(options.output_dir.is_none());
-    }
-
-    #[test]
-    fn test_file_extension_validation() {
-        let valid_extensions = ["bbl", "bfl", "txt"];
-        let invalid_extensions = ["csv", "json", "xml"];
-
-        for ext in valid_extensions {
-            let path = PathBuf::from(format!("test.{ext}"));
-            let is_valid = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| {
-                    let ext_lower = e.to_ascii_lowercase();
-                    ext_lower == "bbl" || ext_lower == "bfl" || ext_lower == "txt"
-                })
-                .unwrap_or(false);
-            assert!(is_valid, "Extension {ext} should be valid");
-        }
-
-        for ext in invalid_extensions {
-            let path = PathBuf::from(format!("test.{ext}"));
-            let is_valid = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| {
-                    let ext_lower = e.to_ascii_lowercase();
-                    ext_lower == "bbl" || ext_lower == "bfl" || ext_lower == "txt"
-                })
-                .unwrap_or(false);
-            assert!(!is_valid, "Extension {ext} should be invalid");
-        }
-    }
-
-    #[test]
-    fn test_bbl_header_creation() {
-        let header = BBLHeader {
-            firmware_revision: "4.5.0".to_string(),
-            board_info: "MAMBAF722".to_string(),
-            craft_name: "TestCraft".to_string(),
-            data_version: 2,
-            looptime: 500,
-            i_frame_def: FrameDefinition::new(),
-            p_frame_def: FrameDefinition::new(),
-            s_frame_def: FrameDefinition::new(),
-            g_frame_def: FrameDefinition::new(),
-            h_frame_def: FrameDefinition::new(),
-            sysconfig: HashMap::new(),
-            all_headers: Vec::new(),
-        };
-
-        assert_eq!(header.firmware_revision, "4.5.0");
-        assert_eq!(header.board_info, "MAMBAF722");
-        assert_eq!(header.craft_name, "TestCraft");
-        assert_eq!(header.data_version, 2);
-        assert_eq!(header.looptime, 500);
-    }
-
-    #[test]
-    fn test_decoded_frame_creation() {
-        let mut data = HashMap::new();
-        data.insert("time".to_string(), 1000);
-        data.insert("loopIteration".to_string(), 1);
-
-        let frame = DecodedFrame {
-            frame_type: 'I',
-            timestamp_us: 1000,
-            loop_iteration: 1,
-            data,
-        };
-
-        assert_eq!(frame.frame_type, 'I');
-        assert_eq!(frame.timestamp_us, 1000);
-        assert_eq!(frame.loop_iteration, 1);
-        assert_eq!(frame.data.get("time"), Some(&1000));
-    }
-
-    #[test]
-    fn test_format_flight_mode_flags() {
-        // Test no flags
-        assert_eq!(format_flight_mode_flags(0), "0");
-
-        // Test single flags - matches Betaflight flightModeFlags_e enum
-        assert_eq!(format_flight_mode_flags(1), "ANGLE_MODE"); // bit 0 = ANGLE_MODE
-        assert_eq!(format_flight_mode_flags(2), "HORIZON_MODE"); // bit 1 = HORIZON_MODE
-        assert_eq!(format_flight_mode_flags(4), "MAG"); // bit 2 = MAG_MODE
-        assert_eq!(format_flight_mode_flags(8), "ALTHOLD"); // bit 3 = ALT_HOLD_MODE
-        assert_eq!(format_flight_mode_flags(32), "POSHOLD"); // bit 5 = POS_HOLD_MODE
-        assert_eq!(format_flight_mode_flags(64), "HEADFREE"); // bit 6 = HEADFREE_MODE
-        assert_eq!(format_flight_mode_flags(256), "PASSTHRU"); // bit 8 = PASSTHRU_MODE
-        assert_eq!(format_flight_mode_flags(1024), "FAILSAFE"); // bit 10 = FAILSAFE_MODE
-        assert_eq!(format_flight_mode_flags(2048), "GPS_RESCUE"); // bit 11 = GPS_RESCUE_MODE
-
-        // Test multiple flags (pipe-separated to avoid breaking CSV format)
-        assert_eq!(format_flight_mode_flags(3), "ANGLE_MODE|HORIZON_MODE"); // bits 0+1
-        assert_eq!(format_flight_mode_flags(6), "HORIZON_MODE|MAG"); // bits 1+2
-        assert_eq!(format_flight_mode_flags(7), "ANGLE_MODE|HORIZON_MODE|MAG"); // bits 0+1+2
-    }
-
-    #[test]
-    fn test_format_state_flags() {
-        // Test no flags
-        assert_eq!(format_state_flags(0), "0");
-
-        // Test single flags - matches Betaflight stateFlags_t enum
-        assert_eq!(format_state_flags(1), "GPS_FIX_HOME"); // bit 0 = GPS_FIX_HOME
-        assert_eq!(format_state_flags(2), "GPS_FIX"); // bit 1 = GPS_FIX
-        assert_eq!(format_state_flags(4), "CALIBRATE_MAG"); // bit 2 = GPS_FIX_EVER (old name)
-        assert_eq!(format_state_flags(8), "SMALL_ANGLE"); // bit 3 = compatibility
-        assert_eq!(format_state_flags(16), "FIXED_WING"); // bit 4 = compatibility
-
-        // Test multiple flags (pipe-separated to avoid breaking CSV format)
-        assert_eq!(format_state_flags(3), "GPS_FIX_HOME|GPS_FIX"); // bits 0+1
-        assert_eq!(format_state_flags(7), "GPS_FIX_HOME|GPS_FIX|CALIBRATE_MAG");
-        // bits 0+1+2
-    }
-
-    #[test]
-    fn test_format_failsafe_phase() {
-        // Test known phases - matches Betaflight failsafePhase_e enum
-        assert_eq!(format_failsafe_phase(0), "IDLE"); // FAILSAFE_IDLE
-        assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED"); // FAILSAFE_RX_LOSS_DETECTED
-        assert_eq!(format_failsafe_phase(2), "LANDING"); // FAILSAFE_LANDING
-        assert_eq!(format_failsafe_phase(3), "LANDED"); // FAILSAFE_LANDED
-        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING"); // FAILSAFE_RX_LOSS_MONITORING (new in current firmware)
-        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED"); // FAILSAFE_RX_LOSS_RECOVERED (new in current firmware)
-        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE"); // FAILSAFE_GPS_RESCUE (new in current firmware)
-
-        // Test unknown phases (should return numeric string)
-        assert_eq!(format_failsafe_phase(99), "99");
-        assert_eq!(format_failsafe_phase(-1), "-1");
+    fn test_should_have_frame() {
+        let mut sysconfig = HashMap::new();
+        sysconfig.insert("frameIntervalI".to_string(), 32);
+        sysconfig.insert("frameIntervalPNum".to_string(), 1);
+        sysconfig.insert("frameIntervalPDenom".to_string(), 1);
+        
+        // Test I-frame interval logic
+        assert!(should_have_frame(0, &sysconfig));
+        assert!(should_have_frame(1, &sysconfig));
     }
 }

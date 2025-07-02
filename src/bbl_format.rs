@@ -317,12 +317,16 @@ pub fn apply_predictor(
     sysconfig: &HashMap<String, i32>,
     field_names: &[String],
 ) -> i32 {
+    // Safety check for empty arrays - always return raw value if arrays are empty or too short
+    let prev_valid = previous_frame.is_some_and(|prev| !prev.is_empty() && field_index < prev.len());
+    let prev2_valid = previous2_frame.is_some_and(|prev2| !prev2.is_empty() && field_index < prev2.len());
+    
     match predictor {
         PREDICT_0 => raw_value,
 
         PREDICT_PREVIOUS => {
-            if let Some(prev) = previous_frame {
-                if field_index < prev.len() {
+            if prev_valid {
+                if let Some(prev) = previous_frame {
                     prev[field_index] + raw_value
                 } else {
                     raw_value
@@ -333,8 +337,8 @@ pub fn apply_predictor(
         }
 
         PREDICT_STRAIGHT_LINE => {
-            if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
-                if field_index < prev.len() && field_index < prev2.len() {
+            if prev_valid && prev2_valid {
+                if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                     raw_value + 2 * prev[field_index] - prev2[field_index]
                 } else {
                     raw_value
@@ -345,8 +349,8 @@ pub fn apply_predictor(
         }
 
         PREDICT_AVERAGE_2 => {
-            if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
-                if field_index < prev.len() && field_index < prev2.len() {
+            if prev_valid && prev2_valid {
+                if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                     raw_value + ((prev[field_index] + prev2[field_index]) / 2)
                 } else {
                     raw_value
@@ -451,17 +455,20 @@ pub fn parse_frame_data(
         let field = &frame_def.fields[i];
 
         if field.predictor == PREDICT_INC {
-            current_frame[i] = apply_predictor(
-                i,
-                field.predictor,
-                0,
-                current_frame,
-                previous_frame,
-                previous2_frame,
-                skipped_frames,
-                sysconfig,
-                &frame_def.field_names,
-            );
+            // Bounds check before accessing current_frame
+            if i < current_frame.len() {
+                current_frame[i] = apply_predictor(
+                    i,
+                    field.predictor,
+                    0,
+                    current_frame,
+                    previous_frame,
+                    previous2_frame,
+                    skipped_frames,
+                    sysconfig,
+                    &frame_def.field_names,
+                );
+            }
             i += 1;
             continue;
         }
@@ -483,17 +490,20 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
-                        i + j,
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &frame_def.field_names,
-                    );
+                    // Bounds check before accessing current_frame
+                    if (i + j) < current_frame.len() {
+                        current_frame[i + j] = apply_predictor(
+                            i + j,
+                            predictor,
+                            values[j],
+                            current_frame,
+                            previous_frame,
+                            previous2_frame,
+                            skipped_frames,
+                            sysconfig,
+                            &frame_def.field_names,
+                        );
+                    }
                 }
                 i += 4;
                 continue;
@@ -512,17 +522,20 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
-                        i + j,
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &frame_def.field_names,
-                    );
+                    // Bounds check before accessing current_frame
+                    if (i + j) < current_frame.len() {
+                        current_frame[i + j] = apply_predictor(
+                            i + j,
+                            predictor,
+                            values[j],
+                            current_frame,
+                            previous_frame,
+                            previous2_frame,
+                            skipped_frames,
+                            sysconfig,
+                            &frame_def.field_names,
+                        );
+                    }
                 }
                 i += 3;
                 continue;
@@ -550,17 +563,20 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
-                        i + j,
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &frame_def.field_names,
-                    );
+                    // Bounds check before accessing current_frame
+                    if (i + j) < current_frame.len() {
+                        current_frame[i + j] = apply_predictor(
+                            i + j,
+                            predictor,
+                            values[j],
+                            current_frame,
+                            previous_frame,
+                            previous2_frame,
+                            skipped_frames,
+                            sysconfig,
+                            &frame_def.field_names,
+                        );
+                    }
                 }
                 i += group_count;
                 continue;
@@ -569,17 +585,20 @@ pub fn parse_frame_data(
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
-                current_frame[i] = apply_predictor(
-                    i,
-                    predictor,
-                    raw_value,
-                    current_frame,
-                    previous_frame,
-                    previous2_frame,
-                    skipped_frames,
-                    sysconfig,
-                    &frame_def.field_names,
-                );
+                // Bounds check before accessing current_frame
+                if i < current_frame.len() {
+                    current_frame[i] = apply_predictor(
+                        i,
+                        predictor,
+                        raw_value,
+                        current_frame,
+                        previous_frame,
+                        previous2_frame,
+                        skipped_frames,
+                        sysconfig,
+                        &frame_def.field_names,
+                    );
+                }
             }
         }
 
@@ -587,4 +606,148 @@ pub fn parse_frame_data(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_sign_extend_functions() {
+        // Test 2-bit sign extension
+        assert_eq!(sign_extend_2bit(0b00), 0);
+        assert_eq!(sign_extend_2bit(0b01), 1);
+        assert_eq!(sign_extend_2bit(0b10), -2);
+        assert_eq!(sign_extend_2bit(0b11), -1);
+
+        // Test 4-bit sign extension
+        assert_eq!(sign_extend_4bit(0b0000), 0);
+        assert_eq!(sign_extend_4bit(0b0111), 7);
+        assert_eq!(sign_extend_4bit(0b1000), -8);
+        assert_eq!(sign_extend_4bit(0b1111), -1);
+
+        // Test 8-bit sign extension
+        assert_eq!(sign_extend_8bit(0x00), 0);
+        assert_eq!(sign_extend_8bit(0x7F), 127);
+        assert_eq!(sign_extend_8bit(0x80), -128);
+        assert_eq!(sign_extend_8bit(0xFF), -1);
+    }
+
+    #[test]
+    fn test_apply_predictor_predict_0() {
+        let current_frame = vec![0, 0, 0];
+        let result = apply_predictor(
+            0,
+            PREDICT_0,
+            42,
+            &current_frame,
+            None,
+            None,
+            0,
+            &HashMap::new(),
+            &vec!["field1".to_string()],
+        );
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_apply_predictor_predict_previous() {
+        let current_frame = vec![0, 0, 0];
+        let previous_frame = vec![10, 20, 30];
+        
+        let result = apply_predictor(
+            1,
+            PREDICT_PREVIOUS,
+            5,
+            &current_frame,
+            Some(&previous_frame),
+            None,
+            0,
+            &HashMap::new(),
+            &vec!["field1".to_string(), "field2".to_string()],
+        );
+        assert_eq!(result, 25); // 20 + 5
+    }
+
+    #[test]
+    fn test_apply_predictor_predict_previous_empty_array() {
+        let current_frame = vec![0, 0, 0];
+        let previous_frame = vec![];
+        
+        let result = apply_predictor(
+            0,
+            PREDICT_PREVIOUS,
+            5,
+            &current_frame,
+            Some(&previous_frame),
+            None,
+            0,
+            &HashMap::new(),
+            &vec!["field1".to_string()],
+        );
+        assert_eq!(result, 5); // Should return raw value when array is empty
+    }
+
+    #[test]
+    fn test_apply_predictor_predict_minthrottle() {
+        let mut sysconfig = HashMap::new();
+        sysconfig.insert("minthrottle".to_string(), 1000);
+        
+        let result = apply_predictor(
+            0,
+            PREDICT_MINTHROTTLE,
+            150,
+            &vec![],
+            None,
+            None,
+            0,
+            &sysconfig,
+            &vec!["throttle".to_string()],
+        );
+        assert_eq!(result, 1150); // 1000 + 150
+    }
+
+    #[test]
+    fn test_apply_predictor_predict_1500() {
+        let result = apply_predictor(
+            0,
+            PREDICT_1500,
+            -100,
+            &vec![],
+            None,
+            None,
+            0,
+            &HashMap::new(),
+            &vec!["field1".to_string()],
+        );
+        assert_eq!(result, 1400); // 1500 + (-100)
+    }
+
+    #[test]
+    fn test_bbl_data_stream_creation() {
+        let data = vec![0x01, 0x02, 0x03, 0x04];
+        let stream = BBLDataStream::new(&data);
+        
+        assert_eq!(stream.pos, 0);
+        assert_eq!(stream.end, 4);
+        assert!(!stream.eof);
+    }
+
+    #[test]
+    fn test_bbl_data_stream_read_byte() {
+        let data = vec![0x01, 0x02, 0x03];
+        let mut stream = BBLDataStream::new(&data);
+        
+        assert_eq!(stream.read_byte().unwrap(), 0x01);
+        assert_eq!(stream.pos, 1);
+        assert!(!stream.eof);
+        
+        assert_eq!(stream.read_byte().unwrap(), 0x02);
+        assert_eq!(stream.read_byte().unwrap(), 0x03);
+        
+        // Should error on EOF
+        assert!(stream.read_byte().is_err());
+        assert!(stream.eof);
+    }
 }
