@@ -1162,8 +1162,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         }
     }
 
-    // Sort by timestamp
-    all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+    // **CRITICAL FIX**: Disable timestamp sorting to match C reference behavior
+    // C reference outputs frames in strict parse order without sorting
+    // Timestamp sorting was causing chaotic loopIteration sequences (8,4,15,1,2,3,7...)
+    // all_frames.sort_by_key(|(timestamp, _, _)| *timestamp); // DISABLED
 
     // Remove frames with zero timestamps like blackbox_decode does
     // blackbox_decode filters out frames with invalid timestamps rather than interpolating them
@@ -1178,8 +1180,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             );
         }
 
-        // Sort by timestamp after filtering
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+        // **CRITICAL FIX**: Disable timestamp sorting after filtering
+        // all_frames.sort_by_key(|(timestamp, _, _)| *timestamp); // DISABLED
 
         // FRAME FILTERING: Remove corrupted frames to match blackbox_decode quality control
         // This filters out frames with duplicate timestamps and invalid loopIteration sequences
@@ -1254,7 +1256,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         for frame in &log.sample_frames {
             all_frames.push((frame.timestamp_us, frame.frame_type, frame));
         }
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+        // **CRITICAL FIX**: Disable timestamp sorting for sample frames
+        // all_frames.sort_by_key(|(timestamp, _, _)| *timestamp); // DISABLED
     }
 
     if all_frames.is_empty() {
