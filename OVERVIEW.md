@@ -1,9 +1,10 @@
 # BBL Parser - Project Overview
 
 **Project Status:** 🔧 **WORK IN PRO### **1. Timing Data Corruption (CRITICAL)**
-- **Status**: P-frame time field extracts wrong raw deltas (time stuck vs progressive)
-- **Impact**: Makes timing analysis completely unreliable
-- **Progress**: Deep investigation ongoing, isolated to specific BBL stream issue
+- **Status**: Raw values wrong (-6,1,0 vs ~300μs deltas) - NOT predictor logic
+- **Investigation**: Verified blackbox_decode.c uses identical STRAIGHT_LINE formula
+- **Root Cause**: Stream positioning or frame definition interpretation differs
+- **Progress**: Issue isolated to raw value extraction, NOT predictor application
 
 ### **2. S-Frame Data Extraction**  
 - **Status**: Flight mode flag values stuck at 0 vs expected ANGLE_MODE (1)
