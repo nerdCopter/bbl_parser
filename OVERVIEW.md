@@ -1,21 +1,27 @@
-# **Project Status:** Work in Progress (0/9 Status)
+# **Project Status:** CSV Export Issues (Branch: 20250625_fix_export_data_quantity)
 **Version:** 0.9 (Development)  
+**Date:** July 4, 2025
 
-**Current Status:** Active development with ongoing improvements to blackbox_decode compatibility  
+**Current Status:** ❌ CSV export still has critical data formatting issues despite frame sequencing fixes
 
-## Project Summary
+## Issues Summary
 
-A Rust implementation of BBL parser with focus on blackbox_decode compatibility and production-ready reliability.
+**Branch:** `20250625_fix_export_data_quantity`
 
-**Current Status:** Work in progress - ongoing development and testing
+### ❌ **Critical Issues Still Present**:
+1. **Time Progression**: Wrong timestamp calculations causing non-monotonic time sequences
+2. **Data Scaling**: Motor values, accelerometer, and sensor data have incorrect scaling factors  
+3. **Flight Mode Flags**: Missing flag formatting (empty fields vs proper ANGLE_MODE, GPS_FIX_HOME, etc.)
+4. **Field Processing**: Fundamental data conversion issues in CSV export pipeline
 
-**Implementation Status:**
-- ✅ **Log Selection Logic**: Correctly skips empty/corrupted logs (like blackbox_decode)
-- ✅ **Frame Validation**: Complete blackbox_decode validation implementation
-- ✅ **Build Quality**: `cargo build --release` succeeds with all validations
-- 🔄 **Data Compatibility**: Working on perfect match with blackbox_decode output
-- ✅ **Core Parsing**: Binary frame selection identical to reference
-- ✅ **Multi-log Support**: Identical file structure and processing logic
+### ✅ **Working Components**:
+- Frame parsing and collection (I, P, S frames detected correctly)
+- loopIteration sequencing (0, 1, 2, 3, 4... consecutive)  
+- PNG plot generation (analysis tools can process the data)
+- Multi-log processing (61k+ rows exported successfully)
+
+### 🎯 **Root Cause**:
+Data conversion and field processing pipeline has scaling/formatting bugs that don't affect structure but corrupt values.
 
 ---
 

@@ -1183,14 +1183,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // **OPTIMAL SOLUTION**: Apply time monotonic correction for perfect sequencing
         // This fixes minor time reversals without rejecting 87% of frames
         if !all_frames.is_empty() {
-            all_frames.sort_by_key(|(_, frame_type, frame)| {
-                // Ensure I-frames come first, then maintain parse order
-                match frame_type {
-                    'I' => (0, frame.data.get("loopIteration").copied().unwrap_or(999999)),
-                    'P' => (1, frame.data.get("loopIteration").copied().unwrap_or(999999)), 
-                    'S' => (2, frame.data.get("loopIteration").copied().unwrap_or(999999)),
-                    _ => (3, 999999),
-                }
+            all_frames.sort_by_key(|(timestamp, _frame_type, frame)| {
+                // Sort by loopIteration first, then by timestamp to maintain proper time ordering
+                (frame.data.get("loopIteration").copied().unwrap_or(999999), *timestamp)
             });
             
             // Apply monotonic time correction
