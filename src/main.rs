@@ -1717,9 +1717,6 @@ fn parse_frames(
                                     }
                                 }
 
-                                // Initialize debug frame storage
-                                debug_frames.insert('I', Vec::new());
-
                                 // Add I-frame to debug frames for CSV export
                                 debug_frames.entry('I').or_default().push(DecodedFrame {
                                     frame_type,
