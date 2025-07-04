@@ -1208,6 +1208,9 @@ fn parse_frames(
     let mut time_rollover_accumulator: u64 = 0; // Tracks 32-bit timestamp rollovers  
     let mut last_main_frame_time: i64 = -1; // Last timestamp for rollover detection
 
+    // **BLACKBOX_DECODE COMPATIBILITY**: Track frame validation like blackbox_decode.c
+    let mut last_main_frame_iteration: u32 = u32::MAX; // Track last loop iteration for validation
+
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
@@ -1320,8 +1323,36 @@ fn parse_frames(
                                     .previous2_frame
                                     .copy_from_slice(&frame_history.current_frame);
                                 frame_history.valid = true;
-                                parsing_success = true;
-                                stats.i_frames += 1;
+
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Validate I-frame values like blackbox_decode.c
+                                let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                                let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
+                                
+                                let is_valid_frame = if last_main_frame_iteration != u32::MAX {
+                                    // Validate against previous frame like flightLogValidateMainFrameValues()
+                                    current_loop_iteration >= last_main_frame_iteration &&
+                                    current_loop_iteration < last_main_frame_iteration.saturating_add(5000) && // MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES 
+                                    current_time >= last_main_frame_time &&
+                                    current_time < last_main_frame_time + 10_000_000 // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
+                                } else {
+                                    true // First frame is always valid
+                                };
+
+                                if is_valid_frame {
+                                    // Update tracking variables for next validation
+                                    last_main_frame_iteration = current_loop_iteration;
+                                    last_main_frame_time = current_time;
+                                    
+                                    parsing_success = true;
+                                    stats.i_frames += 1;
+                                } else {
+                                    // Reject invalid frame like blackbox_decode does  
+                                    stats.failed_frames += 1;
+                                    if debug {
+                                        println!("DEBUG: Rejected I-frame - loopIteration:{} time:{} (prev iter:{} time:{})", 
+                                                current_loop_iteration, current_time, last_main_frame_iteration, last_main_frame_time);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1394,8 +1425,37 @@ fn parse_frames(
                                 frame_history
                                     .previous_frame
                                     .copy_from_slice(&frame_history.current_frame);
-                                parsing_success = true;
-                                stats.p_frames += 1;
+
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame values like blackbox_decode.c
+                                // Check that iteration count and time didn't move backwards or jump too much
+                                let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                                let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
+                                
+                                let is_valid_frame = if last_main_frame_iteration != u32::MAX {
+                                    // Validate against previous frame like flightLogValidateMainFrameValues()
+                                    current_loop_iteration >= last_main_frame_iteration &&
+                                    current_loop_iteration < last_main_frame_iteration.saturating_add(5000) && // MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES 
+                                    current_time >= last_main_frame_time &&
+                                    current_time < last_main_frame_time + 10_000_000 // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
+                                } else {
+                                    true // First frame is always valid
+                                };
+
+                                if is_valid_frame {
+                                    // Update tracking variables for next validation
+                                    last_main_frame_iteration = current_loop_iteration;
+                                    last_main_frame_time = current_time;
+                                    
+                                    parsing_success = true;
+                                    stats.p_frames += 1;
+                                } else {
+                                    // Reject invalid frame like blackbox_decode does
+                                    stats.failed_frames += 1;
+                                    if debug {
+                                        println!("DEBUG: Rejected P-frame - loopIteration:{} time:{} (prev iter:{} time:{})", 
+                                                current_loop_iteration, current_time, last_main_frame_iteration, last_main_frame_time);
+                                    }
+                                }
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history
