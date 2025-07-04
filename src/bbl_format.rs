@@ -251,6 +251,13 @@ impl<'a> BBLDataStream<'a> {
         }
         Ok(())
     }
+
+    // **BLACKBOX_DECODE COMPATIBILITY**: Byte alignment like streamByteAlign()
+    // Currently no-op since we don't track bit positions, but matches blackbox_decode structure
+    pub fn byte_align(&mut self) {
+        // No-op for now since we only do byte-level reading
+        // In blackbox_decode.c this aligns bit pointer to byte boundaries
+    }
 }
 
 // Sign extension functions - exact replicas of JavaScript implementations
@@ -432,11 +439,21 @@ pub fn decode_frame_field(
     _data_version: u8,
 ) -> Result<i32> {
     match encoding {
-        ENCODING_SIGNED_VB => stream.read_signed_vb(),
+        ENCODING_SIGNED_VB => {
+            // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read
+            stream.byte_align();
+            stream.read_signed_vb()
+        },
 
-        ENCODING_UNSIGNED_VB => Ok(stream.read_unsigned_vb()? as i32),
+        ENCODING_UNSIGNED_VB => {
+            // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read  
+            stream.byte_align();
+            Ok(stream.read_unsigned_vb()? as i32)
+        },
 
         ENCODING_NEG_14BIT => {
+            // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read
+            stream.byte_align();
             let value = stream.read_unsigned_vb()? as u16;
             Ok(-sign_extend_14bit(value))
         }
