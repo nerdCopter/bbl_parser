@@ -1066,15 +1066,34 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         }
     }
 
-    // Sort by timestamp
-    all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+    // **BLACKBOX_DECODE COMPATIBILITY FIX**: Ensure proper frame ordering for all dataset sizes
+    // Sort by loopIteration first (for logical sequence), then by timestamp (for time order)
+    // This fixes small dataset chaos without breaking large dataset performance
+    all_frames.sort_by_key(|(timestamp, _frame_type, frame)| {
+        let loop_iter = frame.data.get("loopIteration").copied().unwrap_or(999999);
+        (loop_iter, *timestamp)
+    });
+    
+    // Apply minimal time correction to ensure monotonic progression (like blackbox_decode)
+    if !all_frames.is_empty() {
+        let mut last_time = 0u64;
+        for (timestamp, _, _) in &mut all_frames {
+            if *timestamp <= last_time {
+                *timestamp = last_time + 1; // Minimal correction
+            }
+            last_time = *timestamp;
+        }
+    }
 
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
         for frame in &log.sample_frames {
             all_frames.push((frame.timestamp_us, frame.frame_type, frame));
         }
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+        all_frames.sort_by_key(|(timestamp, _frame_type, frame)| {
+            let loop_iter = frame.data.get("loopIteration").copied().unwrap_or(999999);
+            (loop_iter, *timestamp)
+        });
     }
 
     if all_frames.is_empty() {
