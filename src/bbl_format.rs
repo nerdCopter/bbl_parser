@@ -28,6 +28,67 @@ pub const PREDICT_VBATREF: u8 = 9;
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
 
+// **BLACKBOX_DECODE COMPATIBILITY**: Flight mode flag definitions
+// Based on Betaflight flight mode flags from firmware source
+pub const FLIGHT_MODE_ANGLE: u32 = 1 << 0;       // ANGLE_MODE
+pub const FLIGHT_MODE_HORIZON: u32 = 1 << 1;     // HORIZON_MODE  
+pub const FLIGHT_MODE_BARO: u32 = 1 << 2;        // BARO_MODE
+pub const FLIGHT_MODE_MAG: u32 = 1 << 3;         // MAG_MODE
+pub const FLIGHT_MODE_HEADFREE: u32 = 1 << 4;    // HEADFREE_MODE
+pub const FLIGHT_MODE_HEADADJ: u32 = 1 << 5;     // HEADADJ_MODE
+pub const FLIGHT_MODE_CAMSTAB: u32 = 1 << 6;     // CAMSTAB_MODE
+pub const FLIGHT_MODE_CALIB: u32 = 1 << 7;       // CALIBRATE_MAG
+pub const FLIGHT_MODE_OSD_SW: u32 = 1 << 8;      // OSD_SW_MODE
+pub const FLIGHT_MODE_TELEMETRY: u32 = 1 << 9;   // TELEMETRY_MODE
+pub const FLIGHT_MODE_GTUNE: u32 = 1 << 10;      // GTUNE_MODE
+pub const FLIGHT_MODE_SONAR: u32 = 1 << 11;      // SONAR_MODE
+pub const FLIGHT_MODE_SERVO_AUTOTRIM: u32 = 1 << 12; // SERVO_AUTOTRIM_MODE
+pub const FLIGHT_MODE_LEDLOW: u32 = 1 << 13;     // LEDLOW_MODE
+pub const FLIGHT_MODE_LLIGHTS: u32 = 1 << 14;    // LLIGHTS_MODE
+pub const FLIGHT_MODE_CALIB_GYR: u32 = 1 << 15;  // CALIBRATE_GYRO
+pub const FLIGHT_MODE_FAILSAFE: u32 = 1 << 16;   // FAILSAFE_MODE
+pub const FLIGHT_MODE_ANTIGRAVITY: u32 = 1 << 17; // ANTI_GRAVITY_MODE
+
+// GPS-related flight modes
+pub const FLIGHT_MODE_GPS_FIX_HOME: u32 = 1 << 18; // GPS_FIX_HOME
+pub const FLIGHT_MODE_GPS_FIX: u32 = 1 << 19;     // GPS_FIX
+
+// Function to convert flight mode flags to text like blackbox_decode
+pub fn format_flight_mode_flags(flags: u32) -> String {
+    if flags == 0 {
+        return "0".to_string();
+    }
+    
+    let mut modes = Vec::new();
+    
+    if flags & FLIGHT_MODE_ANGLE != 0 { modes.push("ANGLE_MODE"); }
+    if flags & FLIGHT_MODE_HORIZON != 0 { modes.push("HORIZON_MODE"); }
+    if flags & FLIGHT_MODE_BARO != 0 { modes.push("BARO_MODE"); }
+    if flags & FLIGHT_MODE_MAG != 0 { modes.push("MAG_MODE"); }
+    if flags & FLIGHT_MODE_HEADFREE != 0 { modes.push("HEADFREE_MODE"); }
+    if flags & FLIGHT_MODE_HEADADJ != 0 { modes.push("HEADADJ_MODE"); }
+    if flags & FLIGHT_MODE_CAMSTAB != 0 { modes.push("CAMSTAB_MODE"); }
+    if flags & FLIGHT_MODE_CALIB != 0 { modes.push("CALIBRATE_MAG"); }
+    if flags & FLIGHT_MODE_OSD_SW != 0 { modes.push("OSD_SW_MODE"); }
+    if flags & FLIGHT_MODE_TELEMETRY != 0 { modes.push("TELEMETRY_MODE"); }
+    if flags & FLIGHT_MODE_GTUNE != 0 { modes.push("GTUNE_MODE"); }
+    if flags & FLIGHT_MODE_SONAR != 0 { modes.push("SONAR_MODE"); }
+    if flags & FLIGHT_MODE_SERVO_AUTOTRIM != 0 { modes.push("SERVO_AUTOTRIM_MODE"); }
+    if flags & FLIGHT_MODE_LEDLOW != 0 { modes.push("LEDLOW_MODE"); }
+    if flags & FLIGHT_MODE_LLIGHTS != 0 { modes.push("LLIGHTS_MODE"); }
+    if flags & FLIGHT_MODE_CALIB_GYR != 0 { modes.push("CALIBRATE_GYRO"); }
+    if flags & FLIGHT_MODE_FAILSAFE != 0 { modes.push("FAILSAFE_MODE"); }
+    if flags & FLIGHT_MODE_ANTIGRAVITY != 0 { modes.push("ANTI_GRAVITY_MODE"); }
+    if flags & FLIGHT_MODE_GPS_FIX_HOME != 0 { modes.push("GPS_FIX_HOME"); }
+    if flags & FLIGHT_MODE_GPS_FIX != 0 { modes.push("GPS_FIX"); }
+    
+    if modes.is_empty() {
+        flags.to_string()
+    } else {
+        modes.join("|")
+    }
+}
+
 pub struct BBLDataStream<'a> {
     data: &'a [u8],
     pub pos: usize,
