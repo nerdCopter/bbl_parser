@@ -1203,6 +1203,10 @@ fn parse_frames(
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
     let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
+    // **BLACKBOX_DECODE COMPATIBILITY**: Add timestamp rollover handling like blackbox_decode.c
+    let mut time_rollover_accumulator: u64 = 0; // Tracks 32-bit timestamp rollovers  
+    let mut last_main_frame_time: i64 = -1; // Last timestamp for rollover detection
+
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
@@ -1473,10 +1477,22 @@ fn parse_frames(
 
                 // Store only a few sample frames for display purposes
                 if parsing_success && sample_frames.len() < 10 {
-                    // Extract timing before moving frame_data
-                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                    let loop_iteration =
-                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction  
+                    let raw_timestamp = frame_data.get("time").copied().unwrap_or(0);
+                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    
+                    // Apply rollover detection for main frames (I, P) like blackbox_decode.c
+                    let timestamp_us = if frame_type == 'I' || frame_type == 'P' {
+                        let corrected_time = detect_and_apply_timestamp_rollover(
+                            raw_timestamp, 
+                            &mut last_main_frame_time, 
+                            &mut time_rollover_accumulator
+                        );
+                        last_main_frame_time = corrected_time as i64;
+                        corrected_time
+                    } else {
+                        raw_timestamp as u64
+                    };
 
                     // Update last timestamp for main frames (I, P)
                     if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
@@ -1520,10 +1536,23 @@ fn parse_frames(
                 } else if parsing_success && store_all_frames {
                     // Store ALL frames for CSV export when requested
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    // Store all frames for complete CSV export - memory usage managed by processing in chunks
-                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                    let loop_iteration =
-                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction  
+                    let raw_timestamp = frame_data.get("time").copied().unwrap_or(0);
+                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                    
+                    // Apply rollover detection for main frames (I, P) like blackbox_decode.c
+                    let timestamp_us = if frame_type == 'I' || frame_type == 'P' {
+                        let corrected_time = detect_and_apply_timestamp_rollover(
+                            raw_timestamp, 
+                            &mut last_main_frame_time, 
+                            &mut time_rollover_accumulator
+                        );
+                        last_main_frame_time = corrected_time as i64;
+                        corrected_time
+                    } else {
+                        raw_timestamp as u64
+                    };
 
                     // Update last timestamp for main frames (I, P)
                     if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
@@ -1595,6 +1624,29 @@ fn parse_frames(
     }
 
     Ok((stats, sample_frames, Some(debug_frames)))
+}
+
+// **BLACKBOX_DECODE COMPATIBILITY**: Timestamp rollover detection function
+// **BLACKBOX_DECODE COMPATIBILITY**: Timestamp rollover detection function
+// Ported directly from blackbox_decode.c flightLogDetectAndApplyTimestampRollover()
+fn detect_and_apply_timestamp_rollover(
+    timestamp: i32,
+    last_time: &mut i64,
+    accumulator: &mut u64,
+) -> u64 {
+    const MAXIMUM_TIME_JUMP_BETWEEN_FRAMES: u64 = 10 * 1000000; // 10 seconds in microseconds
+    
+    if *last_time != -1 {
+        // If we appeared to travel backwards in time (modulo 32 bits)
+        // But we actually just incremented a reasonable amount (modulo 32-bits)
+        if (timestamp as u32) < (*last_time as u32) 
+            && ((timestamp as u32).wrapping_sub(*last_time as u32)) < (MAXIMUM_TIME_JUMP_BETWEEN_FRAMES as u32) {
+            // 32-bit time counter has wrapped, so add 2^32 to the timestamp
+            *accumulator += 0x100000000u64;
+        }
+    }
+    
+    (timestamp as u32) as u64 + *accumulator
 }
 
 #[allow(dead_code)]
