@@ -391,6 +391,21 @@ pub fn apply_predictor(
             raw_value + vbatref
         }
 
+        PREDICT_LAST_MAIN_FRAME_TIME => {
+            // **BLACKBOX_DECODE COMPATIBILITY**: Time predictor implementation
+            // For P-frames, predict based on last main frame time
+            if let Some(prev) = previous_frame {
+                if field_index < prev.len() {
+                    // Use previous frame's time as prediction base like blackbox_decode.c
+                    raw_value + prev[field_index]
+                } else {
+                    raw_value
+                }
+            } else {
+                raw_value
+            }
+        }
+
         PREDICT_MINMOTOR => {
             // Get the min motor value from motorOutput "min,max" format
             let minmotor = if let Some(motor_output) = sysconfig.get("motorOutput") {
