@@ -1,10 +1,10 @@
 # BBL Parser - Project Overview
 
-**Project Status:** 🔧 **WORK IN PRO### **1. Timing Data Corruption (CRITICAL)**
-- **Status**: Stream positioning issue - reading wrong BBL stream bytes  
-- **Investigation**: Frame defs correct (predictor=2, encoding=0), ZigZag identical
-- **Root Cause**: Field iteration or stream positioning differs from blackbox_decode.c
-- **Progress**: All infrastructure verified correct, issue isolated to stream reading
+**Project Status:** 🔧 **WORK IN PRO### **1. Frame Processing Order vs blackbox_decode.c (CRITICAL)**
+- **Status**: Root cause identified - backwards time progression in frame reading
+- **Evidence**: Validation shows time 62694011→62694005→62694000 (decreasing vs expected ascending)
+- **Impact**: Wrong predictor calculations causing tiny deltas (-6,1,0,4μs vs ~300μs)
+- **Investigation**: Complete blackbox_decode.c analysis confirms all infrastructure correct
 
 ### **2. S-Frame Data Extraction**  
 - **Status**: Flight mode flag values stuck at 0 vs expected ANGLE_MODE (1)
