@@ -878,6 +878,11 @@ fn display_log_info(log: &BBLLog) {
         println!("S frames   {:6}", stats.s_frames);
     }
     println!("Frames     {:6}", stats.total_frames);
+    
+    // Show basic failed frames count for all users (from beneficial branch enhancement)
+    if stats.failed_frames > 0 {
+        println!("Failed frames       {:6} (parsing errors)", stats.failed_frames);
+    }
 
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
