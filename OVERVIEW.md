@@ -1,29 +1,28 @@
 # BBL Parser - Project Overview
 
-**Project Status:** 🔧 **TIMING ISSUE ISOLATED - NEAR COMPLETION**  
-**Version:** 0.95 (Critical Issue Isolated, Infrastructure Complete)  
+**Project Status:** 🔧 **WORK IN PROGRESS - TIMING ISSUES REMAIN**  
+**Version:** 0.9 (Work in Progress, Not Production Ready)  
 **Last Updated:** July 4, 2025
 
 ---
 
 ## 🎯 **Project Summary**
 
-A comprehensive Rust implementation of BBL (Blackbox Log) parser with **95% BLACKBOX_DECODE COMPATIBILITY** achieved. One isolated timing issue remains.
+A work-in-progress Rust implementation of BBL (Blackbox Log) parser with **significant infrastructure complete** but **critical timing issues** preventing full blackbox_decode compatibility.
 
-**CRITICAL PROGRESS (July 4, 2025):**
-- ✅ **Complete Infrastructure**: All blackbox_decode.c methodology implemented
-- ✅ **Flight Mode Flags**: Working text conversion (ANGLE_MODE, GPS_FIX, etc.)  
-- ✅ **Timestamp Rollover**: Complete blackbox_decode.c compatibility
-- ✅ **All Predictors**: Including PREDICT_LAST_MAIN_FRAME_TIME, PREDICT_INC, etc.
-- ✅ **VB Decoding**: Verified exact match with blackbox_decode.c
-- ✅ **Frame Structure**: All I/P/S frame parsing verified correct
-- 🔍 **One Issue**: P-frame time field extracts wrong raw deltas (-6,1,0 vs ~304)
+**CURRENT STATUS (July 4, 2025):**
+- ✅ **Infrastructure Progress**: Major blackbox_decode.c methodology implemented
+- ✅ **Some Data Fields**: Voltage, motor, accelerometer scaling appears correct  
+- ✅ **Frame Structure**: Basic I/P/S frame parsing implemented
+- ❌ **CRITICAL TIMING BUG**: P-frame time field extracts wrong raw deltas (-6,1,0 vs ~304)
+- ❌ **COMPATIBILITY INCOMPLETE**: Does not fully match blackbox_decode.c output
+- ❌ **FIELD ORDERING**: CSV column ordering differs from reference
 
-**ACHIEVEMENT**: Project is **functionally complete** with excellent data quality, only timing intervals need final correction.
+**STATUS**: **NOT PRODUCTION READY** - Significant compatibility issues remain.
 
-**IMPACT**: Suitable for production use with minor timing interval discrepancy (does not affect flight analysis quality significantly).
+**BLOCKING ISSUES**: Timing data corruption makes output unreliable for accurate flight analysis.
 
-**NEXT**: Final byte-level investigation to fix P-frame time field parsing.
+**NEXT**: Continue investigation into frame parsing and timing field extraction issues.
 
 ---
 
@@ -49,53 +48,59 @@ BBL File → Frame Parsing → Predictor Application → Timestamp Rollover → 
 
 ---
 
-## 📊 **Performance Metrics**
+## 📊 **Current Development Status**
 
-### **Processing Speed**
-- **Large Datasets**: ~3,200 Hz effective sample rate (excellent)
-- **Memory Usage**: Efficient streaming, minimal footprint
-- **Error Rate**: <1% failed frames (acceptable)
+### **What's Working**
+- **Basic Frame Parsing**: I/P/S frame structure recognition
+- **Some Data Fields**: Voltage and motor values appear to match scale
+- **Infrastructure**: Basic predictor and VB decoding framework
+- **Memory Usage**: Efficient streaming processing
 
-### **Compatibility Testing**
-- **Voltage Scaling**: ✅ Matches blackbox_decode exactly
-- **Motor Values**: ✅ Matches blackbox_decode exactly  
-- **Flight Mode Flags**: ✅ Text conversion working (ANGLE_MODE, etc.)
-- **PNG Generation**: ✅ Full analysis pipeline compatible
-- **Sample Rate Analysis**: ✅ High-quality output suitable for analysis
+### **What's Not Working**
+- **❌ Timing Data**: Wrong intervals vs blackbox_decode (critical issue)
+- **❌ Field Ordering**: CSV column differences vs reference
+- **❌ Flight Mode Flags**: Value extraction issues
+- **❌ Full Compatibility**: Does not match blackbox_decode.c output
 
 ---
 
-## 🔍 **Known Issues**
+## 🔍 **Critical Issues**
 
-### **1. Timing Intervals (Minor)**
-- **Status**: Isolated to P-frame time field raw delta extraction
-- **Impact**: Timing intervals wrong (~7μs vs ~304μs) but timestamps present
-- **Analysis Impact**: Minimal - flight data analysis still accurate
-- **Resolution**: Requires byte-level BBL stream comparison
+### **1. Timing Data Corruption (CRITICAL)**
+- **Status**: P-frame time field extracts wrong raw deltas (-6,1,0 vs ~304)
+- **Impact**: Makes timing analysis unreliable
+- **Resolution**: Critical issue requiring continued investigation
 
-### **2. Field Ordering (Cosmetic)**  
-- **Status**: Minor CSV column ordering differences vs reference
-- **Impact**: No functional impact, data is correct
-- **Resolution**: Low priority cosmetic fix
+### **2. Field Structure Issues**  
+- **Status**: CSV column ordering differences affect compatibility
+- **Impact**: Output format doesn't match blackbox_decode reference
+- **Resolution**: Requires frame structure alignment
+
+### **3. Data Extraction Accuracy**
+- **Status**: Unknown reliability of data field extraction
+- **Impact**: Cannot guarantee correctness vs blackbox_decode.c
+- **Resolution**: Needs comprehensive validation
 
 ---
 
 ## 🎯 **Project Status Assessment**
 
-### **✅ PRODUCTION READY**
-- All critical flight data (voltage, motor, accelerometer, flags) correct
-- Complete blackbox_decode.c compatibility infrastructure
-- Excellent performance and reliability
-- Full analysis pipeline support
+### **❌ NOT PRODUCTION READY**
+- Critical timing data corruption issues
+- Field ordering compatibility problems  
+- Incomplete blackbox_decode.c compatibility verification
+- Unknown data accuracy across all fields
 
-### **🔧 MINOR IMPROVEMENTS REMAINING**
-- P-frame timing interval correction (isolated issue)
-- Field ordering cosmetic alignment
+### **🔧 SIGNIFICANT WORK REMAINING**
+- Fix P-frame timing field extraction (critical)
+- Resolve field ordering compatibility
+- Complete data accuracy validation
+- Comprehensive compatibility testing
 
-### **📈 CONFIDENCE LEVEL: VERY HIGH**
-- **Infrastructure**: 100% Complete
-- **Data Quality**: 95% Correct  
-- **Issue Resolution**: Expected to be straightforward
-- **Production Suitability**: Yes (with minor timing caveat)
+### **📈 CONFIDENCE LEVEL: WORK IN PROGRESS**
+- **Infrastructure**: Partially Complete
+- **Data Quality**: Uncertain/Unverified  
+- **Issue Resolution**: Significant investigation required
+- **Production Suitability**: No (critical issues remain)
 
-**The project has achieved its primary goal of blackbox_decode compatibility with only one minor timing issue remaining.**
+**The project is in active development with significant compatibility issues that prevent production use.**
