@@ -1,11 +1,13 @@
-# BBL Parser - Rust Implementation
+# BBL Parser
 
-A Rust implementation of BBL (Blackbox Log) parser based on the official reference implementations from the Betaflight blackbox-log-viewer and the blackbox-tools repositories.
+A Rust implementation of BBL (Blackbox Log) parser for flight controller blackbox logs.
 
 **Supported Formats:** `.BBL`, `.BFL`, `.TXT` (case-insensitive) - Compatible with Betaflight, EmuFlight, and INAV
 
 ## Features
 
+- **Blackbox_decode Compatibility**: Compatible CSV output format
+- **Frame Processing**: I-frame prioritization with sequential ordering  
 - **Pure Rust Implementation**: Direct parsing logic without external tools
 - **Universal File Support**: Common BBL formats with case-insensitive extension matching
 - **Complete Frame Support**: I, P, H, S, E, G frames with all encoding formats (SIGNED_VB, UNSIGNED_VB, NEG_14BIT, TAG8_8SVB, TAG2_3S32, TAG8_4S16)
@@ -15,7 +17,6 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official referen
 - **CSV Export**: Export flight data to CSV format with separate header files
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
-- **High Performance**: Comprehensive blackbox_decode compatibility with equivalent output quality
 - **CSV Export Compatibility**: Field-trimmed headers and format matching for cross-tool compatibility
 
 ## CSV Export Format
@@ -129,9 +130,9 @@ P-frame data (50 frames):
 **Frame Support:** I, P, H, S, E, G frames | **Encoding:** All major BBL formats | **Predictors:** JavaScript-compliant implementation
 ## Development Status
 
-**Near Production Ready:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
+**Work in Progress:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
 
-**Testing Complete:** 91.3% file success rate across 23 BBL files, reference-equivalent accuracy (100.02%) based on tested file subset
+**Testing:** Active development with ongoing validation against reference implementations
 
 **Remaining Work:** Code refinement (replace unwrap() calls), complete missing implementations, expand error handling
 
