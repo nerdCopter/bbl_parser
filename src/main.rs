@@ -1067,16 +1067,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         }
     }
 
-    // **BLACKBOX_DECODE COMPATIBILITY**: No sorting like blackbox_decode.c
-    // Sort by timestamp only (blackbox_decode behavior) - NO OTHER MODIFICATIONS
-    all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-
+    // **CRITICAL FIX**: Frames must be processed in BBL file order, not timestamp order
+    // blackbox_decode.c processes frames sequentially - sorting breaks time progression
+    
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
         for frame in &log.sample_frames {
             all_frames.push((frame.timestamp_us, frame.frame_type, frame));
         }
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
     }
 
     if all_frames.is_empty() {
