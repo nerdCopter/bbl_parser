@@ -179,6 +179,16 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
+        // **BLACKBOX_DECODE COMPATIBILITY**: Add energyCumulative before S-frame fields
+        // This matches blackbox_decode field ordering exactly
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
+            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            csv_field_names.push("energyCumulative (mAh)".to_string());
+        }
+
         // S frame fields
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
@@ -198,15 +208,6 @@ impl CsvFieldMap {
 
         // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
         // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
-
-        // Add computed fields
-        if field_name_to_lookup
-            .iter()
-            .any(|(_, lookup)| lookup == "amperageLatest")
-        {
-            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
-            csv_field_names.push("energyCumulative (mAh)".to_string());
-        }
 
         Self {
             field_name_to_lookup,
