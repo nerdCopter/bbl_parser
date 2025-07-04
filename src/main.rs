@@ -1053,11 +1053,13 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         .map(|(csv_name, _)| csv_name.clone())
         .collect();
 
-    // Collect all frames in chronological order
+    // Collect all frames in chronological order  
     let mut all_frames = Vec::new();
 
     if let Some(ref debug_frames) = log.debug_frames {
-        // Collect I, P, S frames (exclude E frames as they are events, not flight data)
+        // **BLACKBOX_DECODE COMPATIBILITY**: Process frames in natural BBL file order
+        // Avoid sorting to maintain the exact sequence blackbox_decode would produce
+        
         for frame_type in ['I', 'P', 'S'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
                 for frame in frames {
