@@ -294,6 +294,7 @@ pub fn parse_frame_data(
                 current_frame,
                 previous_frame,
                 previous2_frame,
+                skipped_frames,
                 sysconfig,
             )?;
             i += 1;
@@ -317,6 +318,7 @@ pub fn parse_frame_data(
                         current_frame,
                         previous_frame,
                         previous2_frame,
+                        skipped_frames,
                         sysconfig,
                     )?;
                 }
@@ -340,6 +342,7 @@ pub fn parse_frame_data(
                         current_frame,
                         previous_frame,
                         previous2_frame,
+                        skipped_frames,
                         sysconfig,
                     )?;
                 }
@@ -363,6 +366,7 @@ pub fn parse_frame_data(
                         current_frame,
                         previous_frame,
                         previous2_frame,
+                        skipped_frames,
                         sysconfig,
                     )?;
                 }
@@ -380,6 +384,7 @@ pub fn parse_frame_data(
                     current_frame,
                     previous_frame,
                     previous2_frame,
+                    skipped_frames,
                     sysconfig,
                 )?;
             }

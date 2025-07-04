@@ -1,33 +1,34 @@
-# BBL Parser - Rust Implementation
+# BBL Parser
 
-A Rust implementation of BBL (Blackbox Log) parser based on the official reference implementations from the Betaflight blackbox-log-viewer and the blackbox-tools repositories.
+A Rust implementation of BBL (Blackbox Log) parser for flight controller blackbox logs.
 
 **Supported Formats:** `.BBL`, `.BFL`, `.TXT` (case-insensitive) - Compatible with Betaflight, EmuFlight, and INAV
 
 ## Features
 
+- **Blackbox_decode Compatibility**: Compatible CSV output format
+- **Frame Processing**: I-frame prioritization with sequential ordering  
 - **Pure Rust Implementation**: Direct parsing logic without external tools
 - **Universal File Support**: Common BBL formats with case-insensitive extension matching
 - **Complete Frame Support**: I, P, H, S, E, G frames with all encoding formats (SIGNED_VB, UNSIGNED_VB, NEG_14BIT, TAG8_8SVB, TAG2_3S32, TAG8_4S16)
 - **Multi-Log Processing**: Detects and processes multiple flight logs within single files
 - **Streaming Architecture**: Memory-efficient processing for large files (500K+ frames)
 - **Frame Prediction**: Full predictor implementation (PREVIOUS, STRAIGHT_LINE, AVERAGE_2, MINTHROTTLE, etc.)
-- **CSV Export**: Export flight data to CSV format with separate header files for H frames
+- **CSV Export**: Export flight data to CSV format with separate header files
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
-- **High Performance**: Reference-equivalent accuracy (100.02%), superior file compatibility (91.3% vs 43.5% success rate)
+- **CSV Export Compatibility**: Field-trimmed headers and format matching for cross-tool compatibility
 
 ## CSV Export Format
 
-The `--csv` option exports blackbox logs to CSV format with Betaflight-compatible field ordering:
+The `--csv` option exports blackbox logs to CSV format with blackbox_decode compatibility:
 
-- **`.XX.csv`**: Main flight data file containing I, P, S, G frame data
+- **`.XX.csv`**: Main flight data file containing I, P, S frame data
   - Field names header row in the same order as Betaflight blackbox-log-viewer
   - Field names are trimmed of leading/trailing spaces
   - Time field labeled as "time (us)" to indicate microsecond units
   - I frame fields first (main flight loop data)
   - S frame fields second (slow/status data)  
-  - G frame fields third (GPS data, excluding duplicate time field)
   - Time-sorted data rows with all blackbox fields
 - **`.XX.headers.csv`**: Plaintext headers file containing all BBL header information
   - Field,Value format with all configuration parameters
@@ -129,9 +130,9 @@ P-frame data (50 frames):
 **Frame Support:** I, P, H, S, E, G frames | **Encoding:** All major BBL formats | **Predictors:** JavaScript-compliant implementation
 ## Development Status
 
-**Near Production Ready:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
+**Work in Progress:** Header parsing, frame decoding, multi-log support, streaming processing, CLI with glob patterns, CSV export
 
-**Testing Complete:** 91.3% file success rate across 23 BBL files, reference-equivalent accuracy (100.02%) based on tested file subset
+**Testing:** Active development with ongoing validation against reference implementations
 
 **Remaining Work:** Code refinement (replace unwrap() calls), complete missing implementations, expand error handling
 
@@ -160,10 +161,10 @@ timeout 60s ./target/release/bbl_parser logs/*.BBL
 
 ✅ **Firmware-Accurate Flag Formatting**: This parser outputs flight mode flags, state flags, and failsafe phases that match the current Betaflight firmware exactly.
 
-- **Flight Mode Flags**: Uses the correct `flightModeFlags_e` enum from Betaflight runtime_config.h
-  - Supports current modes: ANGLE_MODE, HORIZON_MODE, MAG, BARO, GPS_HOLD, HEADFREE, PASSTHRU, FAILSAFE_MODE, GPS_RESCUE_MODE
-  - Output format: `"ANGLE_MODE|HORIZON_MODE"` (pipe-separated for CSV compatibility)
-  - Includes new GPS_RESCUE_MODE flag (bit 11) from current firmware
+- **Flight Mode Flags**: Uses the correct `flightModeFlags_e` enum from Betaflight runtime_config.h (12 flags total, 0-11)
+  - Supports current modes: ANGLE_MODE, HORIZON_MODE, MAG, ALTHOLD, POSHOLD, HEADFREE, CHIRP, PASSTHRU, FAILSAFE, GPS_RESCUE
+  - Output format: `"ANGLE_MODE|HORIZON_MODE"` (pipe-separated for CSV compatibility)  
+  - Correctly implements only the 12 actual flight mode flags (not 42 like incorrect implementations)
 
 - **State Flags**: Uses the correct `stateFlags_t` enum from Betaflight runtime_config.h  
   - Supports: GPS_FIX_HOME, GPS_FIX, CALIBRATE_MAG, SMALL_ANGLE, FIXED_WING
