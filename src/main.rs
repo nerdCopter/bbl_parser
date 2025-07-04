@@ -1183,10 +1183,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         // **OPTIMAL SOLUTION**: Apply time monotonic correction for perfect sequencing
         // This fixes minor time reversals without rejecting 87% of frames
         if !all_frames.is_empty() {
-            all_frames.sort_by_key(|(timestamp, _frame_type, frame)| {
-                // Sort by loopIteration first, then by timestamp to maintain proper time ordering
-                (frame.data.get("loopIteration").copied().unwrap_or(999999), *timestamp)
-            });
+            // **BLACKBOX_DECODE COMPATIBILITY**: Sort by timestamp only (no loopIteration sorting)
+            // This matches blackbox_decode.c behavior which outputs frames in chronological order
+            all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
             
             // Apply monotonic time correction
             let mut last_time = 0u64;
