@@ -1067,20 +1067,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     }
 
     // **BLACKBOX_DECODE COMPATIBILITY**: No sorting like blackbox_decode.c
-    // Sort by timestamp only (blackbox_decode behavior)
+    // Sort by timestamp only (blackbox_decode behavior) - NO OTHER MODIFICATIONS
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-    
-    // Apply minimal monotonic time correction to fix small dataset sequencing
-    // without changing the fundamental blackbox_decode approach
-    if !all_frames.is_empty() {
-        let mut last_time = 0u64;
-        for (timestamp, _, _) in &mut all_frames {
-            if *timestamp <= last_time {
-                *timestamp = last_time + 1; // Minimal correction
-            }
-            last_time = *timestamp;
-        }
-    }
 
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
