@@ -1,6 +1,19 @@
 # BBL Parser - Project Overview
 
-**Project Status:** 🔧 **WORK IN PROGRESS - TIMING ISSUES REMAIN**  
+**Project Status:** 🔧 **WORK IN PRO### **1. Timing Data Corruption (CRITICAL)**
+- **Status**: P-frame time field extracts wrong raw deltas (time stuck vs progressive)
+- **Impact**: Makes timing analysis completely unreliable
+- **Progress**: Deep investigation ongoing, isolated to specific BBL stream issue
+
+### **2. S-Frame Data Extraction**  
+- **Status**: Flight mode flag values stuck at 0 vs expected ANGLE_MODE (1)
+- **Impact**: Flag analysis incorrect, affects flight mode detection
+- **Progress**: Field ordering fixed, investigating S-frame data propagation
+
+### **3. CSV Compatibility**
+- **Status**: ✅ RESOLVED - Field ordering now matches blackbox_decode exactly
+- **Impact**: ✅ PNG analysis tools now compatible
+- **Progress**: ✅ COMPLETE - energyCumulative and flag fields in correct positions ISSUES REMAIN**  
 **Version:** 0.9 (Work in Progress, Not Production Ready)  
 **Last Updated:** July 4, 2025
 
@@ -11,12 +24,13 @@
 A work-in-progress Rust implementation of BBL (Blackbox Log) parser with **significant infrastructure complete** but **critical timing issues** preventing full blackbox_decode compatibility.
 
 **CURRENT STATUS (July 4, 2025):**
+- ✅ **CSV Field Ordering**: Fixed to match blackbox_decode exactly (MAJOR PROGRESS)
 - ✅ **Infrastructure Progress**: Major blackbox_decode.c methodology implemented
 - ✅ **Some Data Fields**: Voltage, motor, accelerometer scaling appears correct  
 - ✅ **Frame Structure**: Basic I/P/S frame parsing implemented
-- ❌ **CRITICAL TIMING BUG**: P-frame time field extracts wrong raw deltas (-6,1,0 vs ~304)
-- ❌ **COMPATIBILITY INCOMPLETE**: Does not fully match blackbox_decode.c output
-- ❌ **FIELD ORDERING**: CSV column ordering differs from reference
+- ❌ **CRITICAL TIMING BUG**: P-frame time field extracts wrong raw deltas (BLOCKING)
+- ❌ **S-FRAME DATA**: Flight mode flags stuck at 0 vs expected ANGLE_MODE values
+- ❌ **COMPATIBILITY INCOMPLETE**: Timing issues prevent full blackbox_decode matching
 
 **STATUS**: **NOT PRODUCTION READY** - Significant compatibility issues remain.
 
@@ -51,15 +65,15 @@ BBL File → Frame Parsing → Predictor Application → Timestamp Rollover → 
 ## 📊 **Current Development Status**
 
 ### **What's Working**
+- **CSV Field Ordering**: Now matches blackbox_decode exactly ✅
 - **Basic Frame Parsing**: I/P/S frame structure recognition
 - **Some Data Fields**: Voltage and motor values appear to match scale
 - **Infrastructure**: Basic predictor and VB decoding framework
 - **Memory Usage**: Efficient streaming processing
 
 ### **What's Not Working**
-- **❌ Timing Data**: Wrong intervals vs blackbox_decode (critical issue)
-- **❌ Field Ordering**: CSV column differences vs reference
-- **❌ Flight Mode Flags**: Value extraction issues
+- **❌ Timing Data**: Wrong intervals vs blackbox_decode (CRITICAL - time stuck)
+- **❌ S-Frame Values**: Flight mode flags stuck at 0 vs ANGLE_MODE
 - **❌ Full Compatibility**: Does not match blackbox_decode.c output
 
 ---
