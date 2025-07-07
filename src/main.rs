@@ -1544,6 +1544,12 @@ fn parse_frames(
                     let raw_timestamp = frame_data.get("time").copied().unwrap_or(0);
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                     
+                    // **DEBUG**: Show raw timestamp values
+                    if sample_frames.len() < 5 {
+                        println!("DEBUG: Frame {} type '{}' loopIteration:{} raw_time:{}", 
+                               sample_frames.len(), frame_type, loop_iteration, raw_timestamp);
+                    }
+                    
                     // Apply rollover detection for main frames (I, P) like blackbox_decode.c
                     let timestamp_us = if frame_type == 'I' || frame_type == 'P' {
                         let corrected_time = detect_and_apply_timestamp_rollover(
