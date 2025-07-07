@@ -1568,6 +1568,7 @@ fn parse_frames(
                             &mut last_main_frame_time, 
                             &mut time_rollover_accumulator
                         );
+                        
                         last_main_frame_time = corrected_time as i64;
                         corrected_time
                     } else {
