@@ -472,15 +472,24 @@ fn parse_single_log(
     let header = parse_headers_from_text(header_text, debug)?;
 
     if debug {
-        println!("DEBUG: I-frame field definition order: {:?}", header.i_frame_def.field_names);
-        if let Some(time_idx) = header.i_frame_def.field_names.iter().position(|name| name == "time") {
+        println!(
+            "DEBUG: I-frame field definition order: {:?}",
+            header.i_frame_def.field_names
+        );
+        if let Some(time_idx) = header
+            .i_frame_def
+            .field_names
+            .iter()
+            .position(|name| name == "time")
+        {
             println!("DEBUG: 'time' field is at index {}", time_idx);
         }
     }
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames, debug_frames, chronological_frames) = parse_frames(binary_data, &header, debug, csv_export)?;
+    let (mut stats, frames, debug_frames, chronological_frames) =
+        parse_frames(binary_data, &header, debug, csv_export)?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -888,10 +897,13 @@ fn display_log_info(log: &BBLLog) {
         println!("S frames   {:6}", stats.s_frames);
     }
     println!("Frames     {:6}", stats.total_frames);
-    
+
     // Show basic failed frames count for all users (from beneficial branch enhancement)
     if stats.failed_frames > 0 {
-        println!("Failed frames       {:6} (parsing errors)", stats.failed_frames);
+        println!(
+            "Failed frames       {:6} (parsing errors)",
+            stats.failed_frames
+        );
     }
 
     // Display timing if available
@@ -1062,7 +1074,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         .map(|(csv_name, _)| csv_name.clone())
         .collect();
 
-    // Collect all frames in chronological order  
+    // Collect all frames in chronological order
     let mut all_frames = Vec::new();
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Use chronological frames that preserve BBL file order
@@ -1086,7 +1098,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     // **CRITICAL FIX**: Frames must be processed in BBL file order, not timestamp order
     // blackbox_decode.c processes frames sequentially - sorting breaks time progression
-    
+
     if all_frames.is_empty() {
         // Write at least the sample frames if no debug frames
         for frame in &log.sample_frames {
@@ -1222,7 +1234,7 @@ fn parse_frames(
     let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Add timestamp rollover handling like blackbox_decode.c
-    let mut time_rollover_accumulator: u64 = 0; // Tracks 32-bit timestamp rollovers  
+    let mut time_rollover_accumulator: u64 = 0; // Tracks 32-bit timestamp rollovers
     let mut last_main_frame_time: i64 = -1; // Last timestamp for rollover detection
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Track frame validation like blackbox_decode.c
@@ -1245,7 +1257,12 @@ fn parse_frames(
     }
 
     if binary_data.is_empty() {
-        return Ok((stats, sample_frames, Some(debug_frames), Some(chronological_frames)));
+        return Ok((
+            stats,
+            sample_frames,
+            Some(debug_frames),
+            Some(chronological_frames),
+        ));
     }
 
     // Initialize frame history for proper P-frame parsing
@@ -1342,15 +1359,18 @@ fn parse_frames(
                                 frame_history.valid = true;
 
                                 // **BLACKBOX_DECODE COMPATIBILITY**: Validate I-frame values like blackbox_decode.c
-                                let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-                                let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
-                                
+                                let current_loop_iteration =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                                let current_time =
+                                    frame_data.get("time").copied().unwrap_or(0) as i64;
+
                                 let is_valid_frame = if last_main_frame_iteration != u32::MAX {
                                     // Validate against previous frame like flightLogValidateMainFrameValues()
                                     current_loop_iteration >= last_main_frame_iteration &&
                                     current_loop_iteration < last_main_frame_iteration.saturating_add(5000) && // MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES 
                                     current_time >= last_main_frame_time &&
-                                    current_time < last_main_frame_time + 10_000_000 // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
+                                    current_time < last_main_frame_time + 10_000_000
+                                // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
                                 } else {
                                     true // First frame is always valid
                                 };
@@ -1359,11 +1379,11 @@ fn parse_frames(
                                     // Update tracking variables for next validation
                                     last_main_frame_iteration = current_loop_iteration;
                                     last_main_frame_time = current_time;
-                                    
+
                                     parsing_success = true;
                                     stats.i_frames += 1;
                                 } else {
-                                    // Reject invalid frame like blackbox_decode does  
+                                    // Reject invalid frame like blackbox_decode does
                                     stats.failed_frames += 1;
                                     if debug {
                                         println!("DEBUG: Rejected I-frame - loopIteration:{} time:{} (prev iter:{} time:{})", 
@@ -1396,7 +1416,6 @@ fn parse_frames(
                             )
                             .is_ok()
                             {
-
                                 // Copy current frame to output using I-frame field names and structure
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
@@ -1427,16 +1446,18 @@ fn parse_frames(
 
                                 // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame values like blackbox_decode.c
                                 // Check that iteration count and time didn't move backwards or jump too much
-                                let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-                                let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
-                                
+                                let current_loop_iteration =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+                                let current_time =
+                                    frame_data.get("time").copied().unwrap_or(0) as i64;
+
                                 let is_valid_frame = true; // **TEMPORARY**: Test chronological ordering
-                                
+
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
                                     last_main_frame_iteration = current_loop_iteration;
                                     last_main_frame_time = current_time;
-                                    
+
                                     parsing_success = true;
                                     stats.p_frames += 1;
                                 } else {
@@ -1529,18 +1550,29 @@ fn parse_frames(
 
                 // Store only a few sample frames for display purposes
                 if parsing_success && sample_frames.len() < 10 {
-                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction  
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction
                     let raw_timestamp = frame_data.get("time").copied().unwrap_or(0);
-                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-                    
+                    let loop_iteration =
+                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+
                     // **DEBUG**: Show raw timestamp values
                     if sample_frames.len() < 2 && debug {
-                        println!("DEBUG: Frame {} type '{}' loopIteration:{} raw_time:{}", 
-                               sample_frames.len(), frame_type, loop_iteration, raw_timestamp);
-                        
+                        println!(
+                            "DEBUG: Frame {} type '{}' loopIteration:{} raw_time:{}",
+                            sample_frames.len(),
+                            frame_type,
+                            loop_iteration,
+                            raw_timestamp
+                        );
+
                         // **CRITICAL DEBUG**: Check time field predictor
                         if frame_type == 'P' {
-                            if let Some(time_idx) = header.p_frame_def.field_names.iter().position(|name| name == "time") {
+                            if let Some(time_idx) = header
+                                .p_frame_def
+                                .field_names
+                                .iter()
+                                .position(|name| name == "time")
+                            {
                                 if time_idx < header.p_frame_def.fields.len() {
                                     let time_field = &header.p_frame_def.fields[time_idx];
                                     println!("DEBUG: P-frame time field - index: {}, encoding: {}, predictor: {} (expected: PREDICT_LAST_MAIN_FRAME_TIME=10)", 
@@ -1549,15 +1581,15 @@ fn parse_frames(
                             }
                         }
                     }
-                    
+
                     // Apply rollover detection for main frames (I, P) like blackbox_decode.c
                     let timestamp_us = if frame_type == 'I' || frame_type == 'P' {
                         let corrected_time = detect_and_apply_timestamp_rollover(
-                            raw_timestamp, 
-                            &mut last_main_frame_time, 
-                            &mut time_rollover_accumulator
+                            raw_timestamp,
+                            &mut last_main_frame_time,
+                            &mut time_rollover_accumulator,
                         );
-                        
+
                         last_main_frame_time = corrected_time as i64;
                         corrected_time
                     } else {
@@ -1580,9 +1612,7 @@ fn parse_frames(
                     {
                         println!(
                             "DEBUG: Frame {:?} has timestamp {}. Field definition order: {:?}",
-                            frame_type,
-                            timestamp_us,
-                            header.i_frame_def.field_names
+                            frame_type, timestamp_us, header.i_frame_def.field_names
                         );
                         if let Some(time_val) = frame_data.get("time") {
                             println!("DEBUG: 'time' field value: {time_val}");
@@ -1603,7 +1633,7 @@ fn parse_frames(
                     // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
                     debug_frame_list.push(decoded_frame.clone());
-                    
+
                     // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
                     if store_all_frames {
                         chronological_frames.push(decoded_frame);
@@ -1611,17 +1641,18 @@ fn parse_frames(
                 } else if parsing_success && store_all_frames {
                     // Store ALL frames for CSV export when requested
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    
-                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction  
+
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Apply timestamp rollover correction
                     let raw_timestamp = frame_data.get("time").copied().unwrap_or(0);
-                    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-                    
+                    let loop_iteration =
+                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+
                     // Apply rollover detection for main frames (I, P) like blackbox_decode.c
                     let timestamp_us = if frame_type == 'I' || frame_type == 'P' {
                         let corrected_time = detect_and_apply_timestamp_rollover(
-                            raw_timestamp, 
-                            &mut last_main_frame_time, 
-                            &mut time_rollover_accumulator
+                            raw_timestamp,
+                            &mut last_main_frame_time,
+                            &mut time_rollover_accumulator,
                         );
                         last_main_frame_time = corrected_time as i64;
                         corrected_time
@@ -1657,7 +1688,7 @@ fn parse_frames(
                         data: frame_data.clone(),
                     };
                     debug_frame_list.push(decoded_frame.clone());
-                    
+
                     // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
                     chronological_frames.push(decoded_frame);
                 }
@@ -1701,7 +1732,12 @@ fn parse_frames(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
 
-    Ok((stats, sample_frames, Some(debug_frames), Some(chronological_frames)))
+    Ok((
+        stats,
+        sample_frames,
+        Some(debug_frames),
+        Some(chronological_frames),
+    ))
 }
 
 // **BLACKBOX_DECODE COMPATIBILITY**: Timestamp rollover detection function
@@ -1713,17 +1749,19 @@ fn detect_and_apply_timestamp_rollover(
     accumulator: &mut u64,
 ) -> u64 {
     const MAXIMUM_TIME_JUMP_BETWEEN_FRAMES: u64 = 10 * 1000000; // 10 seconds in microseconds
-    
+
     if *last_time != -1 {
         // If we appeared to travel backwards in time (modulo 32 bits)
         // But we actually just incremented a reasonable amount (modulo 32-bits)
-        if (timestamp as u32) < (*last_time as u32) 
-            && ((timestamp as u32).wrapping_sub(*last_time as u32)) < (MAXIMUM_TIME_JUMP_BETWEEN_FRAMES as u32) {
+        if (timestamp as u32) < (*last_time as u32)
+            && ((timestamp as u32).wrapping_sub(*last_time as u32))
+                < (MAXIMUM_TIME_JUMP_BETWEEN_FRAMES as u32)
+        {
             // 32-bit time counter has wrapped, so add 2^32 to the timestamp
             *accumulator += 0x100000000u64;
         }
     }
-    
+
     (timestamp as u32) as u64 + *accumulator
 }
 
