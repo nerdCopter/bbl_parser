@@ -1374,13 +1374,13 @@ fn parse_frames(
                                 .current_frame
                                 .copy_from_slice(&frame_history.previous_frame);
 
-                            // **CRITICAL FIX**: Parse P-frame directly into current frame using I-frame indices
-                            // This matches blackbox_decode where P-frames update mainHistory[0] directly
-                            if bbl_format::parse_p_frame_direct(
+                            // **CRITICAL FIX**: Parse P-frame using original method but with corrected field mapping
+                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
+                            
+                            if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &header.i_frame_def, 
-                                &mut frame_history.current_frame,
+                                &mut p_frame_values,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
                                 0,     // TODO: Calculate skipped frames properly
@@ -1390,6 +1390,23 @@ fn parse_frames(
                             )
                             .is_ok()
                             {
+                                // **CRITICAL FIX**: Apply P-frame values to correct I-frame indices  
+                                // The issue was field mapping - P-frame index != I-frame index for same field
+                                for (p_idx, field_name) in header.p_frame_def.field_names.iter().enumerate() {
+                                    if p_idx < p_frame_values.len() {
+                                        // Find corresponding index in I-frame structure
+                                        if let Some(i_frame_idx) = header
+                                            .i_frame_def
+                                            .field_names
+                                            .iter()
+                                            .position(|name| name == field_name)
+                                        {
+                                            if i_frame_idx < frame_history.current_frame.len() {
+                                                frame_history.current_frame[i_frame_idx] = p_frame_values[p_idx];
+                                            }
+                                        }
+                                    }
+                                }
 
                                 // Copy current frame to output using I-frame field names and structure
                                 for (i, field_name) in
@@ -1528,21 +1545,18 @@ fn parse_frames(
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                     
                     // **DEBUG**: Show raw timestamp values
-                    if sample_frames.len() < 2 {
+                    if sample_frames.len() < 2 && debug {
                         println!("DEBUG: Frame {} type '{}' loopIteration:{} raw_time:{}", 
                                sample_frames.len(), frame_type, loop_iteration, raw_timestamp);
                         
-                        // **CRITICAL DEBUG**: Find exact time field position
-                        for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
-                            if field_name == "time" {
-                                println!("DEBUG: I-frame 'time' found at index {}", i);
-                                break;
-                            }
-                        }
-                        for (i, field_name) in header.p_frame_def.field_names.iter().enumerate() {
-                            if field_name == "time" {
-                                println!("DEBUG: P-frame 'time' found at index {}", i);
-                                break;
+                        // **CRITICAL DEBUG**: Check time field predictor
+                        if frame_type == 'P' {
+                            if let Some(time_idx) = header.p_frame_def.field_names.iter().position(|name| name == "time") {
+                                if time_idx < header.p_frame_def.fields.len() {
+                                    let time_field = &header.p_frame_def.fields[time_idx];
+                                    println!("DEBUG: P-frame time field - index: {}, encoding: {}, predictor: {} (expected: PREDICT_LAST_MAIN_FRAME_TIME=10)", 
+                                           time_idx, time_field.encoding, time_field.predictor);
+                                }
                             }
                         }
                     }

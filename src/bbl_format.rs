@@ -399,14 +399,24 @@ pub fn apply_predictor(
         }
 
         PREDICT_LAST_MAIN_FRAME_TIME => {
-            // **BLACKBOX_DECODE COMPATIBILITY**: Time predictor implementation
-            // For P-frames, predict based on last main frame time
+            // **BLACKBOX_DECODE COMPATIBILITY**: Time predictor implementation  
+            // Like blackbox_decode: value += private->mainHistory[1][FLIGHT_LOG_FIELD_INDEX_TIME];
             if let Some(prev) = previous_frame {
-                if field_index < prev.len() {
-                    // Use previous frame's time as prediction base like blackbox_decode.c
-                    raw_value + prev[field_index]
+                // Find the time field index in the frame structure
+                if let Some(time_idx) = field_names.iter().position(|name| name == "time") {
+                    if time_idx < prev.len() {
+                        // Add the previous frame's time value (like blackbox_decode)
+                        raw_value + prev[time_idx]
+                    } else {
+                        raw_value
+                    }
                 } else {
-                    raw_value
+                    // Fallback: use the current field index if time field not found
+                    if field_index < prev.len() {
+                        raw_value + prev[field_index]
+                    } else {
+                        raw_value
+                    }
                 }
             } else {
                 raw_value
@@ -647,16 +657,6 @@ pub fn parse_p_frame_direct(
         let i_frame_index = i_frame_def.field_names.iter()
             .position(|name| name == p_field_name)
             .unwrap_or(i); // Fallback to P-frame index if not found
-            
-        // **DEBUG**: Show field mapping for time field
-        if p_field_name == "time" {
-            println!("DEBUG: P-frame time mapping: P-index {} -> I-index {}", i, i_frame_index);
-            println!("DEBUG: I-frame field at index {}: {}", i_frame_index, 
-                   i_frame_def.field_names.get(i_frame_index).unwrap_or(&"INVALID".to_string()));
-            // Show first 5 I-frame fields for context
-            println!("DEBUG: I-frame fields 0-4: {:?}", 
-                   i_frame_def.field_names.iter().take(5).collect::<Vec<_>>());
-        }
 
         if field.predictor == PREDICT_INC {
             current_frame[i_frame_index] = apply_predictor(
