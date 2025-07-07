@@ -123,6 +123,7 @@ struct BBLLog {
     stats: FrameStats,
     sample_frames: Vec<DecodedFrame>, // Only store a few sample frames, not all
     debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>, // Frame data by type for debug output
+    chronological_frames: Option<Vec<DecodedFrame>>, // All frames in BBL file order for CSV export
 }
 
 // Frame history for prediction during parsing
@@ -472,7 +473,7 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames, debug_frames) = parse_frames(binary_data, &header, debug, csv_export)?;
+    let (mut stats, frames, debug_frames, chronological_frames) = parse_frames(binary_data, &header, debug, csv_export)?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -487,6 +488,7 @@ fn parse_single_log(
         stats,
         sample_frames: frames,
         debug_frames,
+        chronological_frames,
     };
 
     Ok(log)
@@ -1056,12 +1058,14 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // Collect all frames in chronological order  
     let mut all_frames = Vec::new();
 
-    if let Some(ref debug_frames) = log.debug_frames {
-        // **CRITICAL FIX**: Process frames in BBL file order by using a single chronological list
-        // instead of grouping by frame type which breaks the natural sequence
-        
-        // Collect ALL frames from ALL types into a single list, then sort by timestamp
-        // to restore the original BBL file order
+    // **BLACKBOX_DECODE COMPATIBILITY**: Use chronological frames that preserve BBL file order
+    if let Some(ref chronological_frames) = log.chronological_frames {
+        // Frames are already in correct BBL file order from parsing
+        for frame in chronological_frames {
+            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
+        }
+    } else if let Some(ref debug_frames) = log.debug_frames {
+        // Fallback to old method if chronological frames not available
         for frame_type in ['I', 'P', 'S'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
                 for frame in frames {
@@ -1069,8 +1073,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 }
             }
         }
-        
-        // Sort by timestamp to restore chronological order (original BBL file sequence)
+        // Sort by timestamp to restore chronological order
         all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
     }
 
@@ -1196,6 +1199,7 @@ type ParseFramesResult = Result<(
     FrameStats,
     Vec<DecodedFrame>,
     Option<HashMap<char, Vec<DecodedFrame>>>,
+    Option<Vec<DecodedFrame>>, // Chronological frames for CSV export
 )>;
 
 fn parse_frames(
@@ -1207,6 +1211,7 @@ fn parse_frames(
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
+    let mut chronological_frames = Vec::new(); // Store frames in BBL file order
     let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Add timestamp rollover handling like blackbox_decode.c
@@ -1233,7 +1238,7 @@ fn parse_frames(
     }
 
     if binary_data.is_empty() {
-        return Ok((stats, sample_frames, Some(debug_frames)));
+        return Ok((stats, sample_frames, Some(debug_frames), Some(chronological_frames)));
     }
 
     // Initialize frame history for proper P-frame parsing
@@ -1436,12 +1441,7 @@ fn parse_frames(
                                 let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                                 let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
                                 
-                                // **TEMPORARY**: Disable validation to see frame data
-                                let is_valid_frame = true; // Always accept for debugging
-                                
-                                if debug && stats.p_frames < 10 {
-                                    println!("DEBUG: P-frame loopIteration:{} time:{}", current_loop_iteration, current_time);
-                                }
+                                let is_valid_frame = true; // **TEMPORARY**: Test chronological ordering
                                 
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
@@ -1595,7 +1595,12 @@ fn parse_frames(
 
                     // Store debug frames (always store for sample frames)
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    debug_frame_list.push(decoded_frame);
+                    debug_frame_list.push(decoded_frame.clone());
+                    
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
+                    if store_all_frames {
+                        chronological_frames.push(decoded_frame);
+                    }
                 } else if parsing_success && store_all_frames {
                     // Store ALL frames for CSV export when requested
                     let debug_frame_list = debug_frames.entry(frame_type).or_default();
@@ -1644,7 +1649,10 @@ fn parse_frames(
                         loop_iteration,
                         data: frame_data.clone(),
                     };
-                    debug_frame_list.push(decoded_frame);
+                    debug_frame_list.push(decoded_frame.clone());
+                    
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
+                    chronological_frames.push(decoded_frame);
                 }
 
                 // Update timing from first and last valid frames with time data
@@ -1686,7 +1694,7 @@ fn parse_frames(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
 
-    Ok((stats, sample_frames, Some(debug_frames)))
+    Ok((stats, sample_frames, Some(debug_frames), Some(chronological_frames)))
 }
 
 // **BLACKBOX_DECODE COMPATIBILITY**: Timestamp rollover detection function
