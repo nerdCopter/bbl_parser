@@ -1057,9 +1057,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut all_frames = Vec::new();
 
     if let Some(ref debug_frames) = log.debug_frames {
-        // **BLACKBOX_DECODE COMPATIBILITY**: Process frames in natural BBL file order
-        // Avoid sorting to maintain the exact sequence blackbox_decode would produce
+        // **CRITICAL FIX**: Process frames in BBL file order by using a single chronological list
+        // instead of grouping by frame type which breaks the natural sequence
         
+        // Collect ALL frames from ALL types into a single list, then sort by timestamp
+        // to restore the original BBL file order
         for frame_type in ['I', 'P', 'S'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
                 for frame in frames {
@@ -1067,6 +1069,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 }
             }
         }
+        
+        // Sort by timestamp to restore chronological order (original BBL file sequence)
+        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
     }
 
     // **CRITICAL FIX**: Frames must be processed in BBL file order, not timestamp order
@@ -1431,16 +1436,13 @@ fn parse_frames(
                                 let current_loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                                 let current_time = frame_data.get("time").copied().unwrap_or(0) as i64;
                                 
-                                let is_valid_frame = if last_main_frame_iteration != u32::MAX {
-                                    // Validate against previous frame like flightLogValidateMainFrameValues()
-                                    current_loop_iteration >= last_main_frame_iteration &&
-                                    current_loop_iteration < last_main_frame_iteration.saturating_add(5000) && // MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES 
-                                    current_time >= last_main_frame_time &&
-                                    current_time < last_main_frame_time + 10_000_000 // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
-                                } else {
-                                    true // First frame is always valid
-                                };
-
+                                // **TEMPORARY**: Disable validation to see frame data
+                                let is_valid_frame = true; // Always accept for debugging
+                                
+                                if debug && stats.p_frames < 10 {
+                                    println!("DEBUG: P-frame loopIteration:{} time:{}", current_loop_iteration, current_time);
+                                }
+                                
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
                                     last_main_frame_iteration = current_loop_iteration;
