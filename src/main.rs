@@ -1368,8 +1368,15 @@ fn parse_frames(
                     }
                     'P' => {
                         if header.p_frame_def.count > 0 && frame_history.valid {
-                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
+                            // **BLACKBOX_DECODE COMPATIBILITY**: P-frames update current frame directly
+                            // Copy previous frame state first (like blackbox_decode mainHistory approach)
+                            frame_history
+                                .current_frame
+                                .copy_from_slice(&frame_history.previous_frame);
 
+                            // Parse P-frame data into temporary array first
+                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
+                            
                             if bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
@@ -1383,16 +1390,10 @@ fn parse_frames(
                             )
                             .is_ok()
                             {
-                                // P-frames update only specific fields, rest inherit from previous I-frame
-                                frame_history
-                                    .current_frame
-                                    .copy_from_slice(&frame_history.previous_frame);
-
-                                // Apply P-frame deltas to current frame
-                                for (i, field_name) in
-                                    header.p_frame_def.field_names.iter().enumerate()
-                                {
-                                    if i < p_frame_values.len() {
+                                // **CRITICAL FIX**: Apply P-frame values to current frame using correct field indices
+                                // This matches blackbox_decode where P-frames update specific fields in mainHistory[0]
+                                for (p_idx, field_name) in header.p_frame_def.field_names.iter().enumerate() {
+                                    if p_idx < p_frame_values.len() {
                                         // Find corresponding index in I-frame structure
                                         if let Some(i_frame_idx) = header
                                             .i_frame_def
@@ -1401,8 +1402,7 @@ fn parse_frames(
                                             .position(|name| name == field_name)
                                         {
                                             if i_frame_idx < frame_history.current_frame.len() {
-                                                frame_history.current_frame[i_frame_idx] =
-                                                    p_frame_values[i];
+                                                frame_history.current_frame[i_frame_idx] = p_frame_values[p_idx];
                                             }
                                         }
                                     }
@@ -1545,9 +1545,23 @@ fn parse_frames(
                     let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                     
                     // **DEBUG**: Show raw timestamp values
-                    if sample_frames.len() < 5 {
+                    if sample_frames.len() < 2 {
                         println!("DEBUG: Frame {} type '{}' loopIteration:{} raw_time:{}", 
                                sample_frames.len(), frame_type, loop_iteration, raw_timestamp);
+                        
+                        // **CRITICAL DEBUG**: Find exact time field position
+                        for (i, field_name) in header.i_frame_def.field_names.iter().enumerate() {
+                            if field_name == "time" {
+                                println!("DEBUG: I-frame 'time' found at index {}", i);
+                                break;
+                            }
+                        }
+                        for (i, field_name) in header.p_frame_def.field_names.iter().enumerate() {
+                            if field_name == "time" {
+                                println!("DEBUG: P-frame 'time' found at index {}", i);
+                                break;
+                            }
+                        }
                     }
                     
                     // Apply rollover detection for main frames (I, P) like blackbox_decode.c
