@@ -1,14 +1,15 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
-// BBL Encoding constants - directly from JavaScript reference
+// BBL Encoding constants - must match blackbox_decode exactly
 pub const ENCODING_SIGNED_VB: u8 = 0;
 pub const ENCODING_UNSIGNED_VB: u8 = 1;
 pub const ENCODING_NEG_14BIT: u8 = 3;
 pub const ENCODING_TAG8_8SVB: u8 = 6;
 pub const ENCODING_TAG2_3S32: u8 = 7;
 pub const ENCODING_TAG8_4S16: u8 = 8;
-pub const ENCODING_NULL: u8 = 9;
+pub const ENCODING_ELIAS_DELTA_U32: u8 = 9;
+pub const ENCODING_NULL: u8 = 255; // Special value, not used in stream
 #[allow(dead_code)]
 pub const ENCODING_TAG2_3SVARIABLE: u8 = 10;
 
@@ -468,6 +469,13 @@ pub fn decode_frame_field(
             Ok(-sign_extend_14bit(value))
         }
 
+        ENCODING_ELIAS_DELTA_U32 => {
+            // **BLACKBOX_DECODE COMPATIBILITY**: Elias Delta encoding for unsigned 32-bit values
+            stream.byte_align();
+            let value = stream.read_unsigned_vb()?;
+            Ok(value as i32)
+        }
+
         ENCODING_NULL => Ok(0),
 
         _ => Err(anyhow::anyhow!("Unsupported encoding: {}", encoding)),
@@ -492,21 +500,8 @@ pub fn parse_frame_data(
     while i < frame_def.fields.len() {
         let field = &frame_def.fields[i];
 
-        if field.predictor == PREDICT_INC {
-            current_frame[i] = apply_predictor(
-                i,
-                field.predictor,
-                0,
-                current_frame,
-                previous_frame,
-                previous2_frame,
-                skipped_frames,
-                sysconfig,
-                &frame_def.field_names,
-            );
-            i += 1;
-            continue;
-        }
+        // **BLACKBOX_DECODE COMPATIBILITY**: Always read from stream first, then apply predictor
+        // Even PREDICT_INC fields may have stream data to consume according to their encoding
 
         match field.encoding {
             ENCODING_TAG8_4S16 => {
@@ -611,11 +606,6 @@ pub fn parse_frame_data(
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
-                
-                // DEBUG: Log time field raw values 
-                if i == 1 {
-                    println!("DEBUG: Time field raw_value={}, predictor={}", raw_value, predictor);
-                }
                 
                 current_frame[i] = apply_predictor(
                     i,

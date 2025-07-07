@@ -476,10 +476,6 @@ fn parse_single_log(
         if let Some(time_idx) = header.i_frame_def.field_names.iter().position(|name| name == "time") {
             println!("DEBUG: 'time' field is at index {}", time_idx);
         }
-        println!("DEBUG: P-frame predictors: {:?}", header.p_frame_def.fields.iter().map(|f| f.predictor).collect::<Vec<_>>());
-        if header.p_frame_def.fields.len() > 1 {
-            println!("DEBUG: P-frame time field predictor: {}", header.p_frame_def.fields[1].predictor);
-        }
     }
 
     // Parse binary frame data
@@ -1335,13 +1331,13 @@ fn parse_frames(
                                 }
 
                                 // Update history for future P-frames
-                                // Both the previous and previous-previous states become the I-frame,
-                                // because we can't look further into the past than the I-frame
-                                frame_history
-                                    .previous_frame
-                                    .copy_from_slice(&frame_history.current_frame);
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Proper frame history management
+                                // previous2 = previous, previous = current
                                 frame_history
                                     .previous2_frame
+                                    .copy_from_slice(&frame_history.previous_frame);
+                                frame_history
+                                    .previous_frame
                                     .copy_from_slice(&frame_history.current_frame);
                                 frame_history.valid = true;
 
