@@ -611,6 +611,12 @@ pub fn parse_frame_data(
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
+                
+                // DEBUG: Log time field raw values 
+                if i == 1 {
+                    println!("DEBUG: Time field raw_value={}, predictor={}", raw_value, predictor);
+                }
+                
                 current_frame[i] = apply_predictor(
                     i,
                     predictor,

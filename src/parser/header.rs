@@ -39,11 +39,48 @@ pub fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHead
                 let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
                 header.i_frame_def = FrameDefinition::from_field_names(names);
             }
+        } else if line.starts_with("H Field P predictor:") {
+            // Parse P frame predictors - P-frames use I-frame field names with different predictors/encodings
+            if let Some(predictor_str) = line.strip_prefix("H Field P predictor:") {
+                let predictors: Result<Vec<u8>, _> = predictor_str.split(',').map(|s| s.trim().parse()).collect();
+                if let Ok(predictors) = predictors {
+                    // Create P-frame definition using I-frame field names but P-frame predictors
+                    header.p_frame_def = header.i_frame_def.clone();
+                    header.p_frame_def.update_predictors(&predictors);
+                }
+            }
+        } else if line.starts_with("H Field P encoding:") {
+            // Parse P frame encodings
+            if let Some(encoding_str) = line.strip_prefix("H Field P encoding:") {
+                let encodings: Result<Vec<u8>, _> = encoding_str.split(',').map(|s| s.trim().parse()).collect();
+                if let Ok(encodings) = encodings {
+                    header.p_frame_def.update_encoding(&encodings);
+                }
+            }
         } else if line.starts_with("H Field P name:") {
-            // Parse P frame field names
+            // Legacy P frame field names (should not exist in modern logs)
+            // **BLACKBOX_DECODE COMPATIBILITY**: P-frame fields must map to I-frame indices
             if let Some(field_str) = line.strip_prefix("H Field P name:") {
-                let names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
-                header.p_frame_def = FrameDefinition::from_field_names(names);
+                let p_field_names: Vec<String> = field_str.split(',').map(|s| s.trim().to_string()).collect();
+                
+                // Create P-frame definition with correct field indices matching I-frame positions
+                let mut p_frame_def = FrameDefinition::new();
+                for p_field_name in p_field_names {
+                    // Find the index of this field in the I-frame definition
+                    if let Some(i_frame_idx) = header.i_frame_def.field_names.iter().position(|name| name == &p_field_name) {
+                        // Create field definition using I-frame index
+                        let field = FieldDefinition {
+                            name: p_field_name.clone(),
+                            signed: false,
+                            predictor: 0,
+                            encoding: 0,
+                        };
+                        p_frame_def.fields.push(field);
+                        p_frame_def.field_names.push(p_field_name);
+                    }
+                }
+                p_frame_def.count = p_frame_def.fields.len();
+                header.p_frame_def = p_frame_def;
             }
         } else if line.starts_with("H Field S name:") {
             // Parse S frame field names
