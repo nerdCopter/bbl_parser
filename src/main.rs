@@ -1374,13 +1374,13 @@ fn parse_frames(
                                 .current_frame
                                 .copy_from_slice(&frame_history.previous_frame);
 
-                            // Parse P-frame data into temporary array first
-                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
-                            
-                            if bbl_format::parse_frame_data(
+                            // **CRITICAL FIX**: Parse P-frame directly into current frame using I-frame indices
+                            // This matches blackbox_decode where P-frames update mainHistory[0] directly
+                            if bbl_format::parse_p_frame_direct(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &mut p_frame_values,
+                                &header.i_frame_def, 
+                                &mut frame_history.current_frame,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
                                 0,     // TODO: Calculate skipped frames properly
@@ -1390,23 +1390,6 @@ fn parse_frames(
                             )
                             .is_ok()
                             {
-                                // **CRITICAL FIX**: Apply P-frame values to current frame using correct field indices
-                                // This matches blackbox_decode where P-frames update specific fields in mainHistory[0]
-                                for (p_idx, field_name) in header.p_frame_def.field_names.iter().enumerate() {
-                                    if p_idx < p_frame_values.len() {
-                                        // Find corresponding index in I-frame structure
-                                        if let Some(i_frame_idx) = header
-                                            .i_frame_def
-                                            .field_names
-                                            .iter()
-                                            .position(|name| name == field_name)
-                                        {
-                                            if i_frame_idx < frame_history.current_frame.len() {
-                                                frame_history.current_frame[i_frame_idx] = p_frame_values[p_idx];
-                                            }
-                                        }
-                                    }
-                                }
 
                                 // Copy current frame to output using I-frame field names and structure
                                 for (i, field_name) in
