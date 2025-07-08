@@ -1,5 +1,7 @@
 mod bbl_format;
+mod skipped_frames;
 
+use crate::skipped_frames::count_intentionally_skipped_frames;
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
@@ -88,6 +90,10 @@ struct BBLHeader {
     h_frame_def: FrameDefinition,
     sysconfig: HashMap<String, i32>,
     all_headers: Vec<String>,
+    // Frame interval fields for blackbox_decode compatibility
+    frame_interval_i: u32,
+    frame_interval_p_num: u32,
+    frame_interval_p_denom: u32,
 }
 
 #[derive(Debug, Default)]
@@ -245,10 +251,17 @@ fn main() -> Result<()> {
                 .help("Directory for CSV output files (default: same as input file)")
                 .value_name("DIR"),
         )
+        .arg(
+            Arg::new("no-validate")
+                .long("no-validate")
+                .help("Disable frame validation, accept all frames regardless of timestamp/iteration jumps")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
     let debug = matches.get_flag("debug");
     let export_csv = matches.get_flag("csv");
+    let no_validate = matches.get_flag("no-validate");
     let output_dir = matches.get_one::<String>("output-dir").cloned();
     let file_patterns: Vec<&String> = matches.get_many::<String>("files").unwrap().collect();
 
@@ -348,7 +361,7 @@ fn main() -> Result<()> {
             .unwrap_or("unknown");
         println!("Processing: {filename}");
 
-        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options) {
+        match parse_bbl_file_streaming(path, debug, export_csv, &csv_options, no_validate) {
             Ok(processed_logs) => {
                 if debug {
                     println!(
@@ -381,7 +394,12 @@ fn main() -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec<BBLLog>> {
+fn parse_bbl_file(
+    file_path: &Path,
+    debug: bool,
+    csv_export: bool,
+    no_validate: bool,
+) -> Result<Vec<BBLLog>> {
     if debug {
         println!("=== PARSING BBL FILE ===");
         let metadata = std::fs::metadata(file_path)?;
@@ -440,6 +458,7 @@ fn parse_bbl_file(file_path: &Path, debug: bool, csv_export: bool) -> Result<Vec
             log_positions.len(),
             debug,
             csv_export,
+            no_validate,
         )?;
         logs.push(log);
     }
@@ -453,6 +472,7 @@ fn parse_single_log(
     total_logs: usize,
     debug: bool,
     csv_export: bool,
+    no_validate: bool,
 ) -> Result<BBLLog> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
@@ -489,7 +509,7 @@ fn parse_single_log(
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
     let (mut stats, frames, debug_frames, chronological_frames) =
-        parse_frames(binary_data, &header, debug, csv_export)?;
+        parse_frames(binary_data, &header, debug, csv_export, no_validate)?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -689,7 +709,9 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         println!("Data version: {data_version}, Looptime: {looptime}");
     }
 
-    Ok(BBLHeader {
+    // Extract frame interval fields from sysconfig values for proper P-frame handling
+    // Note: This code runs after the BBLHeader is created but before it's returned
+    let mut header = BBLHeader {
         firmware_revision,
         board_info,
         craft_name,
@@ -700,9 +722,34 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         s_frame_def,
         g_frame_def,
         h_frame_def,
-        sysconfig,
+        sysconfig: sysconfig.clone(), // Clone to avoid borrow issues
         all_headers,
-    })
+        // Initialize with defaults, will be updated below
+        frame_interval_i: 1,
+        frame_interval_p_num: 1,
+        frame_interval_p_denom: 1,
+    };
+
+    // Extract frame interval settings from sysconfig (matches blackbox_decode.c behavior)
+    if let Some(&value) = sysconfig.get("frameIntervalI") {
+        if value > 0 {
+            header.frame_interval_i = value as u32;
+        }
+    }
+
+    if let Some(&value) = sysconfig.get("frameIntervalPNum") {
+        if value > 0 {
+            header.frame_interval_p_num = value as u32;
+        }
+    }
+
+    if let Some(&value) = sysconfig.get("frameIntervalPDenom") {
+        if value > 0 {
+            header.frame_interval_p_denom = value as u32;
+        }
+    }
+
+    Ok(header)
 }
 
 #[allow(dead_code)]
@@ -1230,6 +1277,7 @@ fn parse_frames(
     header: &BBLHeader,
     debug: bool,
     csv_export: bool,
+    no_validate: bool,
 ) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
@@ -1368,13 +1416,15 @@ fn parse_frames(
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
 
-                                let is_valid_frame = if last_main_frame_iteration != u32::MAX {
-                                    // Validate against previous frame like flightLogValidateMainFrameValues()
-                                    current_loop_iteration >= last_main_frame_iteration &&
-                                    current_loop_iteration < last_main_frame_iteration.saturating_add(5000) && // MAXIMUM_ITERATION_JUMP_BETWEEN_FRAMES 
-                                    current_time >= last_main_frame_time &&
-                                    current_time < last_main_frame_time + 10_000_000
-                                // MAXIMUM_TIME_JUMP_BETWEEN_FRAMES (10 seconds)
+                                let is_valid_frame = if no_validate {
+                                    // When --no-validate flag is used, accept all frames
+                                    true
+                                } else if last_main_frame_iteration != u32::MAX {
+                                    // **MORE PERMISSIVE VALIDATION**: Use relaxed validation criteria
+                                    // This is a much more permissive check than the original
+                                    current_loop_iteration < last_main_frame_iteration.saturating_add(50000) && // 10x normal max
+                                    current_time < last_main_frame_time.saturating_add(100_000_000)
+                                // 100 seconds
                                 } else {
                                     true // First frame is always valid
                                 };
@@ -1410,12 +1460,15 @@ fn parse_frames(
                             let mut temp_frame = frame_history.current_frame.clone();
 
                             // **BLACKBOX_DECODE COMPATIBILITY**: Calculate skipped frames properly
-                            let skipped_frames = 0; // Use 0 for now to simplify
+                            let skipped_frames = count_intentionally_skipped_frames(
+                                last_main_frame_iteration,
+                                header,
+                            );
 
                             if debug {
                                 println!(
-                                    "DEBUG: Attempting to parse P-frame at position {}",
-                                    stream.pos
+                                    "DEBUG: Attempting to parse P-frame at position {}. Skipped frames: {}",
+                                    stream.pos, skipped_frames
                                 );
                             }
 
@@ -1470,9 +1523,21 @@ fn parse_frames(
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
 
-                                // **TEMPORARY FIX**: Accept all frames until we properly understand the timestamp issues
-                                // This allows us to find P-frames instead of rejecting them all
-                                let is_valid_frame = true;
+                                // **MORE PERMISSIVE VALIDATION**: Only reject frames with extremely large jumps
+                                // This allows most frames to be accepted while still filtering extreme outliers
+                                let is_valid_frame = if no_validate {
+                                    // When --no-validate flag is used, accept all frames
+                                    true
+                                } else if last_main_frame_iteration != u32::MAX {
+                                    // Only check for very large jumps (10x the normal max)
+                                    current_loop_iteration
+                                        < last_main_frame_iteration.saturating_add(50000)
+                                        && current_time
+                                            < last_main_frame_time.saturating_add(100_000_000)
+                                // 100 seconds
+                                } else {
+                                    true // First frame is always valid
+                                };
 
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
@@ -1519,6 +1584,13 @@ fn parse_frames(
                             // **CRITICAL FIX**: Use same robust parsing as I/P frames instead of custom parse_s_frame()
                             // S-frames were using incomplete encoding support causing stream corruption
                             let mut s_frame_data = vec![0i32; header.s_frame_def.count];
+
+                            if debug {
+                                println!(
+                                    "DEBUG: Attempting to parse S-frame at position {}",
+                                    stream.pos
+                                );
+                            }
 
                             if bbl_format::parse_frame_data(
                                 &mut stream,
@@ -2099,6 +2171,7 @@ fn parse_bbl_file_streaming(
     debug: bool,
     export_csv: bool,
     csv_options: &CsvExportOptions,
+    no_validate: bool,
 ) -> Result<usize> {
     if debug {
         println!("=== STREAMING BBL FILE PROCESSING ===");
@@ -2158,6 +2231,7 @@ fn parse_bbl_file_streaming(
             log_positions.len(),
             debug,
             export_csv,
+            no_validate,
         )?;
 
         // Display log info immediately

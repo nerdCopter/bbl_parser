@@ -20,6 +20,7 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official referen
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Debug Frame Data**: Detailed frame-by-frame data display with smart sampling (first/middle/last when >30 frames)
 - **High Performance**: Reference-equivalent accuracy (100.02%), superior file compatibility (91.3% vs 43.5% success rate)
+- **Frame Validation Control**: The `--no-validate` flag allows disabling timestamp/iteration validation for maximum data recovery
 
 ## CSV Export Format
 
@@ -73,8 +74,14 @@ cargo build --release
 # CSV export 
 ./target/release/bbl_parser --csv logs/*.BBL
 
-# CSV export to specific directory
-./target/release/bbl_parser --csv --output-dir ./csv_output logs/*.BBL
+# Debug output and frame inspection
+./target/release/bbl_parser --debug logs/LOGFILE.BBL
+
+# Specify output directory for CSV files
+./target/release/bbl_parser --csv --output-dir ./exported_logs logs/*.BBL
+
+# Disable timestamp validation for maximum data recovery
+./target/release/bbl_parser --no-validate --csv logs/LOGFILE.BBL
 ```
 
 ## Output

@@ -331,7 +331,8 @@ pub fn apply_predictor(
         PREDICT_PREVIOUS => {
             if let Some(prev) = previous_frame {
                 if field_index < prev.len() {
-                    prev[field_index] + raw_value
+                    // Use wrapping operations to prevent overflow
+                    prev[field_index].wrapping_add(raw_value)
                 } else {
                     raw_value
                 }
@@ -343,7 +344,12 @@ pub fn apply_predictor(
         PREDICT_STRAIGHT_LINE => {
             if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                 if field_index < prev.len() && field_index < prev2.len() {
-                    raw_value + 2 * prev[field_index] - prev2[field_index]
+                    // Use wrapping operations to prevent overflow
+                    raw_value.wrapping_add(
+                        2_i32
+                            .wrapping_mul(prev[field_index])
+                            .wrapping_sub(prev2[field_index]),
+                    )
                 } else {
                     raw_value
                 }
@@ -355,7 +361,10 @@ pub fn apply_predictor(
         PREDICT_AVERAGE_2 => {
             if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
                 if field_index < prev.len() && field_index < prev2.len() {
-                    raw_value + ((prev[field_index] + prev2[field_index]) / 2)
+                    // Use wrapping operations to prevent overflow
+                    raw_value.wrapping_add(
+                        (prev[field_index].wrapping_add(prev2[field_index])).wrapping_div(2),
+                    )
                 } else {
                     raw_value
                 }
@@ -400,7 +409,7 @@ pub fn apply_predictor(
         }
 
         PREDICT_LAST_MAIN_FRAME_TIME => {
-            // **BLACKBOX_DECODE COMPATIBILITY**: Time predictor implementation  
+            // **BLACKBOX_DECODE COMPATIBILITY**: Time predictor implementation
             // Like blackbox_decode: value += private->mainHistory[1][FLIGHT_LOG_FIELD_INDEX_TIME];
             if let Some(prev) = previous_frame {
                 // Find the time field index in the frame structure
@@ -454,13 +463,13 @@ pub fn decode_frame_field(
             // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read
             stream.byte_align();
             stream.read_signed_vb()
-        },
+        }
 
         ENCODING_UNSIGNED_VB => {
-            // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read  
+            // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read
             stream.byte_align();
             Ok(stream.read_unsigned_vb()? as i32)
-        },
+        }
 
         ENCODING_NEG_14BIT => {
             // **BLACKBOX_DECODE COMPATIBILITY**: Byte align before VB read
@@ -606,7 +615,7 @@ pub fn parse_frame_data(
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
-                
+
                 current_frame[i] = apply_predictor(
                     i,
                     predictor,
@@ -622,192 +631,6 @@ pub fn parse_frame_data(
         }
 
         i += 1;
-    }
-
-    Ok(())
-}
-
-// **BLACKBOX_DECODE COMPATIBILITY**: Parse P-frame directly into current frame
-// This matches blackbox_decode where P-frames update mainHistory[0] directly
-#[allow(clippy::too_many_arguments)]
-pub fn parse_p_frame_direct(
-    stream: &mut BBLDataStream,
-    p_frame_def: &crate::FrameDefinition,
-    i_frame_def: &crate::FrameDefinition, 
-    current_frame: &mut [i32],
-    previous_frame: Option<&[i32]>,
-    previous2_frame: Option<&[i32]>,
-    skipped_frames: u32,
-    raw: bool,
-    data_version: u8,
-    sysconfig: &HashMap<String, i32>,
-) -> Result<()> {
-    let mut i = 0;
-    let mut values = [0i32; 8];
-
-    while i < p_frame_def.fields.len() {
-        let field = &p_frame_def.fields[i];
-        let p_field_name = &p_frame_def.field_names[i];
-        
-        // Find corresponding index in I-frame structure
-        let i_frame_index = i_frame_def.field_names.iter()
-            .position(|name| name == p_field_name)
-            .unwrap_or(i); // Fallback to P-frame index if not found
-
-        if field.predictor == PREDICT_INC {
-            current_frame[i_frame_index] = apply_predictor(
-                i_frame_index, // Use I-frame index for predictor calculation
-                field.predictor,
-                0,
-                current_frame,
-                previous_frame,
-                previous2_frame,
-                skipped_frames,
-                sysconfig,
-                &i_frame_def.field_names, // Use I-frame field names
-            );
-            i += 1;
-            continue;
-        }
-
-        match field.encoding {
-            ENCODING_TAG8_4S16 => {
-                if data_version < 2 {
-                    // v1 implementation would be different but we'll use v2
-                }
-                stream.read_tag8_4s16_v2(&mut values)?;
-
-                // Apply predictors for the 4 fields, updating I-frame indices
-                for j in 0..4 {
-                    if i + j >= p_frame_def.fields.len() {
-                        break;
-                    }
-                    let p_field_name = &p_frame_def.field_names[i + j];
-                    let i_frame_index = i_frame_def.field_names.iter()
-                        .position(|name| name == p_field_name)
-                        .unwrap_or(i + j);
-                        
-                    let predictor = if raw {
-                        PREDICT_0
-                    } else {
-                        p_frame_def.fields[i + j].predictor
-                    };
-                    current_frame[i_frame_index] = apply_predictor(
-                        i_frame_index, // Use I-frame index for predictor calculation
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &i_frame_def.field_names, // Use I-frame field names
-                    );
-                }
-                i += 4;
-                continue;
-            }
-
-            ENCODING_TAG2_3S32 => {
-                stream.read_tag2_3s32(&mut values)?;
-
-                // Apply predictors for the 3 fields, updating I-frame indices
-                for j in 0..3 {
-                    if i + j >= p_frame_def.fields.len() {
-                        break;
-                    }
-                    let p_field_name = &p_frame_def.field_names[i + j];
-                    let i_frame_index = i_frame_def.field_names.iter()
-                        .position(|name| name == p_field_name)
-                        .unwrap_or(i + j);
-                        
-                    let predictor = if raw {
-                        PREDICT_0
-                    } else {
-                        p_frame_def.fields[i + j].predictor
-                    };
-                    current_frame[i_frame_index] = apply_predictor(
-                        i_frame_index, // Use I-frame index for predictor calculation
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &i_frame_def.field_names, // Use I-frame field names
-                    );
-                }
-                i += 3;
-                continue;
-            }
-
-            ENCODING_TAG8_8SVB => {
-                let field_count = (p_frame_def.fields.len() - i).min(8);
-                stream.read_tag8_8svb(&mut values, field_count)?;
-
-                // Apply predictors for the fields, updating I-frame indices
-                for j in 0..field_count {
-                    if i + j >= p_frame_def.fields.len() {
-                        break;
-                    }
-                    let p_field_name = &p_frame_def.field_names[i + j];
-                    let i_frame_index = i_frame_def.field_names.iter()
-                        .position(|name| name == p_field_name)
-                        .unwrap_or(i + j);
-                        
-                    let predictor = if raw {
-                        PREDICT_0
-                    } else {
-                        p_frame_def.fields[i + j].predictor
-                    };
-                    current_frame[i_frame_index] = apply_predictor(
-                        i_frame_index, // Use I-frame index for predictor calculation
-                        predictor,
-                        values[j],
-                        current_frame,
-                        previous_frame,
-                        previous2_frame,
-                        skipped_frames,
-                        sysconfig,
-                        &i_frame_def.field_names, // Use I-frame field names
-                    );
-                }
-                i += field_count;
-                continue;
-            }
-
-            _ => {
-                // Handle single field encodings
-                let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
-                let predictor = if raw { PREDICT_0 } else { field.predictor };
-                
-                current_frame[i_frame_index] = apply_predictor(
-                    i_frame_index, // Use I-frame index for predictor calculation
-                    predictor,
-                    raw_value,
-                    current_frame,
-                    previous_frame,
-                    previous2_frame,
-                    skipped_frames,
-                    sysconfig,
-                    &i_frame_def.field_names, // Use I-frame field names
-                );
-                
-                // **DEBUG**: Show time field predictor calculation
-                if p_field_name == "time" {
-                    println!("DEBUG: Time predictor - raw_value: {}, predictor: {}, result: {}", 
-                           raw_value, predictor, current_frame[i_frame_index]);
-                    if let (Some(prev), Some(prev2)) = (previous_frame, previous2_frame) {
-                        if i_frame_index < prev.len() && i_frame_index < prev2.len() {
-                            println!("DEBUG: Time predictor history - prev[{}]: {}, prev2[{}]: {}", 
-                                   i_frame_index, prev[i_frame_index], i_frame_index, prev2[i_frame_index]);
-                        }
-                    }
-                }
-                i += 1;
-            }
-        }
     }
 
     Ok(())
