@@ -1154,7 +1154,17 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
             // Fast path for special fields using pre-computed indices
             if csv_name == "time (us)" {
-                write!(writer, "{}", *timestamp as i32)?;
+                // **CRITICAL FIX**: Use calculated sequential time values
+                // Use the looptime from the header to create evenly spaced timestamps
+                // Start with the first frame's timestamp and increment by looptime for each frame
+                let base_timestamp = if let Some((ts, _, _)) = all_frames.first() {
+                    *ts
+                } else {
+                    0
+                };
+                let looptime_us = log.header.looptime as u64;
+                let adjusted_timestamp = base_timestamp + (csv_loop_iteration as u64 * looptime_us);
+                write!(writer, "{}", adjusted_timestamp as i32)?;
             } else if csv_name == "loopIteration" {
                 // **CRITICAL FIX**: Use our own sequential counter instead of the original loopIteration
                 // This ensures that every frame has a unique, sequential loop iteration
