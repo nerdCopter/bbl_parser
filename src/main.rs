@@ -1080,8 +1080,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     // **BLACKBOX_DECODE COMPATIBILITY**: Use chronological frames that preserve BBL file order
     if let Some(ref chronological_frames) = log.chronological_frames {
         // Frames are already in correct BBL file order from parsing
+        // **FIX**: Only include I, P, S frames in main CSV (exclude E, G, H frames)
         for frame in chronological_frames {
-            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
+            if matches!(frame.frame_type, 'I' | 'P' | 'S') {
+                all_frames.push((frame.timestamp_us, frame.frame_type, frame));
+            }
         }
     } else if let Some(ref debug_frames) = log.debug_frames {
         // Fallback to old method if chronological frames not available
