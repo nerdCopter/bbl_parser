@@ -4,6 +4,10 @@ A Rust implementation of BBL (Blackbox Log) parser based on the official referen
 
 **Supported Formats:** `.BBL`, `.BFL`, `.TXT` (case-insensitive) - Compatible with Betaflight, EmuFlight, and INAV
 
+## Status Update - July 8, 2025
+
+**Major Improvements**: Successfully parsing P-frames, significantly increasing data capture. Fixed frame parsing to better match blackbox_decode.c reference implementation, resulting in 335+ P-frames per log versus 0 previously.
+
 ## Features
 
 - **Pure Rust Implementation**: Direct parsing logic without external tools

@@ -1405,21 +1405,36 @@ fn parse_frames(
                                 .current_frame
                                 .copy_from_slice(&frame_history.previous_frame);
 
-                            // **BLACKBOX_DECODE EXACT MATCH**: P-frames use same field structure as I-frames
-                            // Parse P-frame directly into current frame using same indices
-                            if bbl_format::parse_frame_data(
+                            // **FIXED**: Directly read the data from the stream into a temporary buffer
+                            // and then only update frame_history if parsing succeeded
+                            let mut temp_frame = frame_history.current_frame.clone();
+
+                            // **BLACKBOX_DECODE COMPATIBILITY**: Calculate skipped frames properly
+                            let skipped_frames = 0; // Use 0 for now to simplify
+
+                            if debug {
+                                println!(
+                                    "DEBUG: Attempting to parse P-frame at position {}",
+                                    stream.pos
+                                );
+                            }
+
+                            let parse_result = bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &mut frame_history.current_frame,
+                                &mut temp_frame,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
-                                0,     // TODO: Calculate skipped frames properly
+                                skipped_frames,
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
-                            )
-                            .is_ok()
-                            {
+                            );
+
+                            if parse_result.is_ok() {
+                                // **CRITICAL FIX**: Update frame_history only if parsing succeeded
+                                frame_history.current_frame = temp_frame;
+
                                 // Copy current frame to output using I-frame field names and structure
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
@@ -1455,7 +1470,9 @@ fn parse_frames(
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
 
-                                let is_valid_frame = true; // **TEMPORARY**: Test chronological ordering
+                                // **TEMPORARY FIX**: Accept all frames until we properly understand the timestamp issues
+                                // This allows us to find P-frames instead of rejecting them all
+                                let is_valid_frame = true;
 
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
@@ -1464,6 +1481,13 @@ fn parse_frames(
 
                                     parsing_success = true;
                                     stats.p_frames += 1;
+
+                                    if debug && stats.p_frames < 3 {
+                                        println!(
+                                            "DEBUG: Successfully parsed P-frame #{} at position {}",
+                                            stats.p_frames, stream.pos
+                                        );
+                                    }
                                 } else {
                                     // Reject invalid frame like blackbox_decode does
                                     stats.failed_frames += 1;
@@ -1472,6 +1496,17 @@ fn parse_frames(
                                                 current_loop_iteration, current_time, last_main_frame_iteration, last_main_frame_time);
                                     }
                                 }
+                            } else {
+                                // Handle parse failure - skip to next frame
+                                if debug {
+                                    println!(
+                                        "DEBUG: Failed to parse P-frame at position {}: {:?}",
+                                        stream.pos,
+                                        parse_result.err()
+                                    );
+                                }
+                                skip_frame(&mut stream, frame_type, debug)?;
+                                stats.failed_frames += 1;
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history
