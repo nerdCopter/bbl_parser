@@ -1127,7 +1127,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
-    for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
+    // **CRITICAL FIX**: Use enumeration to get a guaranteed sequential counter
+    for (csv_loop_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
             for (key, value) in &frame.data {
@@ -1155,12 +1156,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             if csv_name == "time (us)" {
                 write!(writer, "{}", *timestamp as i32)?;
             } else if csv_name == "loopIteration" {
-                let value = frame
-                    .data
-                    .get("loopIteration")
-                    .copied()
-                    .unwrap_or(output_iteration as i32);
-                write!(writer, "{value:4}")?;
+                // **CRITICAL FIX**: Use our own sequential counter instead of the original loopIteration
+                // This ensures that every frame has a unique, sequential loop iteration
+                write!(writer, "{csv_loop_iteration:4}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
@@ -1178,15 +1176,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
 
-                let formatted = if lookup_name == "flightModeFlags" {
-                    raw_value.to_string() // TODO: Implement flight mode flag formatting
-                } else if lookup_name == "stateFlags" {
-                    raw_value.to_string() // TODO: Implement state flag formatting
-                } else if lookup_name == "failsafePhase" {
-                    raw_value.to_string() // TODO: Implement failsafe phase formatting
-                } else {
-                    raw_value.to_string()
-                };
+                // TODO: Implement proper flag formatting instead of raw values
+                let formatted = raw_value.to_string();
                 write!(writer, "{formatted}")?;
             } else {
                 // Regular field lookup with S-frame fallback
@@ -1480,8 +1471,33 @@ fn parse_frames(
                     }
                     'S' => {
                         if header.s_frame_def.count > 0 {
-                            if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug)
+                            // **CRITICAL FIX**: Use same robust parsing as I/P frames instead of custom parse_s_frame()
+                            // S-frames were using incomplete encoding support causing stream corruption
+                            let mut s_frame_data = vec![0i32; header.s_frame_def.count];
+
+                            if bbl_format::parse_frame_data(
+                                &mut stream,
+                                &header.s_frame_def,
+                                &mut s_frame_data,
+                                None, // S-frames don't use prediction
+                                None,
+                                0,
+                                false, // **FIX**: S-frames should use prediction, not raw mode
+                                header.data_version,
+                                &header.sysconfig,
+                            )
+                            .is_ok()
                             {
+                                // Convert parsed data to HashMap
+                                let mut data = HashMap::new();
+                                for (i, field_name) in
+                                    header.s_frame_def.field_names.iter().enumerate()
+                                {
+                                    if i < s_frame_data.len() {
+                                        data.insert(field_name.clone(), s_frame_data[i]);
+                                    }
+                                }
+
                                 // Following JavaScript approach: update lastSlow data
                                 if debug && stats.s_frames < 3 {
                                     println!("DEBUG: Processing S-frame with data: {data:?}");
@@ -1532,9 +1548,38 @@ fn parse_frames(
                         }
                     }
                     'E' => {
-                        skip_frame(&mut stream, frame_type, debug)?;
-                        stats.e_frames += 1;
-                        parsing_success = true;
+                        // **CRITICAL FIX**: Check for LOG_END event to properly terminate parsing
+                        let event_start_pos = stream.pos;
+                        if let Ok(event_type) = stream.read_byte() {
+                            const FLIGHT_LOG_EVENT_LOG_END: u8 = 255;
+
+                            if event_type == FLIGHT_LOG_EVENT_LOG_END {
+                                // LOG_END event found - stop parsing here
+                                if debug {
+                                    println!("DEBUG: LOG_END event found at offset {}, stopping frame parsing", event_start_pos);
+                                }
+                                // Read the remaining 11-byte "End of log" message
+                                for _ in 0..11 {
+                                    if !stream.eof {
+                                        let _ = stream.read_byte();
+                                    }
+                                }
+                                stats.e_frames += 1;
+                                // **BREAK OUT OF PARSING LOOP** - no more valid frames after LOG_END
+                                break;
+                            } else {
+                                // Not LOG_END - reset stream position and skip normally
+                                stream.pos = event_start_pos;
+                                skip_frame(&mut stream, frame_type, debug)?;
+                                stats.e_frames += 1;
+                                parsing_success = true;
+                            }
+                        } else {
+                            // Cannot read event type - treat as normal E-frame
+                            skip_frame(&mut stream, frame_type, debug)?;
+                            stats.e_frames += 1;
+                            parsing_success = true;
+                        }
                     }
                     _ => {}
                 };
@@ -1802,69 +1847,6 @@ fn parse_i_frame(
     Ok(data)
 }
 
-fn parse_s_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-    let mut field_index = 0;
-
-    while field_index < frame_def.fields.len() {
-        let field = &frame_def.fields[field_index];
-
-        match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => {
-                let value = stream.read_signed_vb()?;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_UNSIGNED_VB => {
-                let value = stream.read_unsigned_vb()? as i32;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_NEG_14BIT => {
-                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16));
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            bbl_format::ENCODING_TAG2_3S32 => {
-                // This encoding handles 3 fields at once
-                let mut values = [0i32; 8];
-                stream.read_tag2_3s32(&mut values)?;
-
-                #[allow(clippy::needless_range_loop)]
-                for j in 0..3 {
-                    if field_index + j < frame_def.fields.len() {
-                        let current_field = &frame_def.fields[field_index + j];
-                        data.insert(current_field.name.clone(), values[j]);
-                    }
-                }
-                field_index += 3;
-            }
-            bbl_format::ENCODING_NULL => {
-                data.insert(field.name.clone(), 0);
-                field_index += 1;
-            }
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported S-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                // For unsupported encodings, try to read as signed VB
-                let value = stream.read_signed_vb().unwrap_or(0);
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-        }
-    }
-
-    Ok(data)
-}
-
 fn parse_h_frame(
     stream: &mut bbl_format::BBLDataStream,
     frame_def: &FrameDefinition,
@@ -1952,22 +1934,78 @@ fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: b
         println!("Skipping {frame_type} frame");
     }
 
-    // Skip frame by reading a few bytes - this is a simple heuristic
-    // In a full implementation, we'd parse these properly too
+    // **BLACKBOX_DECODE COMPATIBILITY**: Proper frame parsing to avoid stream corruption
     match frame_type {
         'E' => {
-            // Event frames - read event type and some data
-            let _event_type = stream.read_byte()?;
-            // Read up to 16 bytes of event data
-            for _ in 0..16 {
-                if stream.eof {
-                    break;
+            // Event frames - parse properly based on event type (like blackbox_decode parseEventFrame)
+            let event_type = stream.read_byte()?;
+
+            // Event type constants from blackbox_fielddefs.h
+            const FLIGHT_LOG_EVENT_SYNC_BEEP: u8 = 0;
+            const FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT: u8 = 13;
+            const FLIGHT_LOG_EVENT_LOGGING_RESUME: u8 = 14;
+            const FLIGHT_LOG_EVENT_FLIGHTMODE: u8 = 30;
+            const FLIGHT_LOG_EVENT_LOG_END: u8 = 255;
+
+            match event_type {
+                FLIGHT_LOG_EVENT_SYNC_BEEP => {
+                    // Read time as unsigned VB
+                    let _ = stream.read_unsigned_vb();
                 }
-                let _ = stream.read_byte();
+                FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT => {
+                    // Read adjustment function byte
+                    let adjustment_function = stream.read_byte()?;
+                    if adjustment_function > 127 {
+                        // Read float value (4 bytes)
+                        let _ = stream.read_byte(); // float byte 1
+                        let _ = stream.read_byte(); // float byte 2
+                        let _ = stream.read_byte(); // float byte 3
+                        let _ = stream.read_byte(); // float byte 4
+                    } else {
+                        // Read signed VB value
+                        let _ = stream.read_signed_vb();
+                    }
+                }
+                FLIGHT_LOG_EVENT_LOGGING_RESUME => {
+                    // Read log iteration and current time as unsigned VBs
+                    let _ = stream.read_unsigned_vb(); // log iteration
+                    let _ = stream.read_unsigned_vb(); // current time
+                }
+                FLIGHT_LOG_EVENT_LOG_END => {
+                    // Read 11-byte "End of log" message
+                    for _ in 0..11 {
+                        let _ = stream.read_byte();
+                    }
+                }
+                FLIGHT_LOG_EVENT_FLIGHTMODE => {
+                    // Flight mode event - structure unknown, read VB to be safe
+                    let _ = stream.read_unsigned_vb();
+                }
+                _ => {
+                    // Unknown event type - can't safely skip, might cause corruption
+                    if debug {
+                        println!("WARNING: Unknown E-frame event type: {}", event_type);
+                    }
+                    // Don't read any more bytes to avoid corruption
+                }
             }
         }
         'G' | 'H' => {
-            // GPS frames - read several fields
+            // **CRITICAL FIX**: GPS/Home frames must be properly parsed using frame definitions
+            // The old heuristic of "read 7 VB values" causes stream corruption
+            //
+            // Note: G/H frame parsing will be implemented in a separate task
+            // For now, we cannot safely skip these frames without proper frame definitions
+            //
+            // TODO: Implement proper G/H frame parsing using header.g_frame_def/h_frame_def
+            //       This requires access to the frame definitions from the caller
+
+            if debug {
+                println!("WARNING: Cannot safely skip {frame_type}-frame without frame definition");
+                println!("Stream corruption may occur - G/H frames need proper parsing");
+            }
+
+            // UNSAFE FALLBACK: Try to read some fields but this may cause corruption
             for _ in 0..7 {
                 if stream.eof {
                     break;
