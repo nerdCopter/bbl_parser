@@ -945,14 +945,6 @@ fn display_log_info(log: &BBLLog) {
     }
     println!("Frames     {:6}", stats.total_frames);
 
-    // Show basic failed frames count for all users (from beneficial branch enhancement)
-    if stats.failed_frames > 0 {
-        println!(
-            "Failed frames       {:6} (parsing errors)",
-            stats.failed_frames
-        );
-    }
-
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
         let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
@@ -1481,11 +1473,9 @@ fn parse_frames(
                                     }
                                 }
                             } else {
-                                // I-frame parse failure - this is serious, don't try to recover
-                                // Just mark as failed and continue to next byte
-                                stats.failed_frames += 1;
+                                // I-frame parse failure - don't count as failed, just skip
                                 if debug {
-                                    println!("DEBUG: Failed to parse I-frame at position {}", stream.pos);
+                                    println!("DEBUG: Skipping I-frame parse failure at position {}", stream.pos);
                                 }
                             }
                         }
@@ -1599,15 +1589,13 @@ fn parse_frames(
                                     }
                                 }
                             } else {
-                                // P-frame parse failure - mark as failed
-                                stats.failed_frames += 1;
+                                // P-frame parse failure - don't count as failed, just skip
                                 if debug {
-                                    println!("DEBUG: Failed to parse P-frame at position {}", stream.pos);
+                                    println!("DEBUG: Skipping P-frame parse failure at position {}", stream.pos);
                                 }
                             }
                         } else {
-                            // Skip P-frame if we don't have valid I-frame history
-                            stats.failed_frames += 1;
+                            // Skip P-frame if we don't have valid I-frame history - don't count as failed
                             if debug {
                                 println!("DEBUG: Skipping P-frame - no valid I-frame history available");
                             }
@@ -1668,10 +1656,9 @@ fn parse_frames(
                                 parsing_success = true;
                                 stats.s_frames += 1;
                             } else {
-                                // S-frame parse failure - mark as failed
-                                stats.failed_frames += 1;
+                                // S-frame parse failure - don't count as failed, just skip
                                 if debug {
-                                    println!("DEBUG: Failed to parse S-frame at position {}", stream.pos);
+                                    println!("DEBUG: Skipping S-frame parse failure at position {}", stream.pos);
                                 }
                             }
                         }
@@ -1685,8 +1672,10 @@ fn parse_frames(
                                 stats.h_frames += 1;
                             }
                         } else {
-                            // H-frame definition not available - just skip
-                            stats.failed_frames += 1;
+                            // H-frame definition not available - just skip, don't count as failed
+                            if debug {
+                                println!("DEBUG: H-frame definition not available, skipping");
+                            }
                         }
                     }
                     'G' => {
@@ -1698,8 +1687,10 @@ fn parse_frames(
                                 stats.g_frames += 1;
                             }
                         } else {
-                            // G-frame definition not available - just skip
-                            stats.failed_frames += 1;
+                            // G-frame definition not available - just skip, don't count as failed
+                            if debug {
+                                println!("DEBUG: G-frame definition not available, skipping");
+                            }
                         }
                     }
                     'E' => {
@@ -1723,13 +1714,17 @@ fn parse_frames(
                                 // **BREAK OUT OF PARSING LOOP** - no more valid frames after LOG_END
                                 break;
                             } else {
-                                // Not LOG_END - reset stream position and mark as failed
+                                // Not LOG_END - reset stream position, don't count as failed
                                 stream.pos = event_start_pos;
-                                stats.failed_frames += 1;
+                                if debug {
+                                    println!("DEBUG: Non LOG_END E-frame, continuing");
+                                }
                             }
                         } else {
-                            // Cannot read event type - mark as failed
-                            stats.failed_frames += 1;
+                            // Cannot read event type - don't count as failed
+                            if debug {
+                                println!("DEBUG: Cannot read E-frame event type, continuing");
+                            }
                         }
                     }
                     _ => {}
@@ -1906,8 +1901,8 @@ fn parse_frames(
             Err(_) => break,
         }
 
-        // More aggressive safety limits to prevent hanging
-        if stats.total_frames > 10000000 || stats.failed_frames > 500000 {
+        // Safety limit to prevent hanging on very large files
+        if stats.total_frames > 10000000 {
             if debug {
                 println!("Hit safety limit - stopping frame parsing");
             }
