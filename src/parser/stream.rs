@@ -224,7 +224,8 @@ impl<'a> BBLDataStream<'a> {
     /// This is a safe implementation that searches for valid frame markers (I, P, E, G, H, S)
     /// without causing stream corruption
     pub fn skip_to_next_marker(&mut self) -> Result<char> {
-        let mut marker_candidates = 0;
+        // Remember starting position to avoid infinite loops
+        let start_pos = self.pos;
         
         // Search through the stream for a valid frame marker
         while !self.eof {
@@ -236,12 +237,10 @@ impl<'a> BBLDataStream<'a> {
             let c = byte as char;
             
             // Valid frame markers are ASCII letters: I, P, E, G, H, S
-            if (c == 'I' || c == 'P' || c == 'E' || c == 'G' || c == 'H' || c == 'S') {
+            if c == 'I' || c == 'P' || c == 'E' || c == 'G' || c == 'H' || c == 'S' {
                 // Found a potential marker - check if it's valid by ensuring the next byte can be read
                 // This is a simple heuristic to reduce false positives
                 if self.pos < self.end {
-                    marker_candidates += 1;
-                    
                     // Return the marker after confirming it's valid
                     // Backtrack position by 1 so the next read will get this marker
                     self.pos -= 1;
@@ -249,9 +248,10 @@ impl<'a> BBLDataStream<'a> {
                 }
             }
             
-            // Safety limit - don't scan too far
-            if marker_candidates > 1000 {
-                return Err(BBLError::InvalidData("Too many false marker candidates".into()));
+            // Safety limit - don't scan too far (use relative offset from start position)
+            // This prevents infinite loops in corrupted files
+            if self.pos - start_pos > 4096 {
+                return Err(BBLError::InvalidData("Could not find a valid frame marker within reasonable distance".into()));
             }
         }
         

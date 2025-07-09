@@ -1126,11 +1126,17 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Use chronological frames that preserve BBL file order
     if let Some(ref chronological_frames) = log.chronological_frames {
-        // Frames are already in correct BBL file order from parsing
-        // **STRICT COMPATIBILITY**: Only include I, P, S frames in main CSV (exclude E, G, H frames)
+        // Use frames in original order from the BBL file
         for frame in chronological_frames {
-            if matches!(frame.frame_type, 'I' | 'P' | 'S') {
-                all_frames.push((frame.timestamp_us, frame.frame_type, frame));
+            match frame.frame_type {
+                // Include I and P frames directly for CSV output
+                'I' | 'P' => all_frames.push((frame.timestamp_us, frame.frame_type, frame)),
+                
+                // Include S frames to use their data in CSV output
+                'S' => all_frames.push((frame.timestamp_us, frame.frame_type, frame)),
+                
+                // Skip other frame types (E, G, H)
+                _ => {}
             }
         }
     } else if let Some(ref debug_frames) = log.debug_frames {
@@ -1187,9 +1193,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 latest_s_frame_data.insert(key.clone(), *value);
             }
             
-            // **CRITICAL COMPATIBILITY FIX**: Skip writing S frames directly to CSV
-            // S-frame data is merged into I and P frames instead
-            // This matches blackbox_decode behavior exactly
+            // Skip writing S frames directly to CSV
+            // This matches master's behavior
             continue;
         }
 
@@ -1212,8 +1217,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
             // Fast path for special fields using pre-computed indices
             if csv_name == "time (us)" {
                 // **BLACKBOX_DECODE COMPATIBILITY**: Use frame's actual timestamp if available
-                // Fall back to calculated sequential timestamps only if needed
-                // This matches blackbox_decode behavior which preserves original timestamps
+                // Use original timestamp from the frame when available (master behavior)
                 let timestamp = if *frame_type == 'I' || *frame_type == 'P' {
                     // For I and P frames, use the actual frame timestamp if available
                     frame.data.get("time").copied().unwrap_or_else(|| {
@@ -1257,11 +1261,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 let formatted = raw_value.to_string();
                 write!(writer, "{formatted}")?;
             } else {
-                // Regular field lookup with S-frame fallback
-                // **BLACKBOX_DECODE COMPATIBILITY**: Use blackbox_decode's exact lookup strategy
-                // 1. Try to find the value in the current frame
-                // 2. If not found and it's a main frame (I/P), check latest S frame data
-                // 3. Default to 0 if not found anywhere
+                // Regular field lookup with S-frame fallback - exactly like blackbox_decode.c
+                // Regular field lookup with S-frame fallback (master behavior)
                 let value = if let Some(v) = frame.data.get(lookup_name) {
                     *v
                 } else if (*frame_type == 'I' || *frame_type == 'P') && latest_s_frame_data.contains_key(lookup_name) {
@@ -1519,9 +1520,12 @@ fn parse_frames(
                                     }
                                 }
 
-                                // Merge lastSlow data into P-frame (following JavaScript approach)
+                                // Merge lastSlow data into P-frame - matches blackbox_decode.c exactly
                                 for (key, value) in &last_slow_data {
-                                    frame_data.insert(key.clone(), *value);
+                                    // Only insert S-frame data if not already present in P-frame
+                                    if !frame_data.contains_key(key) {
+                                        frame_data.insert(key.clone(), *value);
+                                    }
                                 }
 
                                 if debug && stats.p_frames < 3 {
@@ -1529,7 +1533,8 @@ fn parse_frames(
                                              frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
                                 }
 
-                                // Update history
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Update frame history for next frame
+                                // Update the history - previous2 = previous, previous = current
                                 frame_history
                                     .previous2_frame
                                     .copy_from_slice(&frame_history.previous_frame);
@@ -1538,8 +1543,7 @@ fn parse_frames(
                                     .copy_from_slice(&frame_history.current_frame);
 
                                 // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame values like blackbox_decode.c
-                                // We track the iteration and time values but don't use them for validation
-                                let current_loop_iteration =
+                                let current_loop_iteration = 
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
@@ -2111,7 +2115,7 @@ fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: b
                     // Unknown event type - can't safely skip, might cause corruption
                     if debug {
                         println!("WARNING: Unknown E-frame event type: {}", event_type);
-                    }
+                                       }
                     // Don't read any more bytes to avoid corruption
                 }
             }
@@ -2129,17 +2133,13 @@ fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: b
                 if debug {
                     println!("DEBUG: Found next marker '{next_marker}' after skipping {frame_type}-frame");
                 }
+                return Ok(());
             } else if debug {
                 println!("DEBUG: No next marker found after {frame_type}-frame, reached EOF");
             }
-
-            // UNSAFE FALLBACK: Try to read some fields but this may cause corruption
-            for _ in 0..7 {
-                if stream.eof {
-                    break;
-                }
-                let _ = stream.read_unsigned_vb();
-            }
+            
+            // If we reached EOF or couldn't find a marker, we're done
+            return Ok(());
         }
         _ => {
             // Unknown frame type - read a few bytes
