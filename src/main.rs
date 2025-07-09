@@ -1373,9 +1373,6 @@ fn parse_frames(
     while !stream.eof {
         let frame_start_pos = stream.pos;
 
-        // Debug: Track if we're making progress
-        let prev_position = stream.pos;
-
         match stream.read_byte() {
             Ok(frame_type_byte) => {
                 let frame_type = match frame_type_byte as char {
@@ -1484,15 +1481,11 @@ fn parse_frames(
                                     }
                                 }
                             } else {
-                                // Handle I-frame parse failure - try to recover gracefully like blackbox_decode
+                                // I-frame parse failure - this is serious, don't try to recover
+                                // Just mark as failed and continue to next byte
+                                stats.failed_frames += 1;
                                 if debug {
                                     println!("DEBUG: Failed to parse I-frame at position {}", stream.pos);
-                                }
-                                
-                                // Only increment failed frames if we can't recover
-                                // blackbox_decode is more forgiving and tries to continue parsing
-                                if let Err(_) = stream.skip_to_next_marker() {
-                                    stats.failed_frames += 1;
                                 }
                             }
                         }
@@ -1606,31 +1599,17 @@ fn parse_frames(
                                     }
                                 }
                             } else {
-                                // Handle parse failure - try to recover gracefully like blackbox_decode
+                                // P-frame parse failure - mark as failed
+                                stats.failed_frames += 1;
                                 if debug {
-                                    println!(
-                                        "DEBUG: Failed to parse P-frame at position {}: {:?}",
-                                        stream.pos,
-                                        parse_result.err()
-                                    );
-                                }
-                                
-                                // Only increment failed frames if we can't recover
-                                // blackbox_decode is more forgiving and tries to continue parsing
-                                if let Err(_) = stream.skip_to_next_marker() {
-                                    stats.failed_frames += 1;
+                                    println!("DEBUG: Failed to parse P-frame at position {}", stream.pos);
                                 }
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history
-                            // Use gentler recovery like blackbox_decode instead of always failing
+                            stats.failed_frames += 1;
                             if debug {
                                 println!("DEBUG: Skipping P-frame - no valid I-frame history available");
-                            }
-                            
-                            // Try to recover gracefully by finding the next frame marker
-                            if let Err(_) = stream.skip_to_next_marker() {
-                                stats.failed_frames += 1;
                             }
                         }
                     }
@@ -1689,15 +1668,10 @@ fn parse_frames(
                                 parsing_success = true;
                                 stats.s_frames += 1;
                             } else {
-                                // Handle S-frame parse failure - try to recover gracefully like blackbox_decode
+                                // S-frame parse failure - mark as failed
+                                stats.failed_frames += 1;
                                 if debug {
                                     println!("DEBUG: Failed to parse S-frame at position {}", stream.pos);
-                                }
-                                
-                                // Only increment failed frames if we can't recover
-                                // blackbox_decode is more forgiving and tries to continue parsing
-                                if let Err(_) = stream.skip_to_next_marker() {
-                                    stats.failed_frames += 1;
                                 }
                             }
                         }
@@ -1711,18 +1685,8 @@ fn parse_frames(
                                 stats.h_frames += 1;
                             }
                         } else {
-                            // H-frame definition not available - try to recover gracefully
-                            if debug {
-                                println!("DEBUG: H-frame definition not available, attempting recovery");
-                            }
-                            
-                            if let Err(_) = stream.skip_to_next_marker() {
-                                // Only count as failed if we can't recover
-                                stats.failed_frames += 1;
-                            } else {
-                                stats.h_frames += 1;
-                                parsing_success = true;
-                            }
+                            // H-frame definition not available - just skip
+                            stats.failed_frames += 1;
                         }
                     }
                     'G' => {
@@ -1734,18 +1698,8 @@ fn parse_frames(
                                 stats.g_frames += 1;
                             }
                         } else {
-                            // G-frame definition not available - try to recover gracefully
-                            if debug {
-                                println!("DEBUG: G-frame definition not available, attempting recovery");
-                            }
-                            
-                            if let Err(_) = stream.skip_to_next_marker() {
-                                // Only count as failed if we can't recover
-                                stats.failed_frames += 1;
-                            } else {
-                                stats.g_frames += 1;
-                                parsing_success = true;
-                            }
+                            // G-frame definition not available - just skip
+                            stats.failed_frames += 1;
                         }
                     }
                     'E' => {
@@ -1769,23 +1723,13 @@ fn parse_frames(
                                 // **BREAK OUT OF PARSING LOOP** - no more valid frames after LOG_END
                                 break;
                             } else {
-                                // Not LOG_END - reset stream position and try to recover gracefully
+                                // Not LOG_END - reset stream position and mark as failed
                                 stream.pos = event_start_pos;
-                                if let Err(_) = stream.skip_to_next_marker() {
-                                    stats.failed_frames += 1;
-                                } else {
-                                    stats.e_frames += 1;
-                                    parsing_success = true;
-                                }
+                                stats.failed_frames += 1;
                             }
                         } else {
-                            // Cannot read event type - try to recover gracefully
-                            if let Err(_) = stream.skip_to_next_marker() {
-                                stats.failed_frames += 1;
-                            } else {
-                                stats.e_frames += 1;
-                                parsing_success = true;
-                            }
+                            // Cannot read event type - mark as failed
+                            stats.failed_frames += 1;
                         }
                     }
                     _ => {}
@@ -1968,20 +1912,6 @@ fn parse_frames(
                 println!("Hit safety limit - stopping frame parsing");
             }
             break;
-        }
-
-        // Detect if we're not making progress in stream position
-        if stream.pos == prev_position && stats.total_frames > 0 {
-            if debug {
-                println!("DEBUG: Stream position not advancing (pos={}), attempting recovery", stream.pos);
-            }
-            // Force advance the stream position to avoid infinite loops
-            if let Err(_) = stream.skip_to_next_marker() {
-                if debug {
-                    println!("DEBUG: Failed to recover from stuck position, breaking");
-                }
-                break;
-            }
         }
     }
 

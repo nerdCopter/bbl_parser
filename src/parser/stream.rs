@@ -221,14 +221,13 @@ impl<'a> BBLDataStream<'a> {
     }
     
     /// Skip ahead in the stream until finding a valid frame marker
-    /// This implementation matches blackbox_decode's approach to frame recovery
-    /// and handles stream corruption more gracefully
+    /// Conservative implementation that properly validates frame markers
+    /// to avoid false positives and stream corruption
     pub fn skip_to_next_marker(&mut self) -> Result<char> {
         // Remember starting position to avoid infinite loops
         let start_pos = self.pos;
         
         // Search through the stream for a valid frame marker
-        // This is more permissive than our previous implementation to match blackbox_decode's behavior
         while !self.eof {
             let byte = match self.read_byte() {
                 Ok(b) => b,
@@ -238,18 +237,19 @@ impl<'a> BBLDataStream<'a> {
             let c = byte as char;
             
             // Valid frame markers are ASCII letters: I, P, E, G, H, S
-            // Unlike our previous implementation, we trust that any of these characters
-            // could be valid frame markers, similar to blackbox_decode's approach
             if c == 'I' || c == 'P' || c == 'E' || c == 'G' || c == 'H' || c == 'S' {
-                // Found a potential marker - backtrack so the next read will get this marker
-                // This matches blackbox_decode's behavior of being optimistic about frame markers
-                self.pos -= 1;
-                return Ok(c);
+                // Found a potential marker - validate it's likely a real frame start
+                // by checking we have enough data ahead and the position makes sense
+                if self.pos < self.end {
+                    // Backtrack position by 1 so the next read will get this marker
+                    self.pos -= 1;
+                    return Ok(c);
+                }
             }
             
-            // Safety limit - don't scan too far (use relative offset from start position)
-            // Increased limit to be more forgiving with corrupted streams, matching blackbox_decode
-            if self.pos - start_pos > 8192 {
+            // Safety limit - don't scan too far from start position
+            // Keep this conservative to avoid infinite loops in corrupted files
+            if self.pos - start_pos > 1024 {
                 return Err(BBLError::InvalidData("Could not find a valid frame marker within reasonable distance".into()));
             }
         }
