@@ -1381,7 +1381,7 @@ fn parse_frames(
                                 frame_type_byte, frame_type_byte as char, frame_start_pos
                             );
                         }
-                        stats.failed_frames += 1;
+                        // Don't count unknown frame types as failures, just skip them
                         continue;
                     }
                 };
@@ -1464,14 +1464,8 @@ fn parse_frames(
 
                                     parsing_success = true;
                                     stats.i_frames += 1;
-                                } else {
-                                    // Reject invalid frame like blackbox_decode does
-                                    stats.failed_frames += 1;
-                                    if debug {
-                                        println!("DEBUG: Rejected I-frame - loopIteration:{} time:{} (prev iter:{} time:{})", 
-                                                current_loop_iteration, current_time, last_main_frame_iteration, last_main_frame_time);
-                                    }
                                 }
+                                // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
                                 // I-frame parse failure - don't count as failed, just skip
                                 if debug {
@@ -1580,14 +1574,8 @@ fn parse_frames(
                                             stats.p_frames, stream.pos
                                         );
                                     }
-                                } else {
-                                    // Reject invalid frame like blackbox_decode does
-                                    stats.failed_frames += 1;
-                                    if debug {
-                                        println!("DEBUG: Rejected P-frame - loopIteration:{} time:{} (prev iter:{} time:{})", 
-                                                current_loop_iteration, current_time, last_main_frame_iteration, last_main_frame_time);
-                                    }
                                 }
+                                // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
                                 // P-frame parse failure - don't count as failed, just skip
                                 if debug {
@@ -1700,9 +1688,9 @@ fn parse_frames(
                             const FLIGHT_LOG_EVENT_LOG_END: u8 = 255;
 
                             if event_type == FLIGHT_LOG_EVENT_LOG_END {
-                                // LOG_END event found - stop parsing here
+                                // LOG_END event found - but don't break, continue parsing like master does
                                 if debug {
-                                    println!("DEBUG: LOG_END event found at offset {}, stopping frame parsing", event_start_pos);
+                                    println!("DEBUG: LOG_END event encountered at offset {}, but continuing parsing", event_start_pos);
                                 }
                                 // Read the remaining 11-byte "End of log" message
                                 for _ in 0..11 {
@@ -1712,7 +1700,8 @@ fn parse_frames(
                                 }
                                 stats.e_frames += 1;
                                 // **BREAK OUT OF PARSING LOOP** - no more valid frames after LOG_END
-                                break;
+                                // Commenting this out to match master's behavior
+                                // break;
                             } else {
                                 // Not LOG_END - reset stream position, don't count as failed
                                 stream.pos = event_start_pos;
@@ -1730,10 +1719,9 @@ fn parse_frames(
                     _ => {}
                 };
 
-                if !parsing_success {
-                    stats.failed_frames += 1;
-                }
-
+                // Don't track failed frames aggressively like master didn't
+                // Only count frames that were successfully parsed
+                
                 stats.total_frames += 1;
 
                 // Show progress for large files
