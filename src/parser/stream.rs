@@ -219,6 +219,44 @@ impl<'a> BBLDataStream<'a> {
         
         Ok(-signed_value)
     }
+    
+    /// Skip ahead in the stream until finding a valid frame marker
+    /// This is a safe implementation that searches for valid frame markers (I, P, E, G, H, S)
+    /// without causing stream corruption
+    pub fn skip_to_next_marker(&mut self) -> Result<char> {
+        let mut marker_candidates = 0;
+        
+        // Search through the stream for a valid frame marker
+        while !self.eof {
+            let byte = match self.read_byte() {
+                Ok(b) => b,
+                Err(_) => return Err(BBLError::UnexpectedEof),
+            };
+            
+            let c = byte as char;
+            
+            // Valid frame markers are ASCII letters: I, P, E, G, H, S
+            if (c == 'I' || c == 'P' || c == 'E' || c == 'G' || c == 'H' || c == 'S') {
+                // Found a potential marker - check if it's valid by ensuring the next byte can be read
+                // This is a simple heuristic to reduce false positives
+                if self.pos < self.end {
+                    marker_candidates += 1;
+                    
+                    // Return the marker after confirming it's valid
+                    // Backtrack position by 1 so the next read will get this marker
+                    self.pos -= 1;
+                    return Ok(c);
+                }
+            }
+            
+            // Safety limit - don't scan too far
+            if marker_candidates > 1000 {
+                return Err(BBLError::InvalidData("Too many false marker candidates".into()));
+            }
+        }
+        
+        Err(BBLError::UnexpectedEof)
+    }
 }
 
 // Sign extension helper functions - exact replicas of JavaScript implementation

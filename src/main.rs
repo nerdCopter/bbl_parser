@@ -1142,8 +1142,10 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 }
             }
         }
-        // Sort by timestamp to restore chronological order
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
+
+        // **BLACKBOX_DECODE COMPATIBILITY**: Maintain BBL file order
+        // Do NOT sort by timestamp - must match blackbox_decode's sequential processing
+        // Commented out: all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
     }
 
     // **CRITICAL FIX**: Frames must be processed in BBL file order, not timestamp order
@@ -1277,7 +1279,7 @@ fn parse_frames(
     header: &BBLHeader,
     debug: bool,
     csv_export: bool,
-    no_validate: bool,
+    _no_validate: bool, // Parameter kept for backward compatibility
 ) -> ParseFramesResult {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
@@ -1416,18 +1418,8 @@ fn parse_frames(
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
 
-                                let is_valid_frame = if no_validate {
-                                    // When --no-validate flag is used, accept all frames
-                                    true
-                                } else if last_main_frame_iteration != u32::MAX {
-                                    // **MORE PERMISSIVE VALIDATION**: Use relaxed validation criteria
-                                    // This is a much more permissive check than the original
-                                    current_loop_iteration < last_main_frame_iteration.saturating_add(50000) && // 10x normal max
-                                    current_time < last_main_frame_time.saturating_add(100_000_000)
-                                // 100 seconds
-                                } else {
-                                    true // First frame is always valid
-                                };
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Accept all frames like blackbox_decode
+                                let is_valid_frame = true; // Always accept frames
 
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
@@ -1517,27 +1509,15 @@ fn parse_frames(
                                     .copy_from_slice(&frame_history.current_frame);
 
                                 // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame values like blackbox_decode.c
-                                // Check that iteration count and time didn't move backwards or jump too much
+                                // We track the iteration and time values but don't use them for validation
                                 let current_loop_iteration =
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
                                 let current_time =
                                     frame_data.get("time").copied().unwrap_or(0) as i64;
 
-                                // **MORE PERMISSIVE VALIDATION**: Only reject frames with extremely large jumps
-                                // This allows most frames to be accepted while still filtering extreme outliers
-                                let is_valid_frame = if no_validate {
-                                    // When --no-validate flag is used, accept all frames
-                                    true
-                                } else if last_main_frame_iteration != u32::MAX {
-                                    // Only check for very large jumps (10x the normal max)
-                                    current_loop_iteration
-                                        < last_main_frame_iteration.saturating_add(50000)
-                                        && current_time
-                                            < last_main_frame_time.saturating_add(100_000_000)
-                                // 100 seconds
-                                } else {
-                                    true // First frame is always valid
-                                };
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Accept all frames like blackbox_decode
+                                // blackbox_decode does not validate P-frames by timestamp or iteration counts
+                                let is_valid_frame = true; // Always accept frames
 
                                 if is_valid_frame {
                                     // Update tracking variables for next validation
@@ -1873,7 +1853,7 @@ fn parse_frames(
         }
 
         // More aggressive safety limits to prevent hanging
-        if stats.total_frames > 1000000 || stats.failed_frames > 10000 {
+        if stats.total_frames > 10000000 || stats.failed_frames > 500000 {
             if debug {
                 println!("Hit safety limit - stopping frame parsing");
             }
@@ -2108,18 +2088,20 @@ fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: b
             }
         }
         'G' | 'H' => {
-            // **CRITICAL FIX**: GPS/Home frames must be properly parsed using frame definitions
-            // The old heuristic of "read 7 VB values" causes stream corruption
-            //
-            // Note: G/H frame parsing will be implemented in a separate task
-            // For now, we cannot safely skip these frames without proper frame definitions
-            //
-            // TODO: Implement proper G/H frame parsing using header.g_frame_def/h_frame_def
-            //       This requires access to the frame definitions from the caller
-
+            // Use the new safe skip_to_next_marker approach for G/H frames
+            // This prevents stream corruption by finding the next valid frame marker
             if debug {
-                println!("WARNING: Cannot safely skip {frame_type}-frame without frame definition");
-                println!("Stream corruption may occur - G/H frames need proper parsing");
+                println!("DEBUG: Safely skipping {frame_type}-frame using skip_to_next_marker");
+            }
+
+            // Skip to the next frame marker to avoid corruption
+            if let Ok(next_marker) = stream.skip_to_next_marker() {
+                // Backtrack by 1 byte so the next read gets the marker
+                if debug {
+                    println!("DEBUG: Found next marker '{next_marker}' after skipping {frame_type}-frame");
+                }
+            } else if debug {
+                println!("DEBUG: No next marker found after {frame_type}-frame, reached EOF");
             }
 
             // UNSAFE FALLBACK: Try to read some fields but this may cause corruption

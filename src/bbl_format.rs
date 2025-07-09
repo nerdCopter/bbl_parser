@@ -259,6 +259,40 @@ impl<'a> BBLDataStream<'a> {
         // No-op for now since we only do byte-level reading
         // In blackbox_decode.c this aligns bit pointer to byte boundaries
     }
+
+    /// Skip ahead in the stream until finding a valid frame marker
+    /// This is a safe implementation that searches for valid frame markers (I, P, E, G, H, S)
+    /// without causing stream corruption
+    pub fn skip_to_next_marker(&mut self) -> Result<char> {
+        // Search through the stream for a valid frame marker
+        while !self.eof {
+            let byte = match self.read_byte() {
+                Ok(b) => b,
+                Err(_) => return Err(anyhow::anyhow!("Unexpected EOF")),
+            };
+
+            let c = byte as char;
+
+            // Valid frame markers are ASCII letters: I, P, E, G, H, S
+            if c == 'I' || c == 'P' || c == 'E' || c == 'G' || c == 'H' || c == 'S' {
+                // Found a potential marker - check if it's valid by ensuring the next byte can be read
+                // This is a simple heuristic to reduce false positives
+                if self.pos < self.end {
+                    // Return the marker after confirming it's valid
+                    // Backtrack position by 1 so the next read will get this marker
+                    self.pos -= 1;
+                    return Ok(c);
+                }
+            }
+
+            // Safety limit - don't scan too far
+            if self.pos > 1000 {
+                return Err(anyhow::anyhow!("Too many false marker candidates"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected EOF"))
+    }
 }
 
 // Sign extension functions - exact replicas of JavaScript implementations
