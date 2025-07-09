@@ -1125,17 +1125,20 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut all_frames = Vec::new();
 
     // **BLACKBOX_DECODE COMPATIBILITY**: Use chronological frames that preserve BBL file order
+    // This exactly matches blackbox_decode's behavior of including I and P frames directly,
+    // while S frames are used to update state that gets merged with I and P frames
     if let Some(ref chronological_frames) = log.chronological_frames {
         // Use frames in original order from the BBL file
         for frame in chronological_frames {
             match frame.frame_type {
-                // Include I and P frames directly for CSV output
+                // Include I and P frames directly for CSV output - these are the only frames
+                // that blackbox_decode explicitly writes to CSV
                 'I' | 'P' => all_frames.push((frame.timestamp_us, frame.frame_type, frame)),
                 
-                // Include S frames to use their data in CSV output
+                // Include S frames to later merge their data into I/P frames
                 'S' => all_frames.push((frame.timestamp_us, frame.frame_type, frame)),
                 
-                // Skip other frame types (E, G, H)
+                // Skip other frame types (E, G, H) as they don't contribute to CSV output
                 _ => {}
             }
         }
@@ -1189,22 +1192,32 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     for (csv_loop_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
         // Update latest S-frame data if this is an S frame
         if *frame_type == 'S' {
+            // When an S frame is encountered, blackbox_decode stores its data in bufferedSlowFrame
+            // and doesn't write it directly to CSV unless debug mode is enabled
             for (key, value) in &frame.data {
                 latest_s_frame_data.insert(key.clone(), *value);
             }
             
-            // Skip writing S frames directly to CSV
-            // This matches master's behavior
+            // Skip writing S frames directly to CSV - this matches blackbox_decode exactly
+            // S-frame data is only merged into subsequent I and P frames
             continue;
         }
 
-        // Calculate energyCumulative for this frame
+        // Calculate energyCumulative for this frame - exactly matching blackbox_decode's algorithm
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
+            // Only calculate energy when we have valid timestamps to work with
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
+                // Convert time delta to hours (same as blackbox_decode)
                 let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
+                
+                // Convert raw amperage to actual amps
                 let current_amps = convert_amperage_to_amps(current_raw);
+                
+                // Accumulate mAh (milliamp-hours)
                 cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
             }
+            
+            // Update timestamp for next calculation
             last_timestamp_us = *timestamp;
         }
 
@@ -1216,26 +1229,23 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
 
             // Fast path for special fields using pre-computed indices
             if csv_name == "time (us)" {
-                // **BLACKBOX_DECODE COMPATIBILITY**: Use frame's actual timestamp if available
-                // Use original timestamp from the frame when available (master behavior)
-                let timestamp = if *frame_type == 'I' || *frame_type == 'P' {
-                    // For I and P frames, use the actual frame timestamp if available
-                    frame.data.get("time").copied().unwrap_or_else(|| {
-                        // Fall back to calculated timestamp only if not available
-                        let base_timestamp = if let Some((ts, _, _)) = all_frames.first() {
-                            *ts
-                        } else {
-                            0
-                        };
-                        let looptime_us = log.header.looptime as u64;
-                        (base_timestamp + (csv_loop_iteration as u64 * looptime_us)) as i32
-                    })
-                } else {
-                    // For S frames or other types, use the timestamp they were recorded at
-                    *timestamp as i32
-                };
+                // **BLACKBOX_DECODE COMPATIBILITY**: Use frame's actual timestamp
+                // Blackbox_decode has a specific approach for timestamp handling:
+                // - For I and P frames, it uses the actual timestamp from the frame
+                // - If not available (rare), it falls back to calculated timestamps
+                let timestamp_value = frame.data.get("time").copied().unwrap_or_else(|| {
+                    // If time field isn't available, calculate based on loop iteration and looptime
+                    let base_timestamp = if let Some((ts, _, _)) = all_frames.first() {
+                        *ts as i32
+                    } else {
+                        0
+                    };
+                    let looptime_us = log.header.looptime as i32;
+                    base_timestamp + (csv_loop_iteration as i32 * looptime_us)
+                });
                 
-                write!(writer, "{}", timestamp)?;
+                // Write timestamp without any specific formatting - just raw number
+                write!(writer, "{}", timestamp_value)?;
             } else if csv_name == "loopIteration" {
                 // **CRITICAL FIX**: Use our own sequential counter instead of the original loopIteration
                 // This ensures that every frame has a unique, sequential loop iteration
@@ -1247,7 +1257,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
             } else if csv_name == "energyCumulative (mAh)" {
-                write!(writer, "{:5}", cumulative_energy_mah as i32)?;
+                // Match blackbox_decode's format which doesn't use decimal places for mAh
+                write!(writer, "{:5}", cumulative_energy_mah.round() as i32)?;
             } else if csv_name.ends_with(" (flags)") {
                 // Handle flag fields - output text values like blackbox_decode.c
                 let raw_value = frame
@@ -1261,18 +1272,21 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 let formatted = raw_value.to_string();
                 write!(writer, "{formatted}")?;
             } else {
-                // Regular field lookup with S-frame fallback - exactly like blackbox_decode.c
-                // Regular field lookup with S-frame fallback (master behavior)
+                // Regular field lookup with S-frame fallback (exact blackbox_decode logic)
                 let value = if let Some(v) = frame.data.get(lookup_name) {
+                    // If the field exists in the current frame, use that value directly
                     *v
                 } else if (*frame_type == 'I' || *frame_type == 'P') && latest_s_frame_data.contains_key(lookup_name) {
-                    // Only merge S-frame data into I and P frames, not into other frame types
+                    // For I and P frames, if the field isn't in the frame but exists in the latest S frame,
+                    // use the S frame data as a fallback - this exactly matches blackbox_decode's merge logic
                     latest_s_frame_data[lookup_name]
                 } else {
+                    // Default to 0 if the field isn't available anywhere
                     0
                 };
                 
-                write!(writer, "{value:4}")?;
+                // Write the value with consistent spacing (matches blackbox_decode formatting)
+                write!(writer, "{:4}", value)?;
             }
         }
         writeln!(writer)?;
@@ -1520,9 +1534,12 @@ fn parse_frames(
                                     }
                                 }
 
-                                // Merge lastSlow data into P-frame - matches blackbox_decode.c exactly
+                                // Merge lastSlow data into P-frame - exact blackbox_decode logic
+                                // In blackbox_decode.c, the S-frame data is merged with P-frames during CSV output
+                                // Only fields not already present in the P-frame are pulled from the S-frame
                                 for (key, value) in &last_slow_data {
-                                    // Only insert S-frame data if not already present in P-frame
+                                    // Only add data from S frames if that field doesn't already exist in the P-frame
+                                    // This exactly matches blackbox_decode.c's logic for merging slow frames
                                     if !frame_data.contains_key(key) {
                                         frame_data.insert(key.clone(), *value);
                                     }
