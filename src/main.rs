@@ -1396,11 +1396,15 @@ fn parse_frames(
 
                 match frame_type {
                     'I' => {
+                        if debug {
+                            println!("DEBUG: Processing I-frame at offset {}, i_frame_def.count={}", frame_start_pos, header.i_frame_def.count);
+                        }
+                        
                         if header.i_frame_def.count > 0 {
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
 
-                            if bbl_format::parse_frame_data(
+                            let parse_result = bbl_format::parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
@@ -1410,9 +1414,13 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
-                            )
-                            .is_ok()
-                            {
+                            );
+                            
+                            if debug {
+                                println!("DEBUG: I-frame parse result: {:?}", parse_result.is_ok());
+                            }
+
+                            if parse_result.is_ok() {
                                 // Update time and loop iteration from parsed frame
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
@@ -1464,13 +1472,21 @@ fn parse_frames(
 
                                     parsing_success = true;
                                     stats.i_frames += 1;
+                                    
+                                    if debug {
+                                        println!("DEBUG: I-frame counter incremented to {} at position {}", stats.i_frames, frame_start_pos);
+                                    }
                                 }
                                 // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
                                 // I-frame parse failure - don't count as failed, just skip
                                 if debug {
-                                    println!("DEBUG: Skipping I-frame parse failure at position {}", stream.pos);
+                                    println!("DEBUG: I-frame parse FAILED at position {}, error: {:?}", stream.pos, parse_result.err());
                                 }
+                            }
+                        } else {
+                            if debug {
+                                println!("DEBUG: Skipping I-frame - header.i_frame_def.count is 0");
                             }
                         }
                     }
