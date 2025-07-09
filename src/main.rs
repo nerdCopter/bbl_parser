@@ -1491,7 +1491,20 @@ fn parse_frames(
                         }
                     }
                     'P' => {
-                        if header.p_frame_def.count > 0 && frame_history.valid {
+                        if header.p_frame_def.count > 0 {
+                            // **BLACKBOX_DECODE COMPATIBILITY**: Try to parse P-frames even without valid I-frame history
+                            // This matches blackbox_decode's more lenient approach
+                            
+                            // Initialize frame history if not valid yet
+                            if !frame_history.valid {
+                                frame_history.current_frame.fill(0);
+                                frame_history.previous_frame.fill(0);
+                                frame_history.previous2_frame.fill(0);
+                                frame_history.valid = true;
+                                if debug {
+                                    println!("DEBUG: Initializing frame history for P-frame parsing");
+                                }
+                            }
                             // **BLACKBOX_DECODE EXACT REPLICATION**: P-frames update current frame directly
                             // Copy previous frame state first (like blackbox_decode mainHistory approach)
                             frame_history
@@ -1594,14 +1607,15 @@ fn parse_frames(
                                 // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
                                 // P-frame parse failure - don't count as failed, just skip
-                                if debug {
-                                    println!("DEBUG: Skipping P-frame parse failure at position {}", stream.pos);
+                                if debug && stats.p_frames < 50 {
+                                    println!("DEBUG: P-frame parse FAILED at position {}, error: {:?}", stream.pos, parse_result.err());
                                 }
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history - don't count as failed
                             if debug {
-                                println!("DEBUG: Skipping P-frame - no valid I-frame history available");
+                                println!("DEBUG: Skipping P-frame - header.p_frame_def.count={}, frame_history.valid={}", 
+                                         header.p_frame_def.count, frame_history.valid);
                             }
                         }
                     }
@@ -1715,15 +1729,18 @@ fn parse_frames(
                                     }
                                 }
                                 stats.e_frames += 1;
-                                // **BREAK OUT OF PARSING LOOP** - no more valid frames after LOG_END
-                                // Commenting this out to match master's behavior
-                                // break;
+                                parsing_success = true; // LOG_END is a valid frame
                             } else {
-                                // Not LOG_END - reset stream position, don't count as failed
-                                stream.pos = event_start_pos;
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Handle other event types properly
                                 if debug {
-                                    println!("DEBUG: Non LOG_END E-frame, continuing");
+                                    println!("DEBUG: Non LOG_END E-frame event type {} at offset {}", event_type, event_start_pos);
                                 }
+                                // Count all E-frames like blackbox_decode does
+                                stats.e_frames += 1;
+                                parsing_success = true;
+                                
+                                // Add minimal event data to frame_data
+                                frame_data.insert("eventType".to_string(), event_type as i32);
                             }
                         } else {
                             // Cannot read event type - don't count as failed
@@ -1833,7 +1850,8 @@ fn parse_frames(
                     debug_frame_list.push(decoded_frame.clone());
 
                     // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
-                    if store_all_frames {
+                    // **CRITICAL FIX**: Always include I, P, S frames in CSV, exclude G, H, E frames
+                    if store_all_frames && (frame_type == 'I' || frame_type == 'P' || frame_type == 'S') {
                         chronological_frames.push(decoded_frame);
                     }
                 } else if parsing_success && store_all_frames {
@@ -1888,7 +1906,10 @@ fn parse_frames(
                     debug_frame_list.push(decoded_frame.clone());
 
                     // **BLACKBOX_DECODE COMPATIBILITY**: Store in chronological order for CSV export
-                    chronological_frames.push(decoded_frame);
+                    // **CRITICAL FIX**: Always include I, P, S frames in CSV, exclude G, H, E frames
+                    if frame_type == 'I' || frame_type == 'P' || frame_type == 'S' {
+                        chronological_frames.push(decoded_frame);
+                    }
                 }
 
                 // Update timing from first and last valid frames with time data
