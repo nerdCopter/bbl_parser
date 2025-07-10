@@ -1362,8 +1362,20 @@ fn parse_frames(
     let mut stream = bbl_format::BBLDataStream::new(binary_data);
 
     // Main frame parsing loop - process frames as a stream, don't store all
+    let mut frames_parsed = 0;
+    let total_binary_size = binary_data.len();
+    let mut consecutive_failed_frames = 0; // Track consecutive failures for resync
+    
     while !stream.eof {
         let frame_start_pos = stream.pos;
+        
+        // Debug every 100 frames to track progress
+        if frames_parsed % 100 == 0 && debug {
+            println!("DEBUG: Parsing frame {} at position {}/{}", frames_parsed, frame_start_pos, total_binary_size);
+        }
+
+        // **BLACKBOX_DECODE COMPATIBILITY**: Save stream position for potential rollback
+        let checkpoint_pos = stream.pos;
 
         match stream.read_byte() {
             Ok(frame_type_byte) => {
@@ -1375,13 +1387,63 @@ fn parse_frames(
                     'E' => 'E',
                     'S' => 'S',
                     _ => {
-                        if debug && stats.failed_frames < 3 {
+                        if debug && consecutive_failed_frames < 3 {
                             println!(
                                 "Unknown frame type byte 0x{:02X} ('{:?}') at offset {}",
                                 frame_type_byte, frame_type_byte as char, frame_start_pos
                             );
                         }
-                        // Don't count unknown frame types as failures, just skip them
+                        
+                        // **BLACKBOX_DECODE COMPATIBILITY**: Don't count unknown bytes as frame failures at all
+                        // blackbox_decode.c reports "0 frames failed to decode" - it only counts actual frame parsing failures
+                        // stats.failed_frames += 0; // Don't increment for unknown bytes
+                        consecutive_failed_frames += 1;
+                        
+                        // **BLACKBOX_DECODE COMPATIBILITY**: Implement resynchronization logic  
+                        if consecutive_failed_frames > 100 { // More tolerance to find valid frames
+                            if debug {
+                                println!("DEBUG: {} consecutive failed frames, attempting resynchronization", consecutive_failed_frames);
+                            }
+                            
+                            // Try to find next valid frame marker - reasonable search like blackbox_decode.c
+                            let mut found_sync = false;
+                            let search_limit = (stream.pos + 5000).min(total_binary_size); // Moderate search window
+                            let original_pos = stream.pos;
+                            
+                            while stream.pos < search_limit && !stream.eof {
+                                if let Ok(test_byte) = stream.read_byte() {
+                                    if matches!(test_byte as char, 'I' | 'P' | 'S' | 'G' | 'H' | 'E') {
+                                        // Found potential frame marker - simple validation
+                                        stream.pos = stream.pos.saturating_sub(1);
+                                        found_sync = true;
+                                        consecutive_failed_frames = 0;
+                                        if debug {
+                                            println!("DEBUG: Resynchronized at position {} (skipped {} bytes), found frame type '{}'", 
+                                                     stream.pos, stream.pos - original_pos, test_byte as char);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if !found_sync {
+                                if debug {
+                                    println!("DEBUG: Could not resynchronize after searching {} bytes, ending parsing like blackbox_decode.c", 
+                                             search_limit - original_pos);
+                                }
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Give up like blackbox_decode.c does
+                                break;
+                            }
+                        }
+                        
+                        // **BLACKBOX_DECODE COMPATIBILITY**: Use strict limits like blackbox_decode.c
+                        if stats.failed_frames > 1000 { // Much stricter limit to match blackbox_decode.c behavior
+                            if debug {
+                                println!("DEBUG: Too many total failed frames ({}), stopping parsing like blackbox_decode.c", stats.failed_frames);
+                            }
+                            break;
+                        }
+                        
                         continue;
                     }
                 };
@@ -1393,6 +1455,10 @@ fn parse_frames(
                 // Parse frame using proper streaming logic
                 let mut frame_data = HashMap::new();
                 let mut parsing_success = false;
+                
+                // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame size limits
+                let _frame_size_before = stream.pos - checkpoint_pos; // For future validation
+                const MAX_FRAME_SIZE: usize = 512; // Increased limit to match blackbox_decode.c
 
                 match frame_type {
                     'I' => {
@@ -1479,10 +1545,14 @@ fn parse_frames(
                                 }
                                 // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
-                                // I-frame parse failure - don't count as failed, just skip
+                                // **CRITICAL FIX**: I-frame parse failure - reset stream position properly
                                 if debug {
                                     println!("DEBUG: I-frame parse FAILED at position {}, error: {:?}", stream.pos, parse_result.err());
                                 }
+                                
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Reset to safe position after failed I-frame
+                                stream.pos = checkpoint_pos + 1; // Move past the frame type byte
+                                parsing_success = false;
                             }
                         } else {
                             if debug {
@@ -1606,10 +1676,15 @@ fn parse_frames(
                                 }
                                 // Note: frame validation is disabled (is_valid_frame = true), so else branch never executes
                             } else {
-                                // P-frame parse failure - don't count as failed, just skip
+                                // **CRITICAL FIX**: P-frame parse failure - reset stream position properly
                                 if debug && stats.p_frames < 50 {
                                     println!("DEBUG: P-frame parse FAILED at position {}, error: {:?}", stream.pos, parse_result.err());
                                 }
+                                
+                                // **BLACKBOX_DECODE COMPATIBILITY**: Reset to safe position after failed P-frame
+                                // Don't let failed P-frame parsing corrupt the stream position
+                                stream.pos = checkpoint_pos + 1; // Move past the frame type byte
+                                parsing_success = false;
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history - don't count as failed
@@ -1752,10 +1827,41 @@ fn parse_frames(
                     _ => {}
                 };
 
+                // **BLACKBOX_DECODE COMPATIBILITY**: Validate frame size after parsing
+                let frame_consumed_bytes = stream.pos - checkpoint_pos;
+                
+                // **BLACKBOX_DECODE COMPATIBILITY**: Conservative frame size validation like blackbox_decode.c
+                if frame_consumed_bytes > MAX_FRAME_SIZE {
+                    if debug {
+                        println!("DEBUG: Frame type '{}' consumed {} bytes (exceeds limit {}), marking as failed", 
+                                frame_type, frame_consumed_bytes, MAX_FRAME_SIZE);
+                    }
+                    parsing_success = false;
+                    // Reset stream position to after frame type byte for next attempt
+                    stream.pos = checkpoint_pos + 1;
+                }
+
+                // Track parsing success/failure for resynchronization
+                if parsing_success {
+                    consecutive_failed_frames = 0; // Reset consecutive failure counter
+                } else {
+                    consecutive_failed_frames += 1;
+                    // **BLACKBOX_DECODE COMPATIBILITY**: Only count actual frame parsing failures
+                    // blackbox_decode.c reports "0 frames failed to decode" - very conservative
+                    if frame_type != '?' { // Only count real frame types that failed to parse
+                        stats.failed_frames += 1;
+                    }
+                    if debug && consecutive_failed_frames <= 3 {
+                        println!("DEBUG: Frame type '{}' parsing failed (consecutive failures: {})", 
+                                frame_type, consecutive_failed_frames);
+                    }
+                }
+
                 // Don't track failed frames aggressively like master didn't
                 // Only count frames that were successfully parsed
                 
                 stats.total_frames += 1;
+        frames_parsed += 1;
 
                 // Show progress for large files
                 if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
@@ -1923,7 +2029,13 @@ fn parse_frames(
                     }
                 }
             }
-            Err(_) => break,
+            Err(_) => {
+                // **BLACKBOX_DECODE COMPATIBILITY**: Hit actual EOF, not just corrupted data
+                if debug {
+                    println!("DEBUG: Reached actual EOF at position {}/{}", stream.pos, total_binary_size);
+                }
+                break;
+            }
         }
 
         // Safety limit to prevent hanging on very large files
@@ -1949,6 +2061,14 @@ fn parse_frames(
             stats.s_frames
         );
         println!("Failed to parse: {} frames", stats.failed_frames);
+    }
+
+    // **CRITICAL DEBUG**: Show where parsing stopped
+    if debug {
+        println!("DEBUG: Parsing stopped at position {}/{} after {} frames", 
+                 stream.pos, total_binary_size, frames_parsed);
+        println!("DEBUG: Stream EOF: {}, remaining bytes: {}", 
+                 stream.eof, total_binary_size - stream.pos);
     }
 
     Ok((
