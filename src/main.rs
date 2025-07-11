@@ -874,9 +874,8 @@ fn display_log_info(log: &BBLLog) {
     if stats.e_frames > 0 {
         println!("E frames   {:6}", stats.e_frames);
     }
-    if stats.s_frames > 0 {
-        println!("S frames   {:6}", stats.s_frames);
-    }
+    // Always show S frames for blackbox_decode.c compatibility
+    println!("S frames   {:6}", stats.s_frames);
     println!("Frames     {:6}", stats.total_frames);
 
     // Display timing if available
