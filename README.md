@@ -14,7 +14,7 @@ A high-performance Rust implementation of BBL (Blackbox Log) parser for flight c
 - **Advanced Frame Prediction**: Full predictor implementation for accurate P-frame decoding
 - **Comprehensive CSV Export**: Flight data and header export with blackbox_decode.c compatibility
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
-- **Production-Ready Reliability**: 99%+ frame accuracy with robust error handling
+- **Development-Ready Reliability**: 99%+ frame accuracy with robust error handling
 - **High File Compatibility**: Processes files that cause external tools to fail
 
 ## CSV Export Format
@@ -186,4 +186,4 @@ This project is provided as-is for educational and practical use with flight con
 
 ## Acknowledgments
 
-Based on [Betaflight Blackbox Log Viewer](https://github.com/betaflight/blackbox-log-viewer)
+Based on [Betaflight Blackbox Log Viewer](https://github.com/betaflight/blackbox-log-viewer) and [blackbox-tools](https://github.com/betaflight/blackbox-tools)
