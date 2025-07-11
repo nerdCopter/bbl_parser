@@ -1659,38 +1659,6 @@ fn parse_frames(
             "DEBUG: Final frame counts before comparison - I:{}, P:{}, E:{}, S:{}, Total:{}",
             stats.i_frames, stats.p_frames, stats.e_frames, stats.s_frames, stats.total_frames
         );
-
-        // **BLACKBOX_DECODE COMPATIBILITY**: Compare with target values
-        println!("COMPARISON vs blackbox_decode.c:");
-        println!(
-            "  I-frames: {} vs 24 ({})",
-            stats.i_frames,
-            if stats.i_frames == 24 { "✓" } else { "✗" }
-        );
-        println!(
-            "  P-frames: {} vs 1452 ({})",
-            stats.p_frames,
-            if stats.p_frames == 1452 { "✓" } else { "✗" }
-        );
-        println!(
-            "  E-frames: {} vs 2 ({})",
-            stats.e_frames,
-            if stats.e_frames == 2 { "✓" } else { "✗" }
-        );
-        println!(
-            "  S-frames: {} vs 2 ({})",
-            stats.s_frames,
-            if stats.s_frames == 2 { "✓" } else { "✗" }
-        );
-        println!(
-            "  Total: {} vs 1476 ({})",
-            stats.total_frames,
-            if stats.total_frames == 1476 {
-                "✓"
-            } else {
-                "✗"
-            }
-        );
     }
 
     Ok((stats, sample_frames, Some(debug_frames)))
