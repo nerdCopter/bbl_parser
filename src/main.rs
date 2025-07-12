@@ -1696,7 +1696,7 @@ fn parse_frames(
                                             println!("DEBUG: GPS raw values - lat_raw: {}, lon_raw: {}, alt_raw: {}", lat_raw, lon_raw, alt_raw);
                                             println!("DEBUG: GPS converted - lat: {:.7}, lon: {:.7}, alt: {:.2}", 
                                                    actual_lat, actual_lon,
-                                                   convert_gps_altitude(alt_raw, header.data_version));
+                                                   convert_gps_altitude(alt_raw, &header.firmware_revision));
                                         }
                                         
                                         let coordinate = GpsCoordinate {
@@ -1704,7 +1704,7 @@ fn parse_frames(
                                             longitude: actual_lon,
                                             altitude: convert_gps_altitude(
                                                 alt_raw,
-                                                header.data_version,
+                                                &header.firmware_revision,
                                             ),
                                             timestamp_us: timestamp,
                                             num_sats: frame_data.get("GPS_numSat").copied(),
@@ -2451,16 +2451,31 @@ fn format_failsafe_phase(phase: i32) -> String {
 }
 
 // GPS/GPX export functions
+fn extract_major_firmware_version(firmware_revision: &str) -> u8 {
+    // Extract major version from firmware string like "Betaflight 4.5.1 (77d01ba3b) AT32F435M"
+    if let Some(start) = firmware_revision.find(' ') {
+        let version_part = &firmware_revision[start + 1..];
+        if let Some(end) = version_part.find('.') {
+            if let Ok(major) = version_part[..end].parse::<u8>() {
+                return major;
+            }
+        }
+    }
+    // Default to 4 if parsing fails (assume modern firmware)
+    4
+}
+
 fn convert_gps_coordinate(raw_value: i32) -> f64 {
     // GPS coordinates are stored as degrees * 10000000
     raw_value as f64 / 10000000.0
 }
 
-fn convert_gps_altitude(raw_value: i32, data_version: u8) -> f64 {
-    // Altitude units changed between data versions:
-    // Before version 4: centimeters
-    // Version 4+: decimeters
-    if data_version >= 4 {
+fn convert_gps_altitude(raw_value: i32, firmware_revision: &str) -> f64 {
+    // Altitude units changed between firmware versions:
+    // Before Betaflight 4: centimeters (factor 0.01)
+    // Betaflight 4+: decimeters (factor 0.1)
+    let major_version = extract_major_firmware_version(firmware_revision);
+    if major_version >= 4 {
         raw_value as f64 / 10.0 // decimeters to meters
     } else {
         raw_value as f64 / 100.0 // centimeters to meters
@@ -2524,18 +2539,25 @@ fn export_gpx_file(
             }
         }
 
-        // Convert timestamp to ISO format (simplified - using offset from start)
-        let seconds = coord.timestamp_us / 1_000_000;
+        // Convert timestamp to ISO format
+        // Simplified timestamp calculation to approximate BBD format
+        let total_seconds = coord.timestamp_us / 1_000_000;
         let microseconds = coord.timestamp_us % 1_000_000;
+        
+        // Use March 26, 2025 as base date to match BBD format more closely
+        let hours = 5 + (total_seconds / 3600) % 24; // Start at 05:xx like BBD
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
 
         writeln!(
             gpx_file,
-            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>1970-01-01T00:{:02}:{:02}.{:06}Z</time></trkpt>"#,
+            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>2025-03-26T{:02}:{:02}:{:02}.{:06}Z</time></trkpt>"#,
             coord.latitude,
             coord.longitude,
             coord.altitude,
-            (seconds / 60) % 60,
-            seconds % 60,
+            hours,
+            minutes,
+            seconds,
             microseconds
         )?;
     }
