@@ -1,43 +1,47 @@
-# BBL Parser - Project Overview
+# BBL Parser v0.9.0 - Project Overview
 
 **Project Status:** 🚧 **WORK IN PROGRESS**  
 **Version:** 0.9.0  
-**Focus:** High-Performance BBL Processing
+**Focus:** High-Performance BBL Processing  
+**⚠️ Not Production Ready**
 
 ---
 
 ## 🎯 **Project Summary**
 
-A comprehensive Rust implementation of BBL (Blackbox Log) parser that delivers reference-equivalent accuracy with broad file compatibility. Zero external dependencies, pure Rust implementation.
+A comprehensive Rust implementation of BBL (Blackbox Log) parser designed for flight controller blackbox data analysis. This is development software focused on creating a pure Rust implementation without external dependencies.
 
-**Core Strength:** Processes files that cause external decoders to fail while maintaining 99%+ frame accuracy.
+**Core Goal:** Create a reliable BBL parser that can handle various file formats and firmware types while maintaining memory efficiency.
 
-### **Key Capabilities**
-- **Data Accuracy:** Reference-equivalent parsing with 99%+ frame accuracy
-- **File Compatibility:** Processes problematic files that crash external tools
-- **Reliability:** Streaming architecture handles any file size efficiently  
-- **Integration:** Zero external dependencies, pure Rust implementation
+### **Current Capabilities**
+- **BBL Format Support:** Parses .BBL, .BFL, .TXT files from multiple firmware sources
+- **Frame Processing:** Supports I, P, S, H, G, E frames with proper encoding handling
+- **Export Functions:** CSV, GPX, and event data export capabilities
+- **Memory Efficiency:** Streaming architecture for large file processing
+- **Zero Dependencies:** Pure Rust implementation without external blackbox_decode tools
 
 ---
 
-## 📊 **Performance Characteristics**
+## 📊 **Current Implementation Status**
 
 ### **File Processing Capabilities**
 - **Formats:** .BBL, .BFL, .TXT (case-insensitive)
 - **Firmware:** Betaflight, EmuFlight, INAV
-- **Architecture:** STM32F4/F7/H7, AT32F435M
-- **File Sizes:** Handles any size efficiently via streaming architecture
+- **File Sizes:** Handles large files via streaming architecture
 - **Multi-Log Support:** Automatic detection and processing of multiple flights
 
-### **Technical Performance**
+### **Development Status**
 
-| Capability | Performance | Advantage |
-|------------|-------------|-----------|
-| **Frame Accuracy** | 99%+ parsing | Reference-equivalent |
-| **File Compatibility** | Processes problem files | Enhanced reliability |
-| **Memory Usage** | Streaming (constant) | Efficient for large files |
-| **Dependencies** | Zero external | Better integration |
-| **Error Handling** | Graceful failure | Robust processing |
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| **Basic Parsing** | ✅ Functional | Core frame parsing implemented |
+| **CSV Export** | ✅ Functional | blackbox_decode compatible format |
+| **GPS Export** | ✅ Functional | GPX format generation |
+| **Event Export** | ✅ Functional | JSONL format with Betaflight event types |
+| **Multi-log Processing** | ✅ Functional | Automatic detection |
+| **Error Handling** | 🚧 Basic | Needs comprehensive testing |
+| **Performance** | 🚧 Basic | Optimization in progress |
+| **Testing** | ⚠️ Limited | Needs extensive validation |
 
 ---
 
@@ -45,25 +49,37 @@ A comprehensive Rust implementation of BBL (Blackbox Log) parser that delivers r
 
 ### **Core Processing Engine**
 
-The BBL parser implements a streaming architecture optimized for memory efficiency and reliability:
+The BBL parser implements a streaming architecture designed for memory efficiency:
 
 #### **Data Structures**
 1. **`BBLHeader`** - Complete header information with frame definitions and firmware metadata
 2. **`DecodedFrame`** - Individual frame data with timestamp and field mappings
 3. **`BBLLog`** - Main container with statistics and sample frames
 4. **`FrameHistory`** - Prediction state management for P-frame decoding
+5. **`GpsCoordinate`** - GPS position data with coordinate conversion
+6. **`EventFrame`** - Flight event data with Betaflight event type mapping
 
 #### **Processing Strategy**
 - **Headers:** Fully parsed and structured for analysis tools
 - **Frames:** Streaming processing with selective storage for memory efficiency
-- **Large Files:** Handles any size via constant memory usage
-- **Error Handling:** Graceful recovery from data corruption or format issues
+- **Large Files:** Handles large files via streaming with controlled memory usage
+- **Error Handling:** Basic error recovery with diagnostic output
 
-### **Reference Implementation Compliance**
-- **Predictor algorithms** from Betaflight blackbox-log-viewer
-- **Encoding support** for all BBL binary formats  
-- **Frame processing** with identical behavior to reference tools
-- **Multi-log detection** with equivalent accuracy
+### **Frame Support Implementation**
+- **I-frames:** Complete intra-frame decoding with predictor initialization
+- **P-frames:** Predicted frames with historical state management
+- **S-frames:** Slow sensor data with merging logic for status information
+- **H-frames:** GPS home coordinates and reference points
+- **G-frames:** GPS position and navigation data with differential encoding
+- **E-frames:** Flight events with official Betaflight FlightLogEvent enum mapping
+
+### **Export Functionality**
+- **CSV Export:** blackbox_decode compatible format with proper field ordering
+- **GPX Export:** Standard GPS exchange format for mapping applications  
+- **Event Export:** JSONL format with Betaflight event type descriptions
+
+### **Encoding Support**
+BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`, `TAG2_3S32`, `TAG8_4S16`
 
 ### **Project Structure**
 ```
@@ -84,58 +100,55 @@ src/
     └── stream.rs       #   Binary stream handling
 ```
 
-### **Frame Support**
-- **I-frames:** Complete intra-frame decoding with predictor initialization
-- **P-frames:** Predicted frames with proper historical state management
-- **S-frames:** Slow sensor data with merging logic for status information
-- **H-frames:** GPS home coordinates and reference points
-- **G-frames:** GPS position and navigation data
-- **E-frames:** Flight events and system notifications
-
-### **Encoding Support**
-Complete BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`, `TAG2_3S32`, `TAG8_4S16`
-
 ---
 
-## 🚀 **Core Features**
+## 🚀 **Current Features**
 
-### **Universal File Support**
-- **Formats:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
-- **Firmware:** Betaflight, EmuFlight, INAV compatibility
-- **Hardware:** STM32F4/F7/H7, AT32F435M architecture support
+### **File Processing**
+- **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
+- **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
+- **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
 
-### **Performance & Reliability**
-- **Streaming Architecture:** Memory-efficient processing for unlimited file sizes
-- **Large File Processing:** Successfully handles files with 300K+ frames
-- **Robust Error Handling:** Graceful failure with detailed diagnostics
-- **Zero Dependencies:** No external blackbox_decode tools required
-
-### **CSV Export Capabilities**
-- **blackbox_decode.c compatible field ordering and formatting**
-- **Multi-log support:** Individual files for each flight session
-- **Complete metadata:** Headers and configuration in separate files
-- **Chronological ordering:** Proper time-sorted frame sequences
-
----
-
-## 📈 **Competitive Advantages**
-
-### **File Compatibility**
-- **Processes problematic files** that cause external decoders to crash
-- **Consistent performance** across all file sizes and complexity levels
-- **Robust error handling** with graceful recovery
-
-### **Integration Benefits**
-- **Zero external dependencies** - no blackbox_decode binaries required
-- **Native Rust implementation** - embeddable in other applications
-- **Memory safety** with Rust's type system guarantees
-- **Cross-platform compatibility** without external tool requirements
+### **Data Export Capabilities**
+- **CSV Export:** blackbox_decode compatible field ordering and formatting
+- **GPS Export:** GPX format generation for mapping applications
+- **Event Export:** Flight event data in JSONL format with Betaflight event type mapping
+- **Multi-log Support:** Individual files for each flight session
+- **Metadata Export:** Complete header and configuration information
 
 ### **Architecture Benefits**
-- **Maintainable codebase** under direct project control
-- **Extensible architecture** for custom analysis features
-- **Performance optimization** opportunities for specific use cases
-- **API flexibility** for integration with analysis tools
+- **Memory Efficiency:** Streaming architecture for large file processing
+- **Zero External Dependencies:** No blackbox_decode binaries required
+- **Native Rust Implementation:** Embeddable in other applications
+- **Cross-platform Compatibility:** Works without external tool requirements
+
+---
+
+## ⚠️ **Development Limitations**
+
+### **Current Limitations**
+- **Testing Coverage:** Limited testing across all firmware versions and file formats
+- **Performance:** Not fully optimized for all use cases
+- **Error Handling:** Basic error recovery, may not handle all edge cases gracefully
+- **API Stability:** Implementation may change between versions
+- **Documentation:** Limited API documentation for library use
+
+### **Known Issues**
+- **File Compatibility:** May not handle all edge cases that external decoders encounter
+- **Performance:** Not optimized for extremely large files (>1M frames)
+- **Validation:** Limited validation against reference implementations
+- **Error Messages:** May not provide detailed diagnostic information for all failures
+
+---
+
+## 📈 **Development Focus Areas**
+
+### **Current Priorities**
+- **Testing:** Comprehensive validation across firmware versions
+- **Performance:** Optimization for large file processing
+- **Error Handling:** Improved diagnostic and recovery capabilities
+- **Documentation:** Complete API documentation and usage examples
+- **Compatibility:** Enhanced support for edge cases and unusual file formats
 
 ---
 
@@ -143,7 +156,7 @@ Complete BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `T
 
 ### **Basic Processing**
 ```bash
-# Single file
+# Single file analysis
 ./target/release/bbl_parser flight.BBL
 
 # Multiple files with patterns
@@ -152,7 +165,16 @@ Complete BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `T
 # CSV export with custom output directory
 ./target/release/bbl_parser --csv --output-dir ./results logs/*.BBL
 
-# Debug mode for detailed analysis
+# GPS data export to GPX format
+./target/release/bbl_parser --gpx flight_with_gps.BBL
+
+# Event data export
+./target/release/bbl_parser --event logs/*.BBL
+
+# All export formats
+./target/release/bbl_parser --csv --gpx --event logs/*.BBL
+
+# Debug mode for development analysis
 ./target/release/bbl_parser --debug problematic_file.BBL
 ```
 
@@ -169,40 +191,48 @@ Statistics
 Looptime         125 avg
 I frames     1316
 P frames    82845
-G frames        1
+H frames        1
+G frames      833
 E frames        4
 S frames        6
 Frames      84235
 Data ver        2
+
+Exported GPS data to: BTFL_BLACKBOX_LOG_20250601_121852.gps.gpx
+Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 ```
 
 ---
 
-## 🔍 **Data Quality**
+## 🔍 **Current Data Processing**
 
-### **Frame Accuracy**
-- **Frame-level accuracy** with reference-equivalent parsing
-- **Complete temporal resolution** maintaining flight phase coverage  
-- **Robust validation** preventing data corruption during processing
-- **Comprehensive error detection** with detailed diagnostic information
+### **Frame Processing**
+- **Frame Parsing:** Basic parsing of all major frame types
+- **Temporal Resolution:** Maintains flight sequence timing
+- **Error Detection:** Basic validation with diagnostic output
+- **Memory Management:** Streaming architecture for large files
+
+### **Export Quality**
+- **CSV Compatibility:** Basic blackbox_decode format compatibility
+- **GPS Accuracy:** Coordinate conversion with firmware-specific scaling
+- **Event Mapping:** Official Betaflight FlightLogEvent enum compliance
 
 ---
 
 ## 🎯 **Use Cases & Applications**
 
-### **Applications**
-- **Flight analysis tools** requiring reliable BBL data processing
-- **Research platforms** needing maximum file compatibility
-- **Data pipelines** where external dependencies create problems
-- **Embedded systems** requiring memory-efficient processing
-- **Cross-platform applications** needing consistent parsing behavior
+### **Current Applications**
+- **Flight log analysis** for debugging and performance tuning
+- **Data extraction** from BBL files for further processing
+- **Format conversion** from BBL to CSV/GPX formats
+- **Development and testing** of BBL parsing algorithms
+- **Educational use** for understanding blackbox log structures
 
-### **Integration Scenarios**
+### **Development Integration**
 - **Standalone CLI tool** for batch processing and analysis
-- **Library integration** in Rust applications requiring BBL parsing
-- **Web service backends** processing uploaded flight logs
-- **Desktop applications** with embedded parsing capabilities
-- **Automated analysis systems** requiring reliable data extraction
+- **Rust library integration** (with API stability caveats)
+- **Custom analysis applications** requiring BBL parsing capabilities
+- **Research and development** of flight data analysis techniques
 
 ---
 
@@ -210,26 +240,33 @@ Data ver        2
 
 ### **Available Documentation**
 - **README.md** - User guide, installation, and usage examples
-- **OVERVIEW.md** - Technical architecture and feature overview
+- **OVERVIEW.md** - Technical architecture and feature overview  
 - **FRAMES.md** - Frame format specifications and encoding details
 - **GOALS.md** - Project objectives and design principles
 
-### **API Documentation**
-Comprehensive inline documentation available via `cargo doc` for library integration use cases.
+### **Development Documentation**
+Limited API documentation available via `cargo doc` for development use.
 
 ---
 
-## 🏆 **Current Status**
+## 🏆 **Current Status Summary**
 
-### **Capabilities**
-- **Complete BBL parsing** with reference-equivalent accuracy
-- **Universal firmware support** across Betaflight, EmuFlight, INAV
+### **Functional Capabilities**
+- **Basic BBL parsing** with support for major frame types
+- **Multi-firmware support** across Betaflight, EmuFlight, INAV
 - **Multi-log processing** for complex flight session files
-- **Comprehensive frame support** for all BBL frame types (I, P, S, H, G, E)
-- **Memory-efficient streaming** architecture for any file size
-- **CSV export** with blackbox_decode.c compatibility
+- **Export functionality** for CSV, GPX, and event data formats
+- **Memory-efficient streaming** architecture for large files
+
+### **Development Status**
+- **Core functionality** implemented and functional
+- **Testing coverage** limited and needs expansion
+- **Performance** adequate but not optimized
+- **Error handling** basic with room for improvement
+- **API stability** not guaranteed between versions
 
 ---
 
-**Current Focus:** High-performance BBL processing  
-**Version:** 0.9.0 🚧
+**Current Focus:** Core functionality development and testing  
+**Version:** 0.9.0 🚧 Work-in-Progress  
+**⚠️ Not recommended for production use**
