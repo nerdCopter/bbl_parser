@@ -2115,7 +2115,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
             )
         }
         6 => {
-            // FLIGHT_LOG_EVENT_LOG_END
+            // FLIGHT_LOG_EVENT_LOG_END (old numbering)
             // Read end message bytes
             for _ in 0..4 {
                 if !stream.eof {
@@ -2124,29 +2124,63 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
             }
             "Log end".to_string()
         }
+        10 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START (UNUSED)
+            "Autotune cycle start (unused)".to_string()
+        }
+        11 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT (UNUSED)  
+            "Autotune cycle result (unused)".to_string()
+        }
+        12 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS (UNUSED)
+            "Autotune targets (unused)".to_string()
+        }
+        13 => {
+            // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
+            let adjustment_function = stream.read_byte()?;
+            if adjustment_function > 127 {
+                let new_value = stream.read_unsigned_vb()? as f32;
+                event_data.extend_from_slice(&[adjustment_function]);
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {:.3}",
+                    adjustment_function, new_value
+                )
+            } else {
+                let new_value = stream.read_signed_vb()?;
+                event_data.extend_from_slice(&[adjustment_function]);
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {}",
+                    adjustment_function, new_value
+                )
+            }
+        }
+        14 => {
+            // FLIGHT_LOG_EVENT_LOGGING_RESUME
+            let log_iteration = stream.read_unsigned_vb()?;
+            let current_time = stream.read_unsigned_vb()?;
+            format!(
+                "Logging resume - Iteration: {}, Time: {}",
+                log_iteration, current_time
+            )
+        }
         15 => {
-            // FLIGHT_LOG_EVENT_LOG_END
-            "Log clean end".to_string()
+            // FLIGHT_LOG_EVENT_DISARM
+            "Disarm".to_string()
         }
         30 => {
-            // Event type 30 - from Betaflight FlightLogEvent enum
-            // Need to research exact meaning in current firmware
+            // FLIGHT_LOG_EVENT_FLIGHTMODE - flight mode status event
+            // Read flight mode data
             for _ in 0..4 {
                 if !stream.eof {
                     event_data.push(stream.read_byte()?);
                 }
             }
-            "Betaflight event type 30".to_string()
+            "Flight mode change".to_string()
         }
         255 => {
-            // Event type 255 - likely FLIGHT_LOG_EVENT_END from FlightLogEvent enum
-            // Used as log termination marker
-            for _ in 0..4 {
-                if !stream.eof {
-                    event_data.push(stream.read_byte()?);
-                }
-            }
-            "Log end marker".to_string()
+            // FLIGHT_LOG_EVENT_LOG_END
+            "Log end".to_string()
         }
         _ => {
             // Unknown event type - read a few bytes as data
