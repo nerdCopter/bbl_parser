@@ -1605,11 +1605,13 @@ fn parse_frames(
                                     ) {
                                         if debug && home_coordinates.is_empty() {
                                             println!("DEBUG: HOME raw values - home_lat_raw: {}, home_lon_raw: {}", home_lat_raw, home_lon_raw);
-                                            println!("DEBUG: HOME converted - lat: {:.7}, lon: {:.7}", 
-                                                   convert_gps_coordinate(home_lat_raw), 
-                                                   convert_gps_coordinate(home_lon_raw));
+                                            println!(
+                                                "DEBUG: HOME converted - lat: {:.7}, lon: {:.7}",
+                                                convert_gps_coordinate(home_lat_raw),
+                                                convert_gps_coordinate(home_lon_raw)
+                                            );
                                         }
-                                        
+
                                         let home_coordinate = GpsHomeCoordinate {
                                             home_latitude: convert_gps_coordinate(home_lat_raw),
                                             home_longitude: convert_gps_coordinate(home_lon_raw),
@@ -1639,9 +1641,9 @@ fn parse_frames(
                                 &header.g_frame_def,
                                 &mut g_frame_values,
                                 Some(&gps_frame_history), // Use GPS frame history for differential encoding
-                                None,                      // GPS frames typically don't use previous2
-                                0,                         // TODO: Calculate skipped frames properly
-                                false,                     // Not raw
+                                None,  // GPS frames typically don't use previous2
+                                0,     // TODO: Calculate skipped frames properly
+                                false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
                             )
@@ -1680,25 +1682,29 @@ fn parse_frames(
                                     ) {
                                         // GPS coordinates are deltas from home position
                                         // Need to add home coordinates to get actual GPS position
-                                        let actual_lat = if let Some(home_coord) = home_coordinates.first() {
-                                            home_coord.home_latitude + convert_gps_coordinate(lat_raw)
-                                        } else {
-                                            convert_gps_coordinate(lat_raw)
-                                        };
-                                        
-                                        let actual_lon = if let Some(home_coord) = home_coordinates.first() {
-                                            home_coord.home_longitude + convert_gps_coordinate(lon_raw)
-                                        } else {
-                                            convert_gps_coordinate(lon_raw)
-                                        };
-                                        
+                                        let actual_lat =
+                                            if let Some(home_coord) = home_coordinates.first() {
+                                                home_coord.home_latitude
+                                                    + convert_gps_coordinate(lat_raw)
+                                            } else {
+                                                convert_gps_coordinate(lat_raw)
+                                            };
+
+                                        let actual_lon =
+                                            if let Some(home_coord) = home_coordinates.first() {
+                                                home_coord.home_longitude
+                                                    + convert_gps_coordinate(lon_raw)
+                                            } else {
+                                                convert_gps_coordinate(lon_raw)
+                                            };
+
                                         if debug && gps_coordinates.len() < 3 {
                                             println!("DEBUG: GPS raw values - lat_raw: {}, lon_raw: {}, alt_raw: {}", lat_raw, lon_raw, alt_raw);
                                             println!("DEBUG: GPS converted - lat: {:.7}, lon: {:.7}, alt: {:.2}", 
                                                    actual_lat, actual_lon,
                                                    convert_gps_altitude(alt_raw, &header.firmware_revision));
                                         }
-                                        
+
                                         let coordinate = GpsCoordinate {
                                             latitude: actual_lat,
                                             longitude: actual_lon,
@@ -2129,7 +2135,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
             "Autotune cycle start (unused)".to_string()
         }
         11 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT (UNUSED)  
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT (UNUSED)
             "Autotune cycle result (unused)".to_string()
         }
         12 => {
@@ -2597,7 +2603,7 @@ fn export_gpx_file(
         // Simplified timestamp calculation to approximate BBD format
         let total_seconds = coord.timestamp_us / 1_000_000;
         let microseconds = coord.timestamp_us % 1_000_000;
-        
+
         // Use March 26, 2025 as base date to match BBD format more closely
         let hours = 5 + (total_seconds / 3600) % 24; // Start at 05:xx like BBD
         let minutes = (total_seconds % 3600) / 60;
@@ -2606,13 +2612,7 @@ fn export_gpx_file(
         writeln!(
             gpx_file,
             r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>2025-03-26T{:02}:{:02}:{:02}.{:06}Z</time></trkpt>"#,
-            coord.latitude,
-            coord.longitude,
-            coord.altitude,
-            hours,
-            minutes,
-            seconds,
-            microseconds
+            coord.latitude, coord.longitude, coord.altitude, hours, minutes, seconds, microseconds
         )?;
     }
 
