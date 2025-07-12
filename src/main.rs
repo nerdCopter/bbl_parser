@@ -2129,22 +2129,24 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
             "Log clean end".to_string()
         }
         30 => {
-            // Event type 30 - potentially newer Betaflight event type
+            // Event type 30 - from Betaflight FlightLogEvent enum
+            // Need to research exact meaning in current firmware
             for _ in 0..4 {
                 if !stream.eof {
                     event_data.push(stream.read_byte()?);
                 }
             }
-            "Firmware-specific event (type 30)".to_string()
+            "Betaflight event type 30".to_string()
         }
         255 => {
-            // Event type 255 - typically end marker in binary protocols
+            // Event type 255 - likely FLIGHT_LOG_EVENT_END from FlightLogEvent enum
+            // Used as log termination marker
             for _ in 0..4 {
                 if !stream.eof {
                     event_data.push(stream.read_byte()?);
                 }
             }
-            "Log boundary marker (type 255)".to_string()
+            "Log end marker".to_string()
         }
         _ => {
             // Unknown event type - read a few bytes as data
@@ -2615,20 +2617,15 @@ fn export_event_file(
 
     let mut event_file = std::fs::File::create(&event_filename)?;
 
-    // Export as JSON array
-    writeln!(event_file, "[")?;
-    for (i, event) in events.iter().enumerate() {
-        let comma = if i < events.len() - 1 { "," } else { "" };
+    // Export as JSONL format (individual JSON objects per line) to match blackbox_decode
+    for event in events.iter() {
         writeln!(
             event_file,
-            r#"  {{"timestamp_us": {}, "event_type": {}, "description": "{}"}}{}"#,
-            event.timestamp_us,
-            event.event_type,
+            r#"{{"name":"{}", "time":{}}}"#,
             event.event_description.replace('"', "\\\""),
-            comma
+            event.timestamp_us
         )?;
     }
-    writeln!(event_file, "]")?;
 
     println!("Exported event data to: {}", event_filename);
     Ok(())
