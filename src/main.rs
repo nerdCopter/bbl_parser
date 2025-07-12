@@ -123,14 +123,19 @@ struct GpsCoordinate {
     altitude: f64,
     timestamp_us: u64,
     num_sats: Option<i32>,
+    #[allow(dead_code)]
     speed: Option<f64>,
+    #[allow(dead_code)]
     ground_course: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
 struct GpsHomeCoordinate {
+    #[allow(dead_code)]
     home_latitude: f64,
+    #[allow(dead_code)]
     home_longitude: f64,
+    #[allow(dead_code)]
     timestamp_us: u64,
 }
 
@@ -139,6 +144,7 @@ struct GpsHomeCoordinate {
 struct EventFrame {
     timestamp_us: u64,
     event_type: u8,
+    #[allow(dead_code)]
     event_data: Vec<u8>,
     event_description: String,
 }
@@ -443,7 +449,11 @@ fn main() -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn parse_bbl_file(file_path: &Path, debug: bool, export_options: &ExportOptions) -> Result<Vec<BBLLog>> {
+fn parse_bbl_file(
+    file_path: &Path,
+    debug: bool,
+    export_options: &ExportOptions,
+) -> Result<Vec<BBLLog>> {
     if debug {
         println!("=== PARSING BBL FILE ===");
         let metadata = std::fs::metadata(file_path)?;
@@ -509,13 +519,21 @@ fn parse_bbl_file(file_path: &Path, debug: bool, export_options: &ExportOptions)
     Ok(logs)
 }
 
+// Type alias to reduce complexity
+type ParseSingleLogResult = (
+    BBLLog,
+    Vec<GpsCoordinate>,
+    Vec<GpsHomeCoordinate>,
+    Vec<EventFrame>,
+);
+
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
     total_logs: usize,
     debug: bool,
     export_options: &ExportOptions,
-) -> Result<(BBLLog, Vec<GpsCoordinate>, Vec<GpsHomeCoordinate>, Vec<EventFrame>)> {
+) -> Result<ParseSingleLogResult> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
     for i in 1..log_data.len() {
@@ -535,7 +553,8 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames, debug_frames, gps_coords, home_coords, events) = parse_frames(binary_data, &header, debug, export_options)?;
+    let (mut stats, frames, debug_frames, gps_coords, home_coords, events) =
+        parse_frames(binary_data, &header, debug, export_options)?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {
@@ -1248,7 +1267,7 @@ type ParseFramesResult = Result<(
     Vec<DecodedFrame>,
     Option<HashMap<char, Vec<DecodedFrame>>>,
     Vec<GpsCoordinate>,
-    Vec<GpsHomeCoordinate>, 
+    Vec<GpsHomeCoordinate>,
     Vec<EventFrame>,
 )>;
 
@@ -1280,7 +1299,14 @@ fn parse_frames(
     }
 
     if binary_data.is_empty() {
-        return Ok((stats, sample_frames, Some(debug_frames), Vec::new(), Vec::new(), Vec::new()));
+        return Ok((
+            stats,
+            sample_frames,
+            Some(debug_frames),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ));
     }
 
     // Initialize frame history for proper P-frame parsing
@@ -1569,7 +1595,7 @@ fn parse_frames(
                                 // Extract GPS home coordinates for GPX export if enabled
                                 if export_options.gpx {
                                     let timestamp = last_main_frame_timestamp;
-                                    
+
                                     if let (Some(&home_lat_raw), Some(&home_lon_raw)) = (
                                         frame_data.get("GPS_home[0]"),
                                         frame_data.get("GPS_home[1]"),
@@ -1599,8 +1625,13 @@ fn parse_frames(
 
                                 // Extract GPS coordinates for GPX export if enabled
                                 if export_options.gpx {
-                                    let gps_time = frame_data.get("time").copied().unwrap_or(0) as u64;
-                                    let timestamp = if gps_time > 0 { gps_time } else { last_main_frame_timestamp };
+                                    let gps_time =
+                                        frame_data.get("time").copied().unwrap_or(0) as u64;
+                                    let timestamp = if gps_time > 0 {
+                                        gps_time
+                                    } else {
+                                        last_main_frame_timestamp
+                                    };
 
                                     if let (Some(&lat_raw), Some(&lon_raw), Some(&alt_raw)) = (
                                         frame_data.get("GPS_coord[0]"),
@@ -1610,11 +1641,18 @@ fn parse_frames(
                                         let coordinate = GpsCoordinate {
                                             latitude: convert_gps_coordinate(lat_raw),
                                             longitude: convert_gps_coordinate(lon_raw),
-                                            altitude: convert_gps_altitude(alt_raw, header.data_version),
+                                            altitude: convert_gps_altitude(
+                                                alt_raw,
+                                                header.data_version,
+                                            ),
                                             timestamp_us: timestamp,
                                             num_sats: frame_data.get("GPS_numSat").copied(),
-                                            speed: frame_data.get("GPS_speed").map(|&s| convert_gps_speed(s)),
-                                            ground_course: frame_data.get("GPS_ground_course").map(|&c| convert_gps_course(c)),
+                                            speed: frame_data
+                                                .get("GPS_speed")
+                                                .map(|&s| convert_gps_speed(s)),
+                                            ground_course: frame_data
+                                                .get("GPS_ground_course")
+                                                .map(|&c| convert_gps_course(c)),
                                         };
                                         gps_coordinates.push(coordinate);
                                     }
@@ -1630,7 +1668,8 @@ fn parse_frames(
                         if let Ok(mut event_frame) = parse_e_frame(&mut stream, debug) {
                             // Store event data for potential export
                             // For now, create a dummy data entry for consistency
-                            frame_data.insert("event_type".to_string(), event_frame.event_type as i32);
+                            frame_data
+                                .insert("event_type".to_string(), event_frame.event_type as i32);
                             frame_data.insert("event_description".to_string(), 0); // Can't store string in i32 map
                             parsing_success = true;
                             stats.e_frames += 1;
@@ -1642,9 +1681,10 @@ fn parse_frames(
                             }
 
                             if debug && stats.e_frames <= 3 {
-                                println!("DEBUG: Parsed E-frame - Type: {}, Description: {}", 
-                                       frame_data.get("event_type").unwrap_or(&0), 
-                                       "Event frame");
+                                println!(
+                                    "DEBUG: Parsed E-frame - Type: {}",
+                                    frame_data.get("event_type").unwrap_or(&0)
+                                );
                             }
                         } else {
                             skip_frame(&mut stream, frame_type, debug)?;
@@ -1790,7 +1830,14 @@ fn parse_frames(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
 
-    Ok((stats, sample_frames, Some(debug_frames), gps_coordinates, home_coordinates, event_frames))
+    Ok((
+        stats,
+        sample_frames,
+        Some(debug_frames),
+        gps_coordinates,
+        home_coordinates,
+        event_frames,
+    ))
 }
 
 #[allow(dead_code)]
@@ -1973,17 +2020,14 @@ fn parse_g_frame(
 }
 
 // Parse E frames (Event frames) - based on C reference implementation
-fn parse_e_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    debug: bool,
-) -> Result<EventFrame> {
+fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<EventFrame> {
     if debug {
         println!("Parsing E frame (Event frame)");
     }
 
     // Read event type (1 byte)
     let event_type = stream.read_byte()?;
-    
+
     // Read event data - the length depends on the event type
     let mut event_data = Vec::new();
     let event_description = match event_type {
@@ -2002,8 +2046,10 @@ fn parse_e_frame(
             let i_gain = stream.read_signed_vb()? as f32 / 1000.0;
             let d_gain = stream.read_signed_vb()? as f32 / 1000.0;
             event_data.extend_from_slice(&[axis]);
-            format!("Autotune cycle result - Axis: {}, P: {:.3}, I: {:.3}, D: {:.3}", 
-                   axis, p_gain, i_gain, d_gain)
+            format!(
+                "Autotune cycle result - Axis: {}, P: {:.3}, I: {:.3}, D: {:.3}",
+                axis, p_gain, i_gain, d_gain
+            )
         }
         3 => {
             // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS
@@ -2022,22 +2068,28 @@ fn parse_e_frame(
                 // Float value
                 let new_value = stream.read_unsigned_vb()? as f32;
                 event_data.extend_from_slice(&[adjustment_function]);
-                format!("Inflight adjustment - Function: {}, New value: {:.3}", 
-                       adjustment_function, new_value)
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {:.3}",
+                    adjustment_function, new_value
+                )
             } else {
                 // Integer value
                 let new_value = stream.read_signed_vb()?;
                 event_data.extend_from_slice(&[adjustment_function]);
-                format!("Inflight adjustment - Function: {}, New value: {}", 
-                       adjustment_function, new_value)
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {}",
+                    adjustment_function, new_value
+                )
             }
         }
         5 => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME
             let log_iteration = stream.read_unsigned_vb()?;
             let current_time = stream.read_unsigned_vb()?;
-            format!("Logging resume - Iteration: {}, Time: {}", 
-                   log_iteration, current_time)
+            format!(
+                "Logging resume - Iteration: {}, Time: {}",
+                log_iteration, current_time
+            )
         }
         6 => {
             // FLIGHT_LOG_EVENT_LOG_END
@@ -2062,7 +2114,10 @@ fn parse_e_frame(
     };
 
     if debug {
-        println!("DEBUG: Event - Type: {}, Description: {}", event_type, event_description);
+        println!(
+            "DEBUG: Event - Type: {}, Description: {}",
+            event_type, event_description
+        );
     }
 
     Ok(EventFrame {
@@ -2222,7 +2277,13 @@ fn parse_bbl_file_streaming(
 
         // Export GPS data to GPX if requested
         if export_options.gpx && !gps_coords.is_empty() {
-            if let Err(e) = export_gpx_file(file_path, log_index, &gps_coords, &home_coords, export_options) {
+            if let Err(e) = export_gpx_file(
+                file_path,
+                log_index,
+                &gps_coords,
+                &home_coords,
+                export_options,
+            ) {
                 let filename = file_path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -2371,7 +2432,7 @@ fn convert_gps_coordinate(raw_value: i32) -> f64 {
 fn convert_gps_altitude(raw_value: i32, data_version: u8) -> f64 {
     // Altitude units changed between data versions:
     // Before version 4: centimeters
-    // Version 4+: decimeters  
+    // Version 4+: decimeters
     if data_version >= 4 {
         raw_value as f64 / 10.0 // decimeters to meters
     } else {
@@ -2400,13 +2461,16 @@ fn export_gpx_file(
         return Ok(());
     }
 
-    let base_name = file_path.file_stem()
+    let base_name = file_path
+        .file_stem()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
-    
-    let output_dir = export_options.output_dir.as_deref()
+
+    let output_dir = export_options
+        .output_dir
+        .as_deref()
         .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
-    
+
     let gpx_filename = if log_number > 0 {
         format!("{}/{}.{:02}.gpx", output_dir, base_name, log_number + 1)
     } else {
@@ -2415,8 +2479,14 @@ fn export_gpx_file(
 
     let mut gpx_file = std::fs::File::create(&gpx_filename)?;
     writeln!(gpx_file, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
-    writeln!(gpx_file, r#"<gpx creator="BBL Parser (Rust)" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">"#)?;
-    writeln!(gpx_file, "<metadata><name>Blackbox flight log</name></metadata>")?;
+    writeln!(
+        gpx_file,
+        r#"<gpx creator="BBL Parser (Rust)" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">"#
+    )?;
+    writeln!(
+        gpx_file,
+        "<metadata><name>Blackbox flight log</name></metadata>"
+    )?;
     writeln!(gpx_file, "<trk><name>Blackbox flight log</name><trkseg>")?;
 
     for coord in gps_coords {
@@ -2430,12 +2500,12 @@ fn export_gpx_file(
         // Convert timestamp to ISO format (simplified - using offset from start)
         let seconds = coord.timestamp_us / 1_000_000;
         let microseconds = coord.timestamp_us % 1_000_000;
-        
+
         writeln!(
             gpx_file,
             r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>1970-01-01T00:{:02}:{:02}.{:06}Z</time></trkpt>"#,
             coord.latitude,
-            coord.longitude, 
+            coord.longitude,
             coord.altitude,
             (seconds / 60) % 60,
             seconds % 60,
@@ -2445,7 +2515,7 @@ fn export_gpx_file(
 
     writeln!(gpx_file, "</trkseg></trk>")?;
     writeln!(gpx_file, "</gpx>")?;
-    
+
     println!("Exported GPS data to: {}", gpx_filename);
     Ok(())
 }
@@ -2460,13 +2530,16 @@ fn export_event_file(
         return Ok(());
     }
 
-    let base_name = file_path.file_stem()
+    let base_name = file_path
+        .file_stem()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
-    
-    let output_dir = export_options.output_dir.as_deref()
+
+    let output_dir = export_options
+        .output_dir
+        .as_deref()
         .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
-    
+
     let event_filename = if log_number > 0 {
         format!("{}/{}.{:02}.event", output_dir, base_name, log_number + 1)
     } else {
@@ -2474,7 +2547,7 @@ fn export_event_file(
     };
 
     let mut event_file = std::fs::File::create(&event_filename)?;
-    
+
     // Export as JSON array
     writeln!(event_file, "[")?;
     for (i, event) in events.iter().enumerate() {
@@ -2489,7 +2562,7 @@ fn export_event_file(
         )?;
     }
     writeln!(event_file, "]")?;
-    
+
     println!("Exported event data to: {}", event_filename);
     Ok(())
 }
