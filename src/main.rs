@@ -2128,6 +2128,24 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
             // FLIGHT_LOG_EVENT_LOG_END
             "Log clean end".to_string()
         }
+        30 => {
+            // Event type 30 - potentially newer Betaflight event type
+            for _ in 0..4 {
+                if !stream.eof {
+                    event_data.push(stream.read_byte()?);
+                }
+            }
+            "Firmware-specific event (type 30)".to_string()
+        }
+        255 => {
+            // Event type 255 - typically end marker in binary protocols
+            for _ in 0..4 {
+                if !stream.eof {
+                    event_data.push(stream.read_byte()?);
+                }
+            }
+            "Log boundary marker (type 255)".to_string()
+        }
         _ => {
             // Unknown event type - read a few bytes as data
             for _ in 0..8 {
