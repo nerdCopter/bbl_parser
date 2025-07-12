@@ -1322,6 +1322,9 @@ fn parse_frames(
     let mut home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
     let mut event_frames: Vec<EventFrame> = Vec::new();
 
+    // GPS frame history for differential encoding
+    let mut gps_frame_history: Vec<i32> = Vec::new();
+
     let mut stream = bbl_format::BBLDataStream::new(binary_data);
 
     // Main frame parsing loop - process frames as a stream, don't store all
@@ -1600,6 +1603,13 @@ fn parse_frames(
                                         frame_data.get("GPS_home[0]"),
                                         frame_data.get("GPS_home[1]"),
                                     ) {
+                                        if debug && home_coordinates.is_empty() {
+                                            println!("DEBUG: HOME raw values - home_lat_raw: {}, home_lon_raw: {}", home_lat_raw, home_lon_raw);
+                                            println!("DEBUG: HOME converted - lat: {:.7}, lon: {:.7}", 
+                                                   convert_gps_coordinate(home_lat_raw), 
+                                                   convert_gps_coordinate(home_lon_raw));
+                                        }
+                                        
                                         let home_coordinate = GpsHomeCoordinate {
                                             home_latitude: convert_gps_coordinate(home_lat_raw),
                                             home_longitude: convert_gps_coordinate(home_lon_raw),
@@ -1617,9 +1627,39 @@ fn parse_frames(
                     }
                     'G' => {
                         if header.g_frame_def.count > 0 {
-                            if let Ok(data) = parse_g_frame(&mut stream, &header.g_frame_def, debug)
+                            // Initialize GPS frame history if needed
+                            if gps_frame_history.is_empty() {
+                                gps_frame_history = vec![0i32; header.g_frame_def.count];
+                            }
+
+                            let mut g_frame_values = vec![0i32; header.g_frame_def.count];
+
+                            if bbl_format::parse_frame_data(
+                                &mut stream,
+                                &header.g_frame_def,
+                                &mut g_frame_values,
+                                Some(&gps_frame_history), // Use GPS frame history for differential encoding
+                                None,                      // GPS frames typically don't use previous2
+                                0,                         // TODO: Calculate skipped frames properly
+                                false,                     // Not raw
+                                header.data_version,
+                                &header.sysconfig,
+                            )
+                            .is_ok()
                             {
-                                frame_data = data.clone();
+                                // Update GPS frame history with new values
+                                gps_frame_history.copy_from_slice(&g_frame_values);
+
+                                // Copy GPS frame data to output
+                                for (i, field_name) in
+                                    header.g_frame_def.field_names.iter().enumerate()
+                                {
+                                    if i < g_frame_values.len() {
+                                        let value = g_frame_values[i];
+                                        frame_data.insert(field_name.clone(), value);
+                                    }
+                                }
+
                                 parsing_success = true;
                                 stats.g_frames += 1;
 
@@ -1638,9 +1678,30 @@ fn parse_frames(
                                         frame_data.get("GPS_coord[1]"),
                                         frame_data.get("GPS_altitude"),
                                     ) {
+                                        // GPS coordinates are deltas from home position
+                                        // Need to add home coordinates to get actual GPS position
+                                        let actual_lat = if let Some(home_coord) = home_coordinates.first() {
+                                            home_coord.home_latitude + convert_gps_coordinate(lat_raw)
+                                        } else {
+                                            convert_gps_coordinate(lat_raw)
+                                        };
+                                        
+                                        let actual_lon = if let Some(home_coord) = home_coordinates.first() {
+                                            home_coord.home_longitude + convert_gps_coordinate(lon_raw)
+                                        } else {
+                                            convert_gps_coordinate(lon_raw)
+                                        };
+                                        
+                                        if debug && gps_coordinates.len() < 3 {
+                                            println!("DEBUG: GPS raw values - lat_raw: {}, lon_raw: {}, alt_raw: {}", lat_raw, lon_raw, alt_raw);
+                                            println!("DEBUG: GPS converted - lat: {:.7}, lon: {:.7}, alt: {:.2}", 
+                                                   actual_lat, actual_lon,
+                                                   convert_gps_altitude(alt_raw, header.data_version));
+                                        }
+                                        
                                         let coordinate = GpsCoordinate {
-                                            latitude: convert_gps_coordinate(lat_raw),
-                                            longitude: convert_gps_coordinate(lon_raw),
+                                            latitude: actual_lat,
+                                            longitude: actual_lon,
                                             altitude: convert_gps_altitude(
                                                 alt_raw,
                                                 header.data_version,
@@ -1978,46 +2039,8 @@ fn parse_h_frame(
     Ok(data)
 }
 
-fn parse_g_frame(
-    stream: &mut bbl_format::BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
-    if debug {
-        println!("Parsing G frame with {} fields", frame_def.count);
-    }
-
-    // G frames contain GPS data
-    for (i, field) in frame_def.fields.iter().enumerate() {
-        if i >= frame_def.count {
-            break;
-        }
-
-        let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported G-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                stream.read_signed_vb().unwrap_or(0)
-            }
-        };
-
-        data.insert(field.name.clone(), value);
-    }
-
-    Ok(data)
-}
+// Note: parse_g_frame is no longer used - G frames now use differential encoding
+// like P frames in the main parsing loop for correct GPS coordinate calculation
 
 // Parse E frames (Event frames) - based on C reference implementation
 fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<EventFrame> {
@@ -2100,6 +2123,10 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
                 }
             }
             "Log end".to_string()
+        }
+        15 => {
+            // FLIGHT_LOG_EVENT_LOG_END
+            "Log clean end".to_string()
         }
         _ => {
             // Unknown event type - read a few bytes as data
@@ -2472,9 +2499,9 @@ fn export_gpx_file(
         .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
 
     let gpx_filename = if log_number > 0 {
-        format!("{}/{}.{:02}.gpx", output_dir, base_name, log_number + 1)
+        format!("{}/{}.{:02}.gps.gpx", output_dir, base_name, log_number + 1)
     } else {
-        format!("{}/{}.gpx", output_dir, base_name)
+        format!("{}/{}.gps.gpx", output_dir, base_name)
     };
 
     let mut gpx_file = std::fs::File::create(&gpx_filename)?;
