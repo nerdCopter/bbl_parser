@@ -3,6 +3,7 @@ mod bbl_format;
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
+use semver::Version;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -1208,7 +1209,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{value:4}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
+                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value, &log.header.firmware_revision))?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
@@ -2268,14 +2269,37 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
         .collect()
 }
 
-// Unit conversion functions
-fn convert_vbat_to_volts(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.1V units
-    raw_value as f32 / 10.0
+/// Returns the scaling factor for vbatLatest based on firmware and version string.
+fn vbat_scale_factor(firmware: &str) -> f32 {
+    let lower = firmware.to_ascii_lowercase();
+    if lower.starts_with("betaflight") {
+        if let Some(ver_str) = firmware.split_whitespace().nth(1) {
+            if let Ok(ver) = Version::parse(ver_str) {
+                if ver < Version::parse("4.3.0").unwrap() {
+                    return 0.1; // tenths
+                } else {
+                    return 0.01; // hundredths
+                }
+            }
+        }
+        // fallback if version parse fails
+        return 0.1;
+    } else if lower.starts_with("emuflight") {
+        return 0.1; // always tenths
+    } else if lower.starts_with("inav") {
+        return 0.01; // always hundredths
+    }
+    // Default fallback
+    0.1
 }
 
+/// Converts raw vbatLatest value to volts using firmware-aware scaling.
+fn convert_vbat_to_volts(raw_value: i32, firmware: &str) -> f32 {
+    raw_value as f32 * vbat_scale_factor(firmware)
+}
+
+/// Converts raw amperageLatest value to amps (0.01A units)
 fn convert_amperage_to_amps(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.01A units
     raw_value as f32 / 100.0
 }
 
@@ -2695,9 +2719,21 @@ mod tests {
 
     #[test]
     fn test_unit_conversions() {
-        // Test voltage conversion (0.1V units)
-        let volts = convert_vbat_to_volts(33); // 33 * 0.1 = 3.3V
+        // Test voltage conversion (0.1V units) - Betaflight < 4.3.0
+        let volts = convert_vbat_to_volts(33, "Betaflight 4.2.0"); // 33 * 0.1 = 3.3V
         assert!((volts - 3.3).abs() < 0.01);
+
+        // Test voltage conversion (0.01V units) - Betaflight >= 4.3.0
+        let volts_new = convert_vbat_to_volts(330, "Betaflight 4.5.2 (024f8e13d) STM32F7X2"); // 330 * 0.01 = 3.3V
+        assert!((volts_new - 3.3).abs() < 0.01);
+
+        // Test EmuFlight (always tenths)
+        let volts_emu = convert_vbat_to_volts(33, "EmuFlight 0.4.2 (abc123) STM32F405"); // 33 * 0.1 = 3.3V
+        assert!((volts_emu - 3.3).abs() < 0.01);
+
+        // Test INAV (always hundredths)
+        let volts_inav = convert_vbat_to_volts(330, "INAV 6.1.1 (def456) STM32F405"); // 330 * 0.01 = 3.3V
+        assert!((volts_inav - 3.3).abs() < 0.01);
 
         // Test amperage conversion (0.01A units)
         let amps = convert_amperage_to_amps(100); // 100 * 0.01 = 1.0A
