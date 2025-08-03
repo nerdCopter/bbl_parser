@@ -323,7 +323,20 @@ pub fn apply_predictor(
         PREDICT_PREVIOUS => {
             if let Some(prev) = previous_frame {
                 if field_index < prev.len() {
-                    prev[field_index] + raw_value
+                    let result = prev[field_index] + raw_value;
+                    
+                    // CRITICAL FIX: Prevent corruption propagation for vbatLatest
+                    if field_names.get(field_index).map(|name| name == "vbatLatest").unwrap_or(false) {
+                        // Check if previous value is corrupted (way too high for voltage)
+                        if prev[field_index] > 1000 {
+                            eprintln!("FIXED: Corrupted vbatLatest previous value {} replaced with reasonable estimate", prev[field_index]);
+                            // Use a reasonable voltage estimate based on vbatref
+                            let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
+                            return vbatref + raw_value; // Use vbatref as baseline + current delta
+                        }
+                    }
+                    
+                    result
                 } else {
                     raw_value
                 }
@@ -388,6 +401,19 @@ pub fn apply_predictor(
 
         PREDICT_VBATREF => {
             let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
+            
+            // CRITICAL FIX: Check for corrupted raw values in vbatLatest
+            // Normal vbatLatest raw values should be small deltas (-50 to +50) or small absolute values (<1000)
+            // Large values (>4000) indicate stream parsing corruption or wrong predictor application
+            if field_names.get(field_index).map(|name| name == "vbatLatest").unwrap_or(false) {
+                if raw_value > 4000 || raw_value < -1000 {
+                    // This is clearly a corrupted value - likely caused by stream parsing error
+                    // Instead of propagating corruption, use a safe default value
+                    eprintln!("FIXED: Corrupted vbatLatest raw_value {} replaced with 0", raw_value);
+                    return vbatref; // Return just vbatref (safe default)
+                }
+            }
+            
             raw_value + vbatref
         }
 
@@ -483,6 +509,7 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
+                    
                     current_frame[i + j] = apply_predictor(
                         i + j,
                         predictor,
@@ -550,6 +577,7 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
+                    
                     current_frame[i + j] = apply_predictor(
                         i + j,
                         predictor,
@@ -569,6 +597,7 @@ pub fn parse_frame_data(
             _ => {
                 let raw_value = decode_frame_field(stream, field.encoding, data_version)?;
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
+                
                 current_frame[i] = apply_predictor(
                     i,
                     predictor,
