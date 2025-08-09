@@ -3,6 +3,7 @@ mod bbl_format;
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
+use semver::Version;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -692,6 +693,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
             // Parse P frame predictors
             if let Some(pred_str) = line.strip_prefix("H Field P predictor:") {
                 let predictors = parse_numeric_data(pred_str);
+
                 // P frames inherit field names from I frames but have their own predictors
                 if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
                     p_frame_def =
@@ -740,6 +742,9 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
                     // Store numeric values that might be useful later
                     if let Ok(num_value) = field_value.parse::<i32>() {
                         sysconfig.insert(field_name.to_string(), num_value);
+                        if debug && field_name == "vbatref" {
+                            eprintln!("DEBUG: Found vbatref={} in headers", num_value);
+                        }
                     }
                 }
             }
@@ -751,6 +756,12 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
             "Parsed headers: Firmware={firmware_revision}, Board={board_info}, Craft={craft_name}"
         );
         println!("Data version: {data_version}, Looptime: {looptime}");
+    }
+
+    // Extract vbatref from sysconfig for debug output
+    let vbatref = sysconfig.get("vbatref").copied().unwrap_or(0);
+    if debug && vbatref > 0 {
+        eprintln!("DEBUG: Found vbatref={} in headers", vbatref);
     }
 
     Ok(BBLHeader {
@@ -1208,7 +1219,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{value:4}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value))?;
+                write!(
+                    writer,
+                    "{:4.1}",
+                    convert_vbat_to_volts(raw_value, &log.header.firmware_revision)
+                )?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
@@ -1376,6 +1391,7 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -1456,15 +1472,17 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
-                                // P-frames update only specific fields, rest inherit from previous I-frame
+                                // P-frames: parse_frame_data already computed correct absolute values
+                                // Copy previous frame as base, then update only P-frame fields
                                 frame_history
                                     .current_frame
                                     .copy_from_slice(&frame_history.previous_frame);
 
-                                // Apply P-frame deltas to current frame
+                                // Update only the fields that are present in P-frame with computed values
                                 for (i, field_name) in
                                     header.p_frame_def.field_names.iter().enumerate()
                                 {
@@ -1477,6 +1495,7 @@ fn parse_frames(
                                             .position(|name| name == field_name)
                                         {
                                             if i_frame_idx < frame_history.current_frame.len() {
+                                                // p_frame_values[i] contains correctly calculated absolute value
                                                 frame_history.current_frame[i_frame_idx] =
                                                     p_frame_values[i];
                                             }
@@ -1646,6 +1665,7 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -2268,14 +2288,56 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
         .collect()
 }
 
-// Unit conversion functions
-fn convert_vbat_to_volts(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.1V units
-    raw_value as f32 / 10.0
+/// Converts raw vbatLatest value to volts using firmware-aware scaling.
+///
+/// Betaflight < 4.3.0: tenths (0.1V units)
+/// Betaflight >= 4.3.0: hundredths (0.01V units)
+/// EmuFlight: always tenths (0.1V units)
+/// iNav: always hundredths (0.01V units)
+fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
+    // Determine scaling factor based on firmware
+    let scale_factor = if firmware_revision.contains("EmuFlight") {
+        // EmuFlight always uses tenths
+        0.1
+    } else if firmware_revision.contains("iNav") {
+        // iNav always uses hundredths
+        0.01
+    } else if firmware_revision.contains("Betaflight") {
+        // Betaflight version-dependent scaling
+        if let Some(version) = extract_firmware_version(firmware_revision) {
+            if version >= Version::new(4, 3, 0) {
+                0.01 // hundredths for >= 4.3.0
+            } else {
+                0.1 // tenths for < 4.3.0
+            }
+        } else {
+            // Default to modern Betaflight scaling if version can't be parsed
+            0.01
+        }
+    } else {
+        // Unknown firmware, default to hundredths
+        0.01
+    };
+
+    raw_value as f32 * scale_factor
 }
 
+/// Extract version from firmware revision string
+fn extract_firmware_version(firmware_revision: &str) -> Option<Version> {
+    // Parse version from strings like "Betaflight 4.5.1 (77d01ba3b) AT32F435M"
+    let words: Vec<&str> = firmware_revision.split_whitespace().collect();
+    for (i, word) in words.iter().enumerate() {
+        if word.to_lowercase().contains("betaflight") && i + 1 < words.len() {
+            if let Ok(version) = Version::parse(words[i + 1]) {
+                return Some(version);
+            }
+        }
+    }
+    None
+}
+
+/// Converts raw amperageLatest value to amps (0.01A units)
 fn convert_amperage_to_amps(raw_value: i32) -> f32 {
-    // Betaflight already does the ADC conversion to 0.01A units
     raw_value as f32 / 100.0
 }
 
@@ -2695,9 +2757,23 @@ mod tests {
 
     #[test]
     fn test_unit_conversions() {
-        // Test voltage conversion (0.1V units)
-        let volts = convert_vbat_to_volts(33); // 33 * 0.1 = 3.3V
-        assert!((volts - 3.3).abs() < 0.01);
+        // Test voltage conversion with firmware-aware scaling
+
+        // Test Betaflight >= 4.3.0 (hundredths)
+        let volts_bf_new = convert_vbat_to_volts(1365, "Betaflight 4.5.1 (77d01ba3b) AT32F435M");
+        assert!((volts_bf_new - 13.65).abs() < 0.01); // Should be 13.65V (hundredths)
+
+        // Test Betaflight < 4.3.0 (tenths)
+        let volts_bf_old = convert_vbat_to_volts(136, "Betaflight 4.2.0 (abc123) STM32F7X2");
+        assert!((volts_bf_old - 13.6).abs() < 0.01); // Should be 13.6V (tenths)
+
+        // Test EmuFlight (always tenths)
+        let volts_emuf = convert_vbat_to_volts(136, "EmuFlight 0.3.5 (abc123) STM32F7X2");
+        assert!((volts_emuf - 13.6).abs() < 0.01); // Should be 13.6V (tenths)
+
+        // Test iNav (always hundredths)
+        let volts_inav = convert_vbat_to_volts(1365, "iNav 7.1.0 (abc123) STM32F7X2");
+        assert!((volts_inav - 13.65).abs() < 0.01); // Should be 13.65V (hundredths)
 
         // Test amperage conversion (0.01A units)
         let amps = convert_amperage_to_amps(100); // 100 * 0.01 = 1.0A
