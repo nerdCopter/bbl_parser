@@ -27,7 +27,7 @@ A comprehensive Rust implementation of BBL (Blackbox Log) parser designed for fl
 ### **File Processing Capabilities**
 - **Formats:** .BBL, .BFL, .TXT (case-insensitive)
 - **Firmware:** Betaflight, EmuFlight, INAV
-- **File Sizes:** Handles large files via streaming architecture
+- **File Sizes:** Handles large files via streaming architecture (tested up to 240K+ rows)
 - **Multi-Log Support:** Automatic detection and processing of multiple flights
 
 ### **Development Status**
@@ -138,6 +138,32 @@ src/
 - **Performance:** Not optimized for extremely large files (>1M frames)
 - **Validation:** Limited validation against reference implementations
 - **Error Messages:** May not provide detailed diagnostic information for all failures
+
+---
+
+## 📈 **Development Focus Areas**
+
+### **Current Priorities**
+- **Testing:** Comprehensive validation across firmware versions
+- **Performance:** Optimization for large file processing
+- **Error Handling:** Improved diagnostic and recovery capabilities
+- **Documentation:** Complete API documentation and usage examples
+- **Compatibility:** Enhanced support for edge cases and unusual file formats
+
+---
+
+## 🔍 **Current Data Processing**
+
+### **Frame Processing**
+- **Frame Parsing:** Basic parsing of all major frame types
+- **Temporal Resolution:** Maintains flight sequence timing
+- **Error Detection:** Basic validation with diagnostic output
+- **Memory Management:** Streaming architecture for large files
+
+### **Export Quality**
+- **CSV Compatibility:** Basic blackbox_decode format compatibility
+- **GPS Accuracy:** Coordinate conversion with firmware-specific scaling
+- **Event Mapping:** Official Betaflight FlightLogEvent enum compliance
 
 ---
 
