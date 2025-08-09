@@ -693,7 +693,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
             // Parse P frame predictors
             if let Some(pred_str) = line.strip_prefix("H Field P predictor:") {
                 let predictors = parse_numeric_data(pred_str);
-                
+
                 // P frames inherit field names from I frames but have their own predictors
                 if p_frame_def.field_names.is_empty() && !i_frame_def.field_names.is_empty() {
                     p_frame_def =
@@ -1219,7 +1219,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
                 write!(writer, "{value:4}")?;
             } else if csv_name == "vbatLatest (V)" {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.1}", convert_vbat_to_volts(raw_value, &log.header.firmware_revision))?;
+                write!(
+                    writer,
+                    "{:4.1}",
+                    convert_vbat_to_volts(raw_value, &log.header.firmware_revision)
+                )?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
@@ -1387,6 +1391,7 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -1467,6 +1472,7 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -1659,6 +1665,7 @@ fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -2282,9 +2289,9 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
 }
 
 /// Converts raw vbatLatest value to volts using firmware-aware scaling.
-/// 
+///
 /// Betaflight < 4.3.0: tenths (0.1V units)
-/// Betaflight >= 4.3.0: hundredths (0.01V units) 
+/// Betaflight >= 4.3.0: hundredths (0.01V units)
 /// EmuFlight: always tenths (0.1V units)
 /// iNav: always hundredths (0.01V units)
 fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
@@ -2301,7 +2308,7 @@ fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
             if version >= Version::new(4, 3, 0) {
                 0.01 // hundredths for >= 4.3.0
             } else {
-                0.1  // tenths for < 4.3.0
+                0.1 // tenths for < 4.3.0
             }
         } else {
             // Default to modern Betaflight scaling if version can't be parsed
@@ -2311,7 +2318,7 @@ fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
         // Unknown firmware, default to hundredths
         0.01
     };
-    
+
     raw_value as f32 * scale_factor
 }
 
@@ -2751,19 +2758,19 @@ mod tests {
     #[test]
     fn test_unit_conversions() {
         // Test voltage conversion with firmware-aware scaling
-        
+
         // Test Betaflight >= 4.3.0 (hundredths)
-        let volts_bf_new = convert_vbat_to_volts(1365, "Betaflight 4.5.1 (77d01ba3b) AT32F435M"); 
+        let volts_bf_new = convert_vbat_to_volts(1365, "Betaflight 4.5.1 (77d01ba3b) AT32F435M");
         assert!((volts_bf_new - 13.65).abs() < 0.01); // Should be 13.65V (hundredths)
-        
+
         // Test Betaflight < 4.3.0 (tenths)
         let volts_bf_old = convert_vbat_to_volts(136, "Betaflight 4.2.0 (abc123) STM32F7X2");
         assert!((volts_bf_old - 13.6).abs() < 0.01); // Should be 13.6V (tenths)
-        
+
         // Test EmuFlight (always tenths)
         let volts_emuf = convert_vbat_to_volts(136, "EmuFlight 0.3.5 (abc123) STM32F7X2");
         assert!((volts_emuf - 13.6).abs() < 0.01); // Should be 13.6V (tenths)
-        
+
         // Test iNav (always hundredths)
         let volts_inav = convert_vbat_to_volts(1365, "iNav 7.1.0 (abc123) STM32F7X2");
         assert!((volts_inav - 13.65).abs() < 0.01); // Should be 13.65V (hundredths)
