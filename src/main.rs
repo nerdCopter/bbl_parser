@@ -222,7 +222,16 @@ impl CsvFieldMap {
             csv_field_names.push(csv_name);
         }
 
-        // S frame fields
+        // Add computed fields IMMEDIATELY after I frame fields (like blackbox_decode does)
+        if field_name_to_lookup
+            .iter()
+            .any(|(_, lookup)| lookup == "amperageLatest")
+        {
+            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            csv_field_names.push("energyCumulative (mAh)".to_string());
+        }
+
+        // S frame fields (with flag formatting)
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
             if trimmed == "time" {
@@ -241,15 +250,6 @@ impl CsvFieldMap {
 
         // NOTE: G-frame fields excluded from main CSV (will go to separate .gps.csv file in future)
         // NOTE: E-frame fields excluded from main CSV (will go to separate .event file in future)
-
-        // Add computed fields
-        if field_name_to_lookup
-            .iter()
-            .any(|(_, lookup)| lookup == "amperageLatest")
-        {
-            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
-            csv_field_names.push("energyCumulative (mAh)".to_string());
-        }
 
         Self {
             field_name_to_lookup,
