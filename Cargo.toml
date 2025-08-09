@@ -9,6 +9,15 @@ keywords = ["betaflight", "blackbox", "drone", "flight-log", "parser"]
 categories = ["parsing", "aerospace"]
 rust-version = "1.70.0"
 
+[lib]
+name = "bbl_parser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bbl_parser"
+path = "src/bin/main.rs"
+required-features = ["cli"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"], optional = true }
