@@ -1144,8 +1144,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
     let mut all_frames = Vec::new();
 
     if let Some(ref debug_frames) = log.debug_frames {
-        // Collect I, P, S frames (exclude E frames as they are events, not flight data)
-        for frame_type in ['I', 'P', 'S'] {
+        // Collect only I, P frames for CSV export (S frames are merged into I/P frames during parsing)
+        // This matches blackbox_decode behavior where S-frame data doesn't create separate CSV rows
+        for frame_type in ['I', 'P'] {
             if let Some(frames) = debug_frames.get(&frame_type) {
                 for frame in frames {
                     all_frames.push((frame.timestamp_us, frame_type, frame));
@@ -1592,12 +1593,12 @@ fn parse_frames(
                                     );
                                 }
 
-                                frame_data = data;
-                                parsing_success = true;
+                                // S-frames don't create separate CSV rows - they only update lastSlow data
+                                // that gets merged into subsequent I/P frames (blackbox_decode compatibility)
                                 stats.s_frames += 1;
 
                                 if debug && stats.s_frames <= 3 {
-                                    println!("DEBUG: S-frame count incremented to {} (successful parsing)", stats.s_frames);
+                                    println!("DEBUG: S-frame count incremented to {} (data merged into lastSlow)", stats.s_frames);
                                 }
                             } else if debug && stats.s_frames < 5 {
                                 println!("DEBUG: S-frame parsing failed");
