@@ -1435,7 +1435,8 @@ fn parse_frames(
 
                                 // Apply minimal validation - blackbox_decode includes frames from loop 0
                                 // Only reject frames with clearly invalid data (zero time/loop when data should be present)
-                                let is_valid_frame = current_time > 0 && (current_loop > 0 || current_time > 1000);
+                                let is_valid_frame =
+                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
 
                                 if is_valid_frame {
                                     parsing_success = true;
@@ -1540,7 +1541,8 @@ fn parse_frames(
 
                                 // Apply minimal validation - blackbox_decode includes frames from loop 0
                                 // Only reject frames with clearly invalid data (zero time/loop when data should be present)
-                                let is_valid_frame = current_time > 0 && (current_loop > 0 || current_time > 1000);
+                                let is_valid_frame =
+                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
 
                                 if is_valid_frame {
                                     parsing_success = true;
