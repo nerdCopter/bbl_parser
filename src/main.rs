@@ -1432,9 +1432,9 @@ fn parse_frames(
                                 let current_loop =
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
-                                // Apply blackbox_decode.c validation criteria
-                                // Reject frames with invalid timestamps or loop iterations
-                                let is_valid_frame = current_time > 1000 && current_loop > 100;
+                                // Apply minimal validation - blackbox_decode includes frames from loop 0
+                                // Only reject frames with clearly invalid data (zero time/loop when data should be present)
+                                let is_valid_frame = current_time > 0 && (current_loop > 0 || current_time > 1000);
 
                                 if is_valid_frame {
                                     parsing_success = true;
@@ -1537,9 +1537,9 @@ fn parse_frames(
                                 let current_loop =
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
-                                // Apply blackbox_decode.c validation criteria
-                                // Reject frames with invalid timestamps or loop iterations
-                                let is_valid_frame = current_time > 1000 && current_loop > 100;
+                                // Apply minimal validation - blackbox_decode includes frames from loop 0
+                                // Only reject frames with clearly invalid data (zero time/loop when data should be present)
+                                let is_valid_frame = current_time > 0 && (current_loop > 0 || current_time > 1000);
 
                                 if is_valid_frame {
                                     parsing_success = true;
