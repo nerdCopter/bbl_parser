@@ -9,14 +9,15 @@
 
 ## 🎯 **Project Summary**
 
-A comprehensive Rust implementation of BBL (Blackbox Log) parser designed for flight controller blackbox data analysis. This is development software focused on creating a pure Rust implementation without external dependencies.
+A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsing designed for flight controller blackbox data analysis. This is development software focused on creating a pure Rust implementation without external dependencies.
 
-**Core Goal:** Create a reliable BBL parser that can handle various file formats and firmware types while maintaining memory efficiency.
+**Core Goal:** Create a reliable BBL parser that can handle various file formats and firmware types while maintaining memory efficiency and providing both CLI and library API access.
 
 ### **Current Capabilities**
 - **BBL Format Support:** Parses .BBL, .BFL, .TXT files from multiple firmware sources
 - **Frame Processing:** Supports I, P, S, H, G, E frames with proper encoding handling
 - **Export Functions:** CSV, GPX, and event data export capabilities
+- **Library API:** Complete programmatic access to BBL data structures in memory
 - **Memory Efficiency:** Streaming architecture for large file processing
 - **Zero Dependencies:** Pure Rust implementation without external blackbox_decode tools
 
@@ -39,6 +40,8 @@ A comprehensive Rust implementation of BBL (Blackbox Log) parser designed for fl
 | **GPS Export** | ✅ Functional | GPX format generation |
 | **Event Export** | ✅ Functional | JSONL format with Betaflight event types |
 | **Multi-log Processing** | ✅ Functional | Automatic detection |
+| **Library API** | ✅ Functional | Complete programmatic access to data structures |
+| **Crate Documentation** | ✅ Functional | Comprehensive API documentation and examples |
 | **Error Handling** | 🚧 Basic | Needs comprehensive testing |
 | **Performance** | 🚧 Basic | Optimization in progress |
 | **Testing** | ⚠️ Limited | Needs extensive validation |
@@ -104,10 +107,19 @@ src/
 
 ## 🚀 **Current Features**
 
+### **Current Features**
+
 ### **File Processing**
 - **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
 - **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
+
+### **Library API**
+- **Complete Data Access:** Programmatic access to all BBL data structures
+- **Memory-Based Parsing:** Parse from file paths or memory buffers
+- **Multi-Log Support:** Handle files containing multiple flight sessions
+- **Serde Integration:** Optional serialization support for data structures
+- **Rust Crate:** Available as library dependency for 3rd party projects
 
 ### **Data Export Capabilities**
 - **CSV Export:** blackbox_decode compatible field ordering and formatting
@@ -120,6 +132,7 @@ src/
 - **Memory Efficiency:** Streaming architecture for large file processing
 - **Zero External Dependencies:** No blackbox_decode binaries required
 - **Native Rust Implementation:** Embeddable in other applications
+- **Library API:** Complete programmatic access for 3rd party integration
 - **Cross-platform Compatibility:** Works without external tool requirements
 
 ---
@@ -251,13 +264,15 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 - **Flight log analysis** for debugging and performance tuning
 - **Data extraction** from BBL files for further processing
 - **Format conversion** from BBL to CSV/GPX formats
+- **Library integration** in Rust applications requiring BBL parsing
 - **Development and testing** of BBL parsing algorithms
 - **Educational use** for understanding blackbox log structures
 
 ### **Development Integration**
 - **Standalone CLI tool** for batch processing and analysis
-- **Rust library integration** (with API stability caveats)
+- **Rust library dependency** with comprehensive API documentation
 - **Custom analysis applications** requiring BBL parsing capabilities
+- **3rd party project integration** via crate dependency
 - **Research and development** of flight data analysis techniques
 
 ---
@@ -265,13 +280,13 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 ## 📝 **Documentation**
 
 ### **Available Documentation**
-- **README.md** - User guide, installation, and usage examples
+- **README.md** - User guide, installation, usage examples, and complete library API documentation
 - **OVERVIEW.md** - Technical architecture and feature overview  
 - **FRAMES.md** - Frame format specifications and encoding details
 - **GOALS.md** - Project objectives and design principles
 
 ### **Development Documentation**
-Limited API documentation available via `cargo doc` for development use.
+API documentation available via `cargo doc` and comprehensive usage examples in README.md for library integration.
 
 ---
 
@@ -283,13 +298,16 @@ Limited API documentation available via `cargo doc` for development use.
 - **Multi-log processing** for complex flight session files
 - **Export functionality** for CSV, GPX, and event data formats
 - **Memory-efficient streaming** architecture for large files
+- **Complete library API** with comprehensive data structure access
+- **Crate integration** for 3rd party Rust applications
 
 ### **Development Status**
 - **Core functionality** implemented and functional
+- **Library API** fully documented with usage examples
 - **Testing coverage** limited and needs expansion
 - **Performance** adequate but not optimized
 - **Error handling** basic with room for improvement
-- **API stability** not guaranteed between versions
+- **API stability** documented with migration notes
 
 ---
 
