@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::types::{BBLHeader, FrameStats, DecodedFrame};
+use crate::types::{BBLHeader, FrameStats, DecodedFrame, GpsCoordinate, GpsHomeCoordinate, EventFrame};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,9 @@ pub struct BBLLog {
     pub stats: FrameStats,
     pub sample_frames: Vec<DecodedFrame>,
     pub debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>,
+    pub gps_coordinates: Vec<GpsCoordinate>,
+    pub home_coordinates: Vec<GpsHomeCoordinate>,
+    pub event_frames: Vec<EventFrame>,
 }
 
 impl BBLLog {
@@ -25,6 +28,9 @@ impl BBLLog {
             stats: FrameStats::default(),
             sample_frames: Vec::new(),
             debug_frames: None,
+            gps_coordinates: Vec::new(),
+            home_coordinates: Vec::new(),
+            event_frames: Vec::new(),
         }
     }
 

@@ -24,7 +24,6 @@ pub const PREDICT_1500: u8 = 8;
 pub const PREDICT_VBATREF: u8 = 9;
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
-pub const PREDICT_MINMOTOR: u8 = 11;
 
 /// Decode a field value using the specified encoding
 pub fn decode_field_value(

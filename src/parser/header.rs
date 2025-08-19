@@ -124,7 +124,7 @@ fn parse_predictor_info(line: &str, frame_def: &mut FrameDefinition) -> Result<(
     }
     
     let predictor_str = parts[1].trim();
-    let predictors: Result<Vec<u8>, _> = predictor_str.split(',')
+    let predictors: std::result::Result<Vec<u8>, _> = predictor_str.split(',')
         .map(|s| s.trim().parse())
         .collect();
     
@@ -144,7 +144,7 @@ fn parse_encoding_info(line: &str, frame_def: &mut FrameDefinition) -> Result<()
     }
     
     let encoding_str = parts[1].trim();
-    let encodings: Result<Vec<u8>, _> = encoding_str.split(',')
+    let encodings: std::result::Result<Vec<u8>, _> = encoding_str.split(',')
         .map(|s| s.trim().parse())
         .collect();
     
