@@ -292,8 +292,8 @@ pub fn parse_frame_data(
                 0,
                 i,
                 current_frame,
-                previous_frame,
-                previous2_frame,
+                previous_frame.unwrap_or(&[]),
+                previous2_frame.unwrap_or(&[]),
                 sysconfig,
             )?;
             i += 1;
@@ -315,8 +315,8 @@ pub fn parse_frame_data(
                         values[j],
                         i + j,
                         current_frame,
-                        previous_frame,
-                        previous2_frame,
+                        previous_frame.unwrap_or(&[]),
+                        previous2_frame.unwrap_or(&[]),
                         sysconfig,
                     )?;
                 }
@@ -338,8 +338,8 @@ pub fn parse_frame_data(
                         values[j],
                         i + j,
                         current_frame,
-                        previous_frame,
-                        previous2_frame,
+                        previous_frame.unwrap_or(&[]),
+                        previous2_frame.unwrap_or(&[]),
                         sysconfig,
                     )?;
                 }
@@ -361,8 +361,8 @@ pub fn parse_frame_data(
                         values[j],
                         i + j,
                         current_frame,
-                        previous_frame,
-                        previous2_frame,
+                        previous_frame.unwrap_or(&[]),
+                        previous2_frame.unwrap_or(&[]),
                         sysconfig,
                     )?;
                 }
@@ -371,15 +371,16 @@ pub fn parse_frame_data(
             }
             
             _ => {
-                let raw_value = decode_field_value(stream, field.encoding, &mut values, 0)?;
+                decode_field_value(stream, field.encoding, &mut values, 0)?;
+                let raw_value = values[0];
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
                 current_frame[i] = apply_predictor(
                     predictor,
                     raw_value,
                     i,
                     current_frame,
-                    previous_frame,
-                    previous2_frame,
+                    previous_frame.unwrap_or(&[]),
+                    previous2_frame.unwrap_or(&[]),
                     sysconfig,
                 )?;
             }
