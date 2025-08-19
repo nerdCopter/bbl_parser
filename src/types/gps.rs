@@ -29,8 +29,8 @@ pub struct GpsHomeCoordinate {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EventFrame {
-    pub timestamp_us: u64,
-    pub event_type: u8,
-    pub event_data: Vec<u8>,
-    pub event_description: String,
+    pub timestamp_us: u64,           // Time in microseconds
+    pub event_type: u8,              // Event type ID
+    pub event_name: String,          // Human-readable name
+    pub data: Option<i32>,           // Optional event data
 }
