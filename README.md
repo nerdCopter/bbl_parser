@@ -252,10 +252,6 @@ cargo run --example bbl_crate_test -- logs/*.BBL *.bbl
 
 See [`examples/README.md`](examples/README.md) for detailed usage instructions.
 
-**Library API Examples**
-
-See [`simple_data_access_example.rs`](simple_data_access_example.rs) and [`example_3rd_party_usage.rs`](example_3rd_party_usage.rs) for complete working examples of direct crate usage.
-
 ### As a Command Line Tool
 
 ```bash
