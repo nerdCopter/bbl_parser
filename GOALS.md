@@ -20,20 +20,21 @@
 - **Betaflight firmware-accurate flag formatting** (flightModeFlags, stateFlags, failsafePhase)
 - **Official Betaflight event type mapping** (sync beep, disarm, flight mode change, log end)
 - **Extensive Betaflight/EmuFlight testing** with high compatibility across firmware versions
+- **Full RUST CRATE for library reusability and modularity** with complete API access
+- **API documentation and library integration** with comprehensive usage examples
 
 🔧 **REMAINING WORK:**
 - Code refinement: Replace unwrap() calls with proper error handling
 - Enhanced error handling and comprehensive edge case testing
 - Performance optimization for extremely large files (>1M frames)
 - Comprehensive GPS and Event frame testing across more log types
+- Complete crate migration (resolve internal structure inconsistencies)
 - Unit conversion options (time, voltage, current, height, speed, rotation, acceleration)
 - IMU simulation (roll/pitch/yaw angle computation from gyro/accel/mag)
 - Current meter simulation and energy integration
 - GPS merge option (integrate GPS data into main CSV)
 - Raw mode output (unprocessed sensor values)
 - Enhanced statistics output (frame counts, timing, loop statistics)
-- Full RUST CRATE for library reusability and modularity
-- API documentation and stability for library integration
 - Extended firmware compatibility testing (older/newer versions)
 - Advanced filtering and data processing options
 

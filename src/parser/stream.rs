@@ -73,6 +73,7 @@ impl<'a> BBLDataStream<'a> {
     }
 
     /// Read Tag8_4S16 encoding - exact replica of JavaScript implementation
+    #[allow(clippy::needless_range_loop)]
     pub fn read_tag8_4s16_v2(&mut self, values: &mut [i32]) -> Result<()> {
         let selector = self.read_byte()?;
         let mut nibble_index = 0;
@@ -83,7 +84,8 @@ impl<'a> BBLDataStream<'a> {
 
             match field_type {
                 0 => values[i] = 0, // FIELD_ZERO
-                1 => { // FIELD_4BIT
+                1 => {
+                    // FIELD_4BIT
                     if nibble_index == 0 {
                         buffer = self.read_byte()?;
                         values[i] = sign_extend_4bit(buffer >> 4);
@@ -93,17 +95,19 @@ impl<'a> BBLDataStream<'a> {
                         nibble_index = 0;
                     }
                 }
-                2 => { // FIELD_8BIT
+                2 => {
+                    // FIELD_8BIT
                     if nibble_index == 0 {
                         values[i] = sign_extend_8bit(self.read_byte()?);
                     } else {
-                        let mut char1 = ((buffer & 0x0f) << 4) as u8;
+                        let mut char1 = (buffer & 0x0f) << 4;
                         buffer = self.read_byte()?;
                         char1 |= buffer >> 4;
                         values[i] = sign_extend_8bit(char1);
                     }
                 }
-                3 => { // FIELD_16BIT
+                3 => {
+                    // FIELD_16BIT
                     if nibble_index == 0 {
                         let char1 = self.read_byte()?;
                         let char2 = self.read_byte()?;
@@ -112,9 +116,9 @@ impl<'a> BBLDataStream<'a> {
                         let char1 = self.read_byte()?;
                         let char2 = self.read_byte()?;
                         values[i] = sign_extend_16bit(
-                            (((buffer & 0x0f) as u16) << 12) | 
-                            ((char1 as u16) << 4) | 
-                            ((char2 as u16) >> 4)
+                            (((buffer & 0x0f) as u16) << 12)
+                                | ((char1 as u16) << 4)
+                                | ((char2 as u16) >> 4),
                         );
                         buffer = char2;
                     }
@@ -131,51 +135,63 @@ impl<'a> BBLDataStream<'a> {
         let lead_byte = self.read_byte()?;
 
         match lead_byte >> 6 {
-            0 => { // 2-bit fields
+            0 => {
+                // 2-bit fields
                 values[0] = sign_extend_2bit((lead_byte >> 4) & 0x03);
                 values[1] = sign_extend_2bit((lead_byte >> 2) & 0x03);
                 values[2] = sign_extend_2bit(lead_byte & 0x03);
             }
-            1 => { // 4-bit fields
+            1 => {
+                // 4-bit fields
                 values[0] = sign_extend_4bit(lead_byte & 0x0f);
                 let second_byte = self.read_byte()?;
                 values[1] = sign_extend_4bit(second_byte >> 4);
                 values[2] = sign_extend_4bit(second_byte & 0x0f);
             }
-            2 => { // 6-bit fields
+            2 => {
+                // 6-bit fields
                 values[0] = sign_extend_6bit(lead_byte & 0x3f);
                 let byte2 = self.read_byte()?;
                 values[1] = sign_extend_6bit(byte2 & 0x3f);
                 let byte3 = self.read_byte()?;
                 values[2] = sign_extend_6bit(byte3 & 0x3f);
             }
-            3 => { // 8, 16 or 24 bit fields
+            3 => {
+                // 8, 16 or 24 bit fields
                 let mut selector = lead_byte;
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..3 {
                     match selector & 0x03 {
-                        0 => { // 8-bit
+                        0 => {
+                            // 8-bit
                             let byte1 = self.read_byte()?;
                             values[i] = sign_extend_8bit(byte1);
                         }
-                        1 => { // 16-bit
+                        1 => {
+                            // 16-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             values[i] = sign_extend_16bit((byte1 as u16) | ((byte2 as u16) << 8));
                         }
-                        2 => { // 24-bit
+                        2 => {
+                            // 24-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             let byte3 = self.read_byte()?;
                             values[i] = sign_extend_24bit(
-                                (byte1 as u32) | ((byte2 as u32) << 8) | ((byte3 as u32) << 16)
+                                (byte1 as u32) | ((byte2 as u32) << 8) | ((byte3 as u32) << 16),
                             );
                         }
-                        3 => { // 32-bit
+                        3 => {
+                            // 32-bit
                             let byte1 = self.read_byte()?;
                             let byte2 = self.read_byte()?;
                             let byte3 = self.read_byte()?;
                             let byte4 = self.read_byte()?;
-                            values[i] = (byte1 as i32) | ((byte2 as i32) << 8) | ((byte3 as i32) << 16) | ((byte4 as i32) << 24);
+                            values[i] = (byte1 as i32)
+                                | ((byte2 as i32) << 8)
+                                | ((byte3 as i32) << 16)
+                                | ((byte4 as i32) << 24);
                         }
                         _ => unreachable!(),
                     }
@@ -189,6 +205,7 @@ impl<'a> BBLDataStream<'a> {
     }
 
     /// Read Tag8_8SVB encoding - exact replica of JavaScript implementation
+    #[allow(clippy::needless_range_loop)]
     pub fn read_tag8_8svb(&mut self, values: &mut [i32]) -> Result<()> {
         let selector = self.read_byte()?;
 
@@ -207,16 +224,16 @@ impl<'a> BBLDataStream<'a> {
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
         let byte1 = self.read_byte()? as u16;
         let byte2 = self.read_byte()? as u16;
-        
+
         let unsigned_value = (byte1 << 6) | (byte2 >> 2);
-        
+
         // Convert to signed 14-bit value and make it negative
         let signed_value = if unsigned_value > 8191 {
             (unsigned_value as i32) - 16384
         } else {
             unsigned_value as i32
         };
-        
+
         Ok(-signed_value)
     }
 }

@@ -1,5 +1,7 @@
+use crate::types::{
+    BBLHeader, DecodedFrame, EventFrame, FrameStats, GpsCoordinate, GpsHomeCoordinate,
+};
 use std::collections::HashMap;
-use crate::types::{BBLHeader, FrameStats, DecodedFrame};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,9 @@ pub struct BBLLog {
     pub stats: FrameStats,
     pub sample_frames: Vec<DecodedFrame>,
     pub debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>,
+    pub gps_coordinates: Vec<GpsCoordinate>,
+    pub home_coordinates: Vec<GpsHomeCoordinate>,
+    pub event_frames: Vec<EventFrame>,
 }
 
 impl BBLLog {
@@ -25,16 +30,17 @@ impl BBLLog {
             stats: FrameStats::default(),
             sample_frames: Vec::new(),
             debug_frames: None,
+            gps_coordinates: Vec::new(),
+            home_coordinates: Vec::new(),
+            event_frames: Vec::new(),
         }
     }
 
     /// Get the duration of the log in microseconds
     pub fn duration_us(&self) -> u64 {
-        if self.stats.end_time_us > self.stats.start_time_us {
-            self.stats.end_time_us - self.stats.start_time_us
-        } else {
-            0
-        }
+        self.stats
+            .end_time_us
+            .saturating_sub(self.stats.start_time_us)
     }
 
     /// Get the duration of the log in seconds

@@ -28,3 +28,7 @@ cli = ["dep:clap", "dep:glob", "dep:regex"]
 
 [dev-dependencies]
 tempfile = "3.0"
+
+[[example]]
+name = "bbl_crate_test"
+required-features = ["cli"]

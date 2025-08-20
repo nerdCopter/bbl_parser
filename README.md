@@ -1,13 +1,15 @@
 # BBL Parser v0.9.0 (Work-in-Progress)
 
-A high-performance Rust implementation of BBL (Blackbox Log) parser for flight controller blackbox data analysis.
+A high-performance Rust library and command-line tool for parsing BBL (Blackbox Log) files from flight controllers.
 
 **Version:** 0.9.0 🚧 **Work-in-Progress**  
 **Status:** Under active development  
-**Supported Formats:** `.BBL`, `.BFL`, `.TXT` (case-insensitive) - Compatible with Betaflight, EmuFlight, and INAV
+**Supported Formats:** `.BBL`, `.BFL`, `.TXT` (case-insensitive) - Compatible with Betaflight, EmuFlight, and INAV  
+**Library API:** Provides complete in-memory access to flight data, headers, GPS coordinates, and events
 
 ## Current Features
 
+- **Rust Library API**: Complete programmatic access to BBL data structures in memory
 - **Pure Rust Implementation**: Direct parsing logic without external dependencies
 - **Universal File Support**: All common BBL formats with case-insensitive extension matching  
 - **Complete Frame Support**: I, P, H, S, E, G frames with all encoding formats (SIGNED_VB, UNSIGNED_VB, NEG_14BIT, TAG8_8SVB, TAG2_3S32, TAG8_4S16)
@@ -18,6 +20,7 @@ A high-performance Rust implementation of BBL (Blackbox Log) parser for flight c
 - **GPS Export**: GPX file generation for GPS-enabled flight logs
 - **Event Export**: Flight event data extraction in JSONL format
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
+- **Comprehensive Examples**: Practical demonstrations of crate usage with PID display and multi-firmware support
 
 ## Export Formats
 
@@ -70,11 +73,194 @@ BTFL_LOG_20250601_121852.02.headers.csv # Headers for log 2
 
 ## Installation & Usage
 
+### As a Library (Rust Crate)
+
+Add `bbl_parser` to your `Cargo.toml`:
+
+```toml
+[dependencies]
+bbl_parser = { path = "path/to/bbl_parser" }
+# or when published to crates.io:
+# bbl_parser = "0.9.0"
+
+# Optional features:
+bbl_parser = { version = "0.9.0", features = ["serde", "json"] }
+```
+
+#### Crate Features
+
+- **`csv`** (default): CSV export functionality
+- **`json`**: JSON export support (requires `serde`)
+- **`serde`**: Serialization support for data structures
+- **`cli`** (default): Command line interface support
+
+#### Basic Library Usage
+
+```rust
+use bbl_parser::{parse_bbl_file, ExportOptions, BBLLog};
+use std::path::Path;
+
+fn main() -> anyhow::Result<()> {
+    // Parse BBL file into memory structures
+    let export_options = ExportOptions::default(); // No file exports
+    let log = parse_bbl_file(
+        Path::new("flight.BBL"), 
+        export_options, 
+        false // debug mode
+    )?;
+    
+    // Access header information
+    println!("Firmware: {}", log.header.firmware_revision);
+    println!("Board: {}", log.header.board_info);
+    println!("Craft: {}", log.header.craft_name);
+    
+    // Access frame data
+    println!("Total frames: {}", log.sample_frames.len());
+    for frame in &log.sample_frames {
+        println!("Frame {}: {} fields at {}μs", 
+                 frame.frame_type, 
+                 frame.data.len(), 
+                 frame.timestamp_us);
+    }
+    
+    // Access GPS data
+    for gps in &log.gps_coordinates {
+        println!("GPS: lat={}, lon={}, alt={}m", 
+                 gps.latitude, gps.longitude, gps.altitude);
+    }
+    
+    // Access flight events
+    for event in &log.event_frames {
+        println!("Event type: {} at {}μs", 
+                 event.event_type, event.timestamp_us);
+    }
+    
+    Ok(())
+}
+```
+
+#### Available Data Structures
+
+The library exposes these main structures for 3rd party access:
+
+> **Note:** This crate is currently undergoing systematic migration to a proper library API. Some data structures and field names may change in future versions as the migration completes.
+
+**`BBLLog`** - Main container for all log data:
+```rust
+pub struct BBLLog {
+    pub log_number: usize,           // Log number (1, 2, 3...)
+    pub total_logs: usize,           // Total logs in file
+    pub header: BBLHeader,           // Header/configuration data
+    pub stats: FrameStats,           // Frame counts and timing
+    pub sample_frames: Vec<DecodedFrame>, // Main flight data
+    pub gps_coordinates: Vec<GpsCoordinate>, // GPS track points
+    pub home_coordinates: Vec<GpsHomeCoordinate>, // Home position
+    pub event_frames: Vec<EventFrame>, // Flight events
+}
+```
+
+**`BBLHeader`** - Configuration and metadata:
+```rust
+pub struct BBLHeader {
+    pub firmware_revision: String,   // "Betaflight 4.5.2 (024f8e13d)"
+    pub board_info: String,          // "AXFL AXISFLYINGF7PRO"
+    pub craft_name: String,          // "My Quad"
+    pub data_version: u8,            // BBL format version
+    pub looptime: u32,               // Main loop time in μs
+    pub sysconfig: HashMap<String, i32>, // All system parameters
+}
+```
+
+**`DecodedFrame`** - Individual flight data points:
+```rust
+pub struct DecodedFrame {
+    pub frame_type: char,            // 'I', 'P', 'S', 'G', 'H', 'E'
+    pub timestamp_us: u64,           // Time in microseconds
+    pub data: HashMap<String, i32>,  // Field name -> value mapping
+}
+```
+
+**`GpsCoordinate`** - GPS position data:
+```rust
+pub struct GpsCoordinate {
+    pub latitude: f64,               // Decimal degrees
+    pub longitude: f64,              // Decimal degrees  
+    pub altitude: i32,               // Altitude in meters
+    pub timestamp_us: u64,           // Time in microseconds
+}
+```
+
+**`EventFrame`** - Flight events and state changes:
+```rust
+pub struct EventFrame {
+    pub timestamp_us: u64,           // Time in microseconds
+    pub event_type: u8,              // Event type ID
+    pub event_name: String,          // Human-readable name
+    pub data: Option<i32>,           // Optional event data
+}
+```
+
+#### Multi-Log Processing
+
+```rust
+use bbl_parser::parse_bbl_file_all_logs;
+
+// Parse file with multiple flight logs
+let logs = parse_bbl_file_all_logs(
+    Path::new("multi_flight.BBL"), 
+    ExportOptions::default(), 
+    false
+)?;
+
+for log in logs {
+    println!("Processing log {} of {}", log.log_number, log.total_logs);
+    println!("Duration: {:.1}s", log.duration_seconds());
+    println!("Frames: {}", log.sample_frames.len());
+}
+```
+
+#### Memory-Based Parsing
+
+```rust
+use bbl_parser::parse_bbl_bytes;
+
+// Parse BBL data from memory (Vec<u8>, &[u8])
+let bbl_data: Vec<u8> = std::fs::read("flight.BBL")?;
+let log = parse_bbl_bytes(&bbl_data, ExportOptions::default(), false)?;
+```
+
+#### Examples
+
+**BBL Crate Test Example** (`examples/bbl_crate_test`)
+
+A comprehensive demonstration of the BBL parser crate featuring:
+- Multi-firmware support (Betaflight, EmuFlight, iNav)  
+- PID settings extraction with feedforward values
+- Multi-log file processing with glob patterns
+- Flight duration calculation and statistics
+
+```bash
+# Build the example
+cargo build --example bbl_crate_test
+
+# Run with a single file
+cargo run --example bbl_crate_test -- flight.BBL
+
+# Run with multiple files or patterns
+cargo run --example bbl_crate_test -- logs/*.BBL *.bbl
+```
+
+See [`examples/README.md`](examples/README.md) for detailed usage instructions.
+
+### As a Command Line Tool
+
 ```bash
 git clone <repository-url>
 cd bbl_parser
 cargo build --release
 ```
+
+**Note:** The main CLI tool provides CSV/GPX export and analysis. For a simpler demonstration of crate usage with PID display, see the `examples/bbl_crate_test` example above.
 
 ### Basic Usage
 ```bash
