@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use crate::error::Result;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -31,14 +30,17 @@ impl FrameDefinition {
             count: 0,
         }
     }
-    
+
     pub fn from_field_names(names: Vec<String>) -> Self {
-        let fields = names.iter().map(|name| FieldDefinition {
-            name: name.clone(),
-            signed: false,
-            predictor: 0,
-            encoding: 0,
-        }).collect();
+        let fields = names
+            .iter()
+            .map(|name| FieldDefinition {
+                name: name.clone(),
+                signed: false,
+                predictor: 0,
+                encoding: 0,
+            })
+            .collect();
         let count = names.len();
         Self {
             fields,
@@ -46,7 +48,7 @@ impl FrameDefinition {
             count,
         }
     }
-    
+
     pub fn update_signed(&mut self, signed_data: &[bool]) {
         for (i, field) in self.fields.iter_mut().enumerate() {
             if i < signed_data.len() {
@@ -89,7 +91,7 @@ pub struct DecodedFrame {
 }
 
 /// Frame statistics
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FrameStats {
     pub i_frames: u32,
@@ -104,25 +106,6 @@ pub struct FrameStats {
     pub end_time_us: u64,
     pub failed_frames: u32,
     pub missing_iterations: u64,
-}
-
-impl Default for FrameStats {
-    fn default() -> Self {
-        Self {
-            i_frames: 0,
-            p_frames: 0,
-            h_frames: 0,
-            g_frames: 0,
-            e_frames: 0,
-            s_frames: 0,
-            total_frames: 0,
-            total_bytes: 0,
-            start_time_us: 0,
-            end_time_us: 0,
-            failed_frames: 0,
-            missing_iterations: 0,
-        }
-    }
 }
 
 /// Frame history for prediction during parsing

@@ -116,20 +116,17 @@ pub fn apply_predictor(
             // GPS home coordinate prediction - for now just return value
             Ok(value)
         }
-        PREDICT_1500 => {
-            Ok(value + 1500)
-        }
+        PREDICT_1500 => Ok(value + 1500),
         PREDICT_VBATREF => {
             let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
             Ok(value + vbatref)
         }
-        PREDICT_MINMOTOR => { // predictor 11
+        PREDICT_MINMOTOR => {
+            // predictor 11
             // motor[0] prediction: value + motorOutput[0] (minimum motor output)
             let motor_output_min = sysconfig.get("motorOutput[0]").copied().unwrap_or(48);
-            Ok((value | 0) + motor_output_min) // Force signed 32-bit like Betaflight
+            Ok(value + motor_output_min) // Force signed 32-bit like Betaflight
         }
-        _ => {
-            Err(BBLError::InvalidPredictor(predictor))
-        }
+        _ => Err(BBLError::InvalidPredictor(predictor)),
     }
 }

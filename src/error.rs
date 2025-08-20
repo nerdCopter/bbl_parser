@@ -33,10 +33,14 @@ impl fmt::Display for BBLError {
             BBLError::Parse(msg) => write!(f, "Parse error: {}", msg),
             BBLError::InvalidHeader(msg) => write!(f, "Invalid header: {}", msg),
             BBLError::InvalidFrame(msg) => write!(f, "Invalid frame: {}", msg),
-            BBLError::UnsupportedVersion(version) => write!(f, "Unsupported data version: {}", version),
+            BBLError::UnsupportedVersion(version) => {
+                write!(f, "Unsupported data version: {}", version)
+            }
             BBLError::UnexpectedEof => write!(f, "Unexpected end of file"),
             BBLError::InvalidEncoding(encoding) => write!(f, "Invalid encoding type: {}", encoding),
-            BBLError::InvalidPredictor(predictor) => write!(f, "Invalid predictor type: {}", predictor),
+            BBLError::InvalidPredictor(predictor) => {
+                write!(f, "Invalid predictor type: {}", predictor)
+            }
             BBLError::Export(msg) => write!(f, "Export error: {}", msg),
         }
     }

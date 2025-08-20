@@ -17,19 +17,25 @@
 
 // Module declarations
 mod bbl_format;
-pub mod types;
-pub mod parser;
 pub mod conversion;
-pub mod export;
 pub mod error;
+pub mod export;
+pub mod parser;
+pub mod types;
 
 // Re-export everything from modules for convenience
-pub use types::*;
-pub use parser::*;
-pub use conversion::*;
-pub use export::*;
-pub use error::*;
+#[allow(ambiguous_glob_reexports)]
 pub use bbl_format::*;
+#[allow(ambiguous_glob_reexports)]
+pub use conversion::*;
+#[allow(ambiguous_glob_reexports)]
+pub use error::*;
+#[allow(ambiguous_glob_reexports)]
+pub use export::*;
+#[allow(ambiguous_glob_reexports)]
+pub use parser::*;
+#[allow(ambiguous_glob_reexports)]
+pub use types::*;
 
 // Re-export Result type for convenience
 pub use anyhow::Result;

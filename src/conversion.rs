@@ -1,5 +1,5 @@
 //! Data conversion utilities for BBL parsing
-//! 
+//!
 //! Contains all firmware-aware conversion functions for voltage, GPS data,
 //! and flag formatting to maintain compatibility across firmware versions.
 
