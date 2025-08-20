@@ -127,13 +127,56 @@ fn process_file(file_path: &Path, debug: bool) -> Result<()> {
 fn display_pid_settings(all_headers: &[String]) {
     println!("  PID Settings:");
     
-    // Parse PID values from rollPID/pitchPID/yawPID format (universal for all firmware types)
-    if let Some((roll_pid, pitch_pid, yaw_pid)) = parse_pid_from_headers(all_headers) {
-        println!("    Roll: P={}, I={}, D={}", roll_pid.0, roll_pid.1, roll_pid.2);
-        println!("    Pitch: P={}, I={}, D={}", pitch_pid.0, pitch_pid.1, pitch_pid.2);
-        println!("    Yaw: P={}, I={}, D={}", yaw_pid.0, yaw_pid.1, yaw_pid.2);
+    // First try to parse PID values with potential feedforward (4-value format for iNav)
+    if let Some((roll_pid, pitch_pid, yaw_pid)) = parse_pid_with_ff_from_headers(all_headers) {
+        // iNav 4-value format: P,I,D,FF
+        println!("    Roll: P={}, I={}, D={}, FF={}", roll_pid.0, roll_pid.1, roll_pid.2, roll_pid.3);
+        println!("    Pitch: P={}, I={}, D={}, FF={}", pitch_pid.0, pitch_pid.1, pitch_pid.2, pitch_pid.3);
+        println!("    Yaw: P={}, I={}, D={}, FF={}", yaw_pid.0, yaw_pid.1, yaw_pid.2, yaw_pid.3);
+    } else if let Some((roll_pid, pitch_pid, yaw_pid)) = parse_pid_from_headers(all_headers) {
+        // Check if we have Betaflight feedforward values (ff_weight)
+        if let Some((roll_ff, pitch_ff, yaw_ff)) = parse_feedforward_from_headers(all_headers) {
+            // Betaflight: P,I,D from rollPID + FF from ff_weight
+            println!("    Roll: P={}, I={}, D={}, FF={}", roll_pid.0, roll_pid.1, roll_pid.2, roll_ff);
+            println!("    Pitch: P={}, I={}, D={}, FF={}", pitch_pid.0, pitch_pid.1, pitch_pid.2, pitch_ff);
+            println!("    Yaw: P={}, I={}, D={}, FF={}", yaw_pid.0, yaw_pid.1, yaw_pid.2, yaw_ff);
+        } else {
+            // EmuFlight or older firmware: P,I,D only
+            println!("    Roll: P={}, I={}, D={}", roll_pid.0, roll_pid.1, roll_pid.2);
+            println!("    Pitch: P={}, I={}, D={}", pitch_pid.0, pitch_pid.1, pitch_pid.2);
+            println!("    Yaw: P={}, I={}, D={}", yaw_pid.0, yaw_pid.1, yaw_pid.2);
+        }
     } else {
         println!("    PID values not found in expected format");
+    }
+}
+
+/// Parse PID values with feedforward from raw header lines (for iNav 4-value format)
+fn parse_pid_with_ff_from_headers(all_headers: &[String]) -> Option<((i32, i32, i32, i32), (i32, i32, i32, i32), (i32, i32, i32, i32))> {
+    let mut roll_pid = None;
+    let mut pitch_pid = None;
+    let mut yaw_pid = None;
+    
+    for header in all_headers {
+        if header.starts_with("H rollPID:") {
+            if let Some(value_str) = header.strip_prefix("H rollPID:") {
+                roll_pid = parse_pid_with_ff_string(value_str.trim());
+            }
+        } else if header.starts_with("H pitchPID:") {
+            if let Some(value_str) = header.strip_prefix("H pitchPID:") {
+                pitch_pid = parse_pid_with_ff_string(value_str.trim());
+            }
+        } else if header.starts_with("H yawPID:") {
+            if let Some(value_str) = header.strip_prefix("H yawPID:") {
+                yaw_pid = parse_pid_with_ff_string(value_str.trim());
+            }
+        }
+    }
+    
+    if let (Some(r), Some(p), Some(y)) = (roll_pid, pitch_pid, yaw_pid) {
+        Some((r, p, y))
+    } else {
+        None
     }
 }
 
@@ -164,6 +207,39 @@ fn parse_pid_from_headers(all_headers: &[String]) -> Option<((i32, i32, i32), (i
     } else {
         None
     }
+}
+
+/// Parse feedforward values from raw header lines (Betaflight ff_weight format)
+fn parse_feedforward_from_headers(all_headers: &[String]) -> Option<(i32, i32, i32)> {
+    for header in all_headers {
+        if header.starts_with("H ff_weight:") {
+            if let Some(value_str) = header.strip_prefix("H ff_weight:") {
+                if let Some((roll_ff, pitch_ff, yaw_ff)) = parse_pid_string(value_str.trim()) {
+                    return Some((roll_ff, pitch_ff, yaw_ff));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse PID string in format "P,I,D,FF" and return (P, I, D, FF) tuple
+fn parse_pid_with_ff_string(pid_value: &str) -> Option<(i32, i32, i32, i32)> {
+    // Remove quotes if present
+    let cleaned = pid_value.trim_matches('"');
+    
+    let parts: Vec<&str> = cleaned.split(',').collect();
+    if parts.len() == 4 {
+        if let (Ok(p), Ok(i), Ok(d), Ok(ff)) = (
+            parts[0].trim().parse::<i32>(),
+            parts[1].trim().parse::<i32>(),
+            parts[2].trim().parse::<i32>(),
+            parts[3].trim().parse::<i32>()
+        ) {
+            return Some((p, i, d, ff));
+        }
+    }
+    None
 }
 
 /// Parse PID string in format "P,I,D" or "P,I,D,FF" and return (P, I, D) tuple
