@@ -554,13 +554,40 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, frames, debug_frames, gps_coords, home_coords, events) =
+    let (stats, frames, debug_frames, gps_coords, home_coords, events) =
         parse_frames(binary_data, &header, debug, export_options)?;
 
-    // Update frame stats timing from actual frame data
-    if !frames.is_empty() {
-        stats.start_time_us = frames.first().unwrap().timestamp_us;
-        stats.end_time_us = frames.last().unwrap().timestamp_us;
+    // Keep the timing from parser which processes ALL frames
+    // Don't override with sample frames timing as that only contains a subset
+    // The parser already correctly sets stats.start_time_us and stats.end_time_us
+
+    if debug && !frames.is_empty() {
+        // Store original timing from parser
+        let parser_start = stats.start_time_us;
+        let parser_end = stats.end_time_us;
+        let parser_duration = parser_end.saturating_sub(parser_start);
+
+        let sample_start = frames.first().unwrap().timestamp_us;
+        let sample_end = frames.last().unwrap().timestamp_us;
+        let sample_duration = sample_end.saturating_sub(sample_start);
+
+        println!(
+            "DEBUG: Parser timing (ALL frames) - start: {} us, end: {} us, duration: {} ms",
+            parser_start,
+            parser_end,
+            parser_duration / 1000
+        );
+        println!(
+            "DEBUG: Sample timing (subset) - start: {} us, end: {} us, duration: {} ms",
+            sample_start,
+            sample_end,
+            sample_duration / 1000
+        );
+        println!(
+            "DEBUG: Total frames: {}, Sample frames: {}",
+            stats.total_frames,
+            frames.len()
+        );
     }
 
     let log = BBLLog {
@@ -974,8 +1001,22 @@ fn display_log_info(log: &BBLLog) {
 
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
-        let duration_ms = (stats.end_time_us.saturating_sub(stats.start_time_us)) / 1000;
-        println!("Duration   {duration_ms:6} ms");
+        let duration_us = stats.end_time_us.saturating_sub(stats.start_time_us);
+        let duration_ms = duration_us / 1000;
+
+        // Format as mm:ss.mmm for better readability
+        let total_seconds = duration_us as f64 / 1_000_000.0;
+        let minutes = (total_seconds / 60.0) as u32;
+        let seconds = total_seconds % 60.0;
+
+        if minutes > 0 {
+            println!(
+                "Duration   {:5}ms ({:02}m{:04.1}s)",
+                duration_ms, minutes, seconds
+            );
+        } else {
+            println!("Duration   {:5}ms ({:04.1}s)", duration_ms, seconds);
+        }
     }
 
     // Display data version and missing iterations
