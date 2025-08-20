@@ -5,27 +5,40 @@ use std::collections::HashMap;
 pub const ENCODING_SIGNED_VB: u8 = 0;
 pub const ENCODING_UNSIGNED_VB: u8 = 1;
 pub const ENCODING_NEG_14BIT: u8 = 3;
+#[allow(dead_code)]
 pub const ENCODING_TAG8_8SVB: u8 = 6;
+#[allow(dead_code)]
 pub const ENCODING_TAG2_3S32: u8 = 7;
+#[allow(dead_code)]
 pub const ENCODING_TAG8_4S16: u8 = 8;
 pub const ENCODING_NULL: u8 = 9;
 #[allow(dead_code)]
 pub const ENCODING_TAG2_3SVARIABLE: u8 = 10;
 
 // Predictor constants - directly from JavaScript reference
+#[allow(dead_code)]
 pub const PREDICT_0: u8 = 0;
+#[allow(dead_code)]
 pub const PREDICT_PREVIOUS: u8 = 1;
+#[allow(dead_code)]
 pub const PREDICT_STRAIGHT_LINE: u8 = 2;
+#[allow(dead_code)]
 pub const PREDICT_AVERAGE_2: u8 = 3;
+#[allow(dead_code)]
 pub const PREDICT_MINTHROTTLE: u8 = 4;
+#[allow(dead_code)]
 pub const PREDICT_MOTOR_0: u8 = 5;
+#[allow(dead_code)]
 pub const PREDICT_INC: u8 = 6;
 #[allow(dead_code)]
 pub const PREDICT_HOME_COORD: u8 = 7;
+#[allow(dead_code)]
 pub const PREDICT_1500: u8 = 8;
+#[allow(dead_code)]
 pub const PREDICT_VBATREF: u8 = 9;
 #[allow(dead_code)]
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
+#[allow(dead_code)]
 pub const PREDICT_MINMOTOR: u8 = 11;
 
 pub struct BBLDataStream<'a> {
@@ -306,6 +319,7 @@ pub fn sign_extend_14bit(value: u16) -> i32 {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn apply_predictor(
     field_index: usize,
     predictor: u8,
@@ -474,6 +488,7 @@ pub fn decode_frame_field(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn parse_frame_data(
     stream: &mut BBLDataStream,
     frame_def: &crate::FrameDefinition,

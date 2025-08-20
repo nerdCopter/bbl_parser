@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::types::frame::FrameDefinition;
+use std::collections::HashMap;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
