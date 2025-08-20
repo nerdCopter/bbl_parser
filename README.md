@@ -20,6 +20,7 @@ A high-performance Rust library and command-line tool for parsing BBL (Blackbox 
 - **GPS Export**: GPX file generation for GPS-enabled flight logs
 - **Event Export**: Flight event data extraction in JSONL format
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
+- **Comprehensive Examples**: Practical demonstrations of crate usage with PID display and multi-firmware support
 
 ## Export Formats
 
@@ -228,9 +229,32 @@ let bbl_data: Vec<u8> = std::fs::read("flight.BBL")?;
 let log = parse_bbl_bytes(&bbl_data, ExportOptions::default(), false)?;
 ```
 
-#### Data Access Examples
+#### Examples
 
-See [`simple_data_access_example.rs`](simple_data_access_example.rs) and [`example_3rd_party_usage.rs`](example_3rd_party_usage.rs) for complete working examples.
+**BBL Crate Test Example** (`examples/bbl_crate_test`)
+
+A comprehensive demonstration of the BBL parser crate featuring:
+- Multi-firmware support (Betaflight, EmuFlight, iNav)  
+- PID settings extraction with feedforward values
+- Multi-log file processing with glob patterns
+- Flight duration calculation and statistics
+
+```bash
+# Build the example
+cargo build --example bbl_crate_test
+
+# Run with a single file
+cargo run --example bbl_crate_test -- flight.BBL
+
+# Run with multiple files or patterns
+cargo run --example bbl_crate_test -- logs/*.BBL *.bbl
+```
+
+See [`examples/README.md`](examples/README.md) for detailed usage instructions.
+
+**Library API Examples**
+
+See [`simple_data_access_example.rs`](simple_data_access_example.rs) and [`example_3rd_party_usage.rs`](example_3rd_party_usage.rs) for complete working examples of direct crate usage.
 
 ### As a Command Line Tool
 
@@ -239,6 +263,8 @@ git clone <repository-url>
 cd bbl_parser
 cargo build --release
 ```
+
+**Note:** The main CLI tool provides CSV/GPX export and analysis. For a simpler demonstration of crate usage with PID display, see the `examples/bbl_crate_test` example above.
 
 ### Basic Usage
 ```bash
