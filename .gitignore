@@ -13,3 +13,8 @@
 !src/
 !src/*.rs
 !src/**/*.rs
+
+# Whitelist examples directory
+!examples/
+!examples/*.rs
+!examples/README.md
