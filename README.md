@@ -19,6 +19,7 @@ A high-performance Rust library and command-line tool for parsing BBL (Blackbox 
 - **CSV Export**: Flight data and header export with blackbox_decode compatibility
 - **GPS Export**: GPX file generation for GPS-enabled flight logs
 - **Event Export**: Flight event data extraction in JSONL format
+- **Smart Export Filtering**: Automatically skips short test flights while preserving high-quality short logs
 - **Command Line Interface**: Glob patterns, debug mode, configurable output directories
 - **Comprehensive Examples**: Practical demonstrations of crate usage with PID display and multi-firmware support
 
@@ -290,7 +291,26 @@ cargo build --release
 
 # Custom output directory
 ./target/release/bbl_parser --csv --output-dir ./output logs/*.BBL
+
+# Force export all logs (bypasses smart filtering)
+./target/release/bbl_parser --csv --force-export logs/*.BBL
 ```
+
+### Smart Export Filtering
+
+By default, the tool uses smart filtering to skip short test flights and focus on meaningful flight data:
+
+- **< 5 seconds**: Always skipped (brief arming, connectivity tests)
+- **5-15 seconds**: Kept only if data density > 1500 fps (sufficient for analysis)
+- **> 15 seconds**: Always kept (normal flight logs)
+
+**Examples:**
+- 0.7s flight with 1500 frames → Skipped (too short)
+- 2.2s flight with 4407 frames (2003 fps) → Kept (good data density)
+- 10s flight with 8000 frames (800 fps) → Skipped (insufficient data density)
+- 20s flight → Always kept (normal duration)
+
+Use `--force-export` to bypass filtering and export all logs regardless of duration or data quality.
 
 ## Output
 
