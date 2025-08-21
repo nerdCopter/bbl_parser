@@ -7,6 +7,9 @@ use crate::types::*;
 use crate::Result;
 use std::path::Path;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Export options for various output formats
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

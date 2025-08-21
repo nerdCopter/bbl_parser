@@ -4,6 +4,12 @@ use clap::Parser;
 use glob::glob;
 use std::path::{Path, PathBuf};
 
+// Type aliases to simplify complex PID tuples
+type PidValues = (i32, i32, i32);
+type PidWithFf = (i32, i32, i32, i32);
+type ThreePidValues = (PidValues, PidValues, PidValues);
+type ThreePidWithFf = (PidWithFf, PidWithFf, PidWithFf);
+
 #[derive(Parser)]
 #[command(name = "bbl_crate_test")]
 #[command(about = "Test program demonstrating BBL parser crate usage")]
@@ -179,13 +185,7 @@ fn display_pid_settings(all_headers: &[String]) {
 }
 
 /// Parse PID values with feedforward from raw header lines (for iNav 4-value format)
-fn parse_pid_with_ff_from_headers(
-    all_headers: &[String],
-) -> Option<(
-    (i32, i32, i32, i32),
-    (i32, i32, i32, i32),
-    (i32, i32, i32, i32),
-)> {
+fn parse_pid_with_ff_from_headers(all_headers: &[String]) -> Option<ThreePidWithFf> {
     let mut roll_pid = None;
     let mut pitch_pid = None;
     let mut yaw_pid = None;
@@ -214,9 +214,7 @@ fn parse_pid_with_ff_from_headers(
 }
 
 /// Parse PID values from raw header lines (for Betaflight rollPID/pitchPID/yawPID format)
-fn parse_pid_from_headers(
-    all_headers: &[String],
-) -> Option<((i32, i32, i32), (i32, i32, i32), (i32, i32, i32))> {
+fn parse_pid_from_headers(all_headers: &[String]) -> Option<ThreePidValues> {
     let mut roll_pid = None;
     let mut pitch_pid = None;
     let mut yaw_pid = None;
@@ -245,7 +243,7 @@ fn parse_pid_from_headers(
 }
 
 /// Parse feedforward values from raw header lines (Betaflight ff_weight format)
-fn parse_feedforward_from_headers(all_headers: &[String]) -> Option<(i32, i32, i32)> {
+fn parse_feedforward_from_headers(all_headers: &[String]) -> Option<PidValues> {
     for header in all_headers {
         if header.starts_with("H ff_weight:") {
             if let Some(value_str) = header.strip_prefix("H ff_weight:") {
@@ -259,7 +257,7 @@ fn parse_feedforward_from_headers(all_headers: &[String]) -> Option<(i32, i32, i
 }
 
 /// Parse PID string in format "P,I,D,FF" and return (P, I, D, FF) tuple
-fn parse_pid_with_ff_string(pid_value: &str) -> Option<(i32, i32, i32, i32)> {
+fn parse_pid_with_ff_string(pid_value: &str) -> Option<PidWithFf> {
     // Remove quotes if present
     let cleaned = pid_value.trim_matches('"');
 
@@ -278,7 +276,7 @@ fn parse_pid_with_ff_string(pid_value: &str) -> Option<(i32, i32, i32, i32)> {
 }
 
 /// Parse PID string in format "P,I,D" or "P,I,D,FF" and return (P, I, D) tuple
-fn parse_pid_string(pid_value: &str) -> Option<(i32, i32, i32)> {
+fn parse_pid_string(pid_value: &str) -> Option<PidValues> {
     // Remove quotes if present
     let cleaned = pid_value.trim_matches('"');
 

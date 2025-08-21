@@ -34,10 +34,11 @@
 
 ## Committing Rules
 - **Commit Conditions:** Only commit if:
-  - `cargo clippy -- -D warnings` passes.
+  - `cargo clippy --all-targets --all-features -- -D warnings` passes.
   - `cargo fmt --all -- --check` passes.
   - `cargo test --verbose` passes.
   - `cargo test --features=cli --verbose` passes.
+  - `cargo build --release` passes with no errors or warnings.
 - **Files to Commit:**
   - Only `src/**/*.rs`, `Cargo.*`, `README.md`, `OVERVIEW.md` and `.gitignore` — never `git add .` or `git add -A`.
   - Follow `.gitignore`.
@@ -46,3 +47,11 @@
   - Check `git diff --cached` before committing.
   - Use concise commit messages and descriptions.
   - Use `feat:`, `fix:`, `docs:` where applicable.
+
+## Mandatory Checks
+- **BEFORE ANY CODE CHANGES:** Always run `cargo clippy --all-targets --all-features -- -D warnings` to catch ALL issues.
+- **BEFORE ANY CODE CHANGES:** Always run `cargo fmt --all -- --check` to ensure formatting compliance.
+- **NO OPTIONAL FEATURES ERRORS:** All feature combinations must compile without errors.
+- **NO FORMATTING VIOLATIONS:** Code must pass `cargo fmt --all -- --check` without any formatting issues.
+- **STRICT COMPLIANCE:** Never skip clippy checks or formatting checks. Never allow warnings to pass.
+- **IMMEDIATE FORMATTING:** Apply `cargo fmt --all` immediately if formatting check fails.
