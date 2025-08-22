@@ -44,6 +44,9 @@ jobs:
       - name: Check documentation
         run: cargo doc --no-deps --all-features
 
+      - name: Check base build
+        run: cargo build --release
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
@@ -115,7 +118,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release binary
-        run: cargo build --release --features=cli
+        run: cargo build --release
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

@@ -18,3 +18,12 @@
 !examples/
 !examples/*.rs
 !examples/README.md
+
+# Whitelist .github directory and development tools
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!.github/instructions/
+!.github/instructions/*.md
+!.github/*.md
+!.github/*.sh

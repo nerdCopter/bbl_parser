@@ -402,6 +402,63 @@ Event parsing uses the official Betaflight FlightLogEvent enum:
 - Processes files that may cause external decoders to fail
 - Zero external dependencies - no blackbox_decode tools required
 
+## Development
+
+### Setting Up Development Environment
+
+To set up your development environment with proper formatting and pre-commit hooks:
+
+```bash
+# Clone and setup
+git clone <repository-url>
+cd bbl_parser
+
+# Run setup script (optional but recommended)
+chmod +x .github/setup-dev.sh
+./.github/setup-dev.sh
+```
+
+### Required Commands Before Committing
+
+**⚠️ IMPORTANT**: Always run these commands before committing to avoid CI failures:
+
+```bash
+# 1. Format code (REQUIRED)
+cargo fmt --all
+
+# 2. Check formatting compliance
+cargo fmt --all -- --check
+
+# 3. Check for clippy warnings (treated as errors)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# 4. Run all tests
+cargo test --verbose
+cargo test --features=cli --verbose
+
+# 5. Verify release build
+cargo build --release
+```
+
+### Pre-commit Hook (Recommended)
+
+Install the pre-commit hook to automatically format code:
+
+```bash
+cp .github/pre-commit-hook.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+This will automatically run `cargo fmt --all` before each commit and prevent commits with formatting issues.
+
+### CI Requirements
+
+The GitHub Actions CI enforces strict formatting and code quality:
+- **Formatting**: Must pass `cargo fmt --all -- --check`
+- **Linting**: Must pass `cargo clippy --all-targets --all-features -- -D warnings` 
+- **Testing**: Must pass all tests including CLI features
+- **Building**: Must build successfully on Ubuntu, Windows, and macOS
+
 ## Dependencies
 
 - `clap` (v4.0+) - CLI parsing

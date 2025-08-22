@@ -1116,13 +1116,13 @@ fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 /// Returns true if the log appears to be a static ground test (minimal movement)
 fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Conservative thresholds to avoid false-skips
-    const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data 
+    const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
     const VERY_LOW_GYRO_VARIANCE_THRESHOLD: f64 = 0.3; // More aggressive threshold for ground test detection
-    
+
     let mut gyro_x_values = Vec::new();
     let mut gyro_y_values = Vec::new();
     let mut gyro_z_values = Vec::new();
-    
+
     // First try to use debug_frames if available (contains more comprehensive data)
     if let Some(debug_frames) = &log.debug_frames {
         // Collect gyro data from I and P frames in debug_frames
@@ -1142,7 +1142,7 @@ fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
             }
         }
     }
-    
+
     // Fallback to sample_frames if debug_frames not available or insufficient data
     if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
         for frame in &log.sample_frames {
@@ -1157,23 +1157,23 @@ fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
             }
         }
     }
-    
+
     // Need sufficient data points for reliable analysis
     if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
         return (false, 0.0); // Not enough data, don't skip (conservative approach)
     }
-    
+
     // Calculate variance for each axis
     let variance_x = calculate_variance(&gyro_x_values);
-    let variance_y = calculate_variance(&gyro_y_values);  
+    let variance_y = calculate_variance(&gyro_y_values);
     let variance_z = calculate_variance(&gyro_z_values);
-    
+
     // Use the maximum variance across all axes
     let max_variance = variance_x.max(variance_y).max(variance_z);
-    
+
     // Very conservative: only skip if ALL axes show extremely low variance
     let is_minimal = max_variance < VERY_LOW_GYRO_VARIANCE_THRESHOLD;
-    
+
     (is_minimal, max_variance)
 }
 
@@ -1182,12 +1182,10 @@ fn calculate_variance(values: &[f64]) -> f64 {
     if values.len() < 2 {
         return 0.0;
     }
-    
+
     let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance = values.iter()
-        .map(|x| (x - mean).powi(2))
-        .sum::<f64>() / values.len() as f64;
-    
+    let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
+
     variance
 }
 
