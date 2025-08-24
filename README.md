@@ -29,13 +29,13 @@ A high-performance Rust library and command-line tool for parsing BBL (Blackbox 
 
 Exports blackbox logs to CSV format with blackbox_decode compatibility:
 
-- **`.XX.csv`**: Main flight data file containing I, P, S, G frame data
+- **`[.XX].csv`**: Main flight data file containing I, P, S, G frame data
   - Field names header row in blackbox_decode compatible order
   - Time field labeled as "time (us)" for microsecond precision
   - All flight loop data (I frames) and status data (S frames) 
   - GPS data (G frames) when available
   - Time-sorted chronological data rows
-- **`.XX.headers.csv`**: Complete header information file
+- **`[.XX].headers.csv`**: Complete header information file
   - Field,Value format with all configuration parameters
   - Frame definitions, system settings, firmware information
   - All BBL header metadata for analysis tools
@@ -44,7 +44,7 @@ Exports blackbox logs to CSV format with blackbox_decode compatibility:
 
 Exports GPS data to GPX format for mapping applications:
 
-- **`.gps.gpx`**: GPS track file in standard GPX format
+- **`[.XX].gps.gpx`**: GPS track file in standard GPX format
   - Geographic coordinates from GPS frames
   - Altitude information with proper firmware scaling
   - Timestamp data for track visualization
@@ -54,22 +54,36 @@ Exports GPS data to GPX format for mapping applications:
 
 Exports flight events to JSONL format:
 
-- **`.event`**: Flight event data in JSON Lines format
+- **`[.XX].event`**: Flight event data in JSON Lines format
   - Individual JSON objects per line for streaming compatibility
   - Event types based on official Betaflight FlightLogEvent enum
   - Includes sync beeps, disarm events, flight mode changes, log boundaries
   - Compatible with log analysis tools expecting JSONL format
 
-Where `XX` represents the flight log number (01, 02, 03, etc.) for multiple logs within a single BBL file.
+**Filename Logic:**
+- **Single log files**: Clean filenames without numbering (`flight_log.csv`, `flight_log.event`, `flight_log.gps.gpx`)
+- **Multiple log files**: Numbered sequence for clarity (`flight_log.01.csv`, `flight_log.02.event`, etc.)
 
 **Example files generated:**
+
+*Single log in BBL file:*
+```
+BTFL_LOG_20250601_121852.csv         # Flight data  
+BTFL_LOG_20250601_121852.headers.csv # Headers
+BTFL_LOG_20250601_121852.gps.gpx     # GPS track data
+BTFL_LOG_20250601_121852.event       # Flight events
+```
+
+*Multiple logs in BBL file:*
 ```
 BTFL_LOG_20250601_121852.01.csv         # Flight data for log 1
 BTFL_LOG_20250601_121852.01.headers.csv # Headers for log 1
-BTFL_LOG_20250601_121852.gps.gpx        # GPS track data
-BTFL_LOG_20250601_121852.event          # Flight events
+BTFL_LOG_20250601_121852.01.gps.gpx     # GPS data for log 1
+BTFL_LOG_20250601_121852.01.event       # Events for log 1
 BTFL_LOG_20250601_121852.02.csv         # Flight data for log 2  
 BTFL_LOG_20250601_121852.02.headers.csv # Headers for log 2
+BTFL_LOG_20250601_121852.02.gps.gpx     # GPS data for log 2
+BTFL_LOG_20250601_121852.02.event       # Events for log 2
 ```
 
 ## Installation & Usage
@@ -340,8 +354,10 @@ Data ver        2
 
 Additional output when export flags are used:
 ```
-Exported GPS data to: flight_log.gps.gpx      # When --gpx used
-Exported event data to: flight_log.event      # When --event used
+Exported headers to: flight_log[.XX].headers.csv
+Exported flight data to: flight_log[.XX].csv
+Exported GPS data to: flight_log[.XX].gps.gpx      # When --gpx used
+Exported event data to: flight_log[.XX].event      # When --event used
 ```
 
 ### Debug Output
@@ -352,7 +368,7 @@ Debug mode adds frame data tables for detailed analysis:
 === FRAME DATA ===
 
 I-frame data (25 frames):
-     Index     Time(μs)     Loop accSmooth[ accSmooth[ gyroADC[0]  motor[0]  motor[1] ... (40 more fields)
+     Index     Time(μs)     Loop   accSmooth   accSmooth   gyroADC[0]    motor[0]    motor[1] ... (40 more fields)
          0            0        4          0          0         -5      1270      1270 ...
          1     36147802    71168       -163        130       2289      1260      1277 ...
        ...          ...      ... ... (18 frames skipped)
@@ -360,7 +376,7 @@ I-frame data (25 frames):
         24     36885919    74112       -430         26       3552      1205      1210 ...
 
 P-frame data (50 frames):
-     Index     Time(μs)     Loop accSmooth[ accSmooth[ gyroADC[0]  motor[0]  motor[1] ... (40 more fields)
+     Index     Time(μs)     Loop   accSmooth   accSmooth   gyroADC[0]    motor[0]    motor[1] ... (40 more fields)
          0 18446744073709551615        5        -11          9         27       632       637 ...
          1 18446744073709551615        6        -11          9         26       948       958 ...
        ...          ...      ... ... (18 frames skipped)

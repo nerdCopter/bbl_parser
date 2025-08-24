@@ -1227,7 +1227,7 @@ fn export_logs_to_csv(
         let log_suffix = if logs.len() > 1 {
             format!(".{:02}", log.log_number)
         } else {
-            ".01".to_string()
+            "".to_string()
         };
 
         // Export plaintext headers to separate CSV
@@ -1272,7 +1272,7 @@ fn export_single_log_to_csv(
     let log_suffix = if log.total_logs > 1 {
         format!(".{:02}", log.log_number)
     } else {
-        ".01".to_string()
+        "".to_string()
     };
 
     // Export plaintext headers to separate CSV
@@ -2647,6 +2647,7 @@ fn parse_bbl_file_streaming(
             if let Err(e) = export_gpx_file(
                 file_path,
                 log_index,
+                log_positions.len(),
                 &gps_coords,
                 &home_coords,
                 export_options,
@@ -2664,7 +2665,13 @@ fn parse_bbl_file_streaming(
 
         // Export event data to JSON if requested
         if export_options.event && !events.is_empty() {
-            if let Err(e) = export_event_file(file_path, log_index, &events, export_options) {
+            if let Err(e) = export_event_file(
+                file_path,
+                log_index,
+                log_positions.len(),
+                &events,
+                export_options,
+            ) {
                 let filename = file_path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -2835,6 +2842,7 @@ fn convert_gps_course(raw_value: i32) -> f64 {
 fn export_gpx_file(
     file_path: &Path,
     log_number: usize,
+    total_logs: usize,
     gps_coords: &[GpsCoordinate],
     _home_coords: &[GpsHomeCoordinate], // TODO: Use home coordinates for reference point
     export_options: &ExportOptions,
@@ -2853,11 +2861,13 @@ fn export_gpx_file(
         .as_deref()
         .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
 
-    let gpx_filename = if log_number > 0 {
-        format!("{}/{}.{:02}.gps.gpx", output_dir, base_name, log_number + 1)
+    // Use consistent naming: only add suffix for multiple logs
+    let log_suffix = if total_logs > 1 {
+        format!(".{:02}", log_number + 1)
     } else {
-        format!("{}/{}.gps.gpx", output_dir, base_name)
+        "".to_string()
     };
+    let gpx_filename = format!("{}/{}{}.gps.gpx", output_dir, base_name, log_suffix);
 
     let mut gpx_file = std::fs::File::create(&gpx_filename)?;
     writeln!(gpx_file, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
@@ -2906,6 +2916,7 @@ fn export_gpx_file(
 fn export_event_file(
     file_path: &Path,
     log_number: usize,
+    total_logs: usize,
     events: &[EventFrame],
     export_options: &ExportOptions,
 ) -> Result<()> {
@@ -2923,11 +2934,13 @@ fn export_event_file(
         .as_deref()
         .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
 
-    let event_filename = if log_number > 0 {
-        format!("{}/{}.{:02}.event", output_dir, base_name, log_number + 1)
+    // Use consistent naming: only add suffix for multiple logs
+    let log_suffix = if total_logs > 1 {
+        format!(".{:02}", log_number + 1)
     } else {
-        format!("{}/{}.event", output_dir, base_name)
+        "".to_string()
     };
+    let event_filename = format!("{}/{}{}.event", output_dir, base_name, log_suffix);
 
     let mut event_file = std::fs::File::create(&event_filename)?;
 
