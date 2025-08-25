@@ -258,14 +258,14 @@ impl CsvFieldMap {
     }
 }
 
-fn main() -> Result<()> {
-    let matches = Command::new("BBL Parser")
+fn build_command() -> Command {
+    Command::new("BBL Parser")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Read and parse BBL blackbox log files. Output to various formats.")
         .arg(
             Arg::new("files")
                 .help("BBL files to parse (.BBL, .BFL, .TXT extensions supported, case-insensitive, supports globbing)")
-                .required(true)
+                .required(false)
                 .num_args(1..)
                 .index(1),
         )
@@ -311,7 +311,10 @@ fn main() -> Result<()> {
                 .help("Force export of all logs, including short flights (bypasses smart filtering: <5s skip, 5-15s needs >1500fps, >15s keep)")
                 .action(clap::ArgAction::SetTrue),
         )
-        .get_matches();
+}
+
+fn main() -> Result<()> {
+    let matches = build_command().get_matches();
 
     let debug = matches.get_flag("debug");
     let export_csv = matches.get_flag("csv");
@@ -319,7 +322,17 @@ fn main() -> Result<()> {
     let export_event = matches.get_flag("event");
     let force_export = matches.get_flag("force-export");
     let output_dir = matches.get_one::<String>("output-dir").cloned();
-    let file_patterns: Vec<&String> = matches.get_many::<String>("files").unwrap().collect();
+
+    // Check if no files were provided and show help
+    let file_patterns: Vec<&String> = match matches.get_many::<String>("files") {
+        Some(files) => files.collect(),
+        None => {
+            // No files provided, show help and exit
+            build_command().print_help()?;
+            println!();
+            return Ok(());
+        }
+    };
 
     let export_options = ExportOptions {
         csv: export_csv,
