@@ -468,6 +468,11 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Inform user when no output files were created due to missing --csv flag
+    if processed_files > 0 && !export_csv && !export_gpx && !export_event {
+        println!("\nNote: No output files were created. Use --csv to export data to CSV files.");
+    }
+
     Ok(())
 }
 
