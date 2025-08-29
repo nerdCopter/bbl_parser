@@ -6,8 +6,11 @@ Thank you for your interest in contributing to this project! This document outli
 
 By submitting a pull request or otherwise contributing code to this project, you agree to the following terms:
 
-1. You grant the project maintainer copyright to your contributions.
-2. You grant the project maintainer the right to license your contributions under any license, including dual or commercial licensing arrangements.
+1. You grant the project maintainer a perpetual, worldwide, irrevocable, non-exclusive,
+   transferable, sublicensable license to use, reproduce, modify, distribute,
+   and relicense your contributions under any terms, including dual- and 
+   commercial-licensing arrangements.
+2. You represent and warrant you have all necessary rights to grant the above license.
 3. You certify that your contributions are either:
    - Created entirely by you and you have the right to submit it under these terms, or
    - Based on other open source work that permits such contributions.
