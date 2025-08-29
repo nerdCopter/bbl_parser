@@ -1,14 +1,14 @@
 # Commercial License
 
-This Commercial License Agreement (the "Agreement") is made between the project maintainer ("Licensor") and any individual or entity ("Licensee") who wishes to use the software library (the "Software") for commercial purposes.
+This Commercial License Agreement (the "Agreement") is made between the project maintainer ("Licensor") and any individual or entity ("Licensee") who wishes to use the software library (the "Software") for commercial purposes. Contact the project maintainer via GitHub at https://github.com/nerdCopter.
 
 ## 1. Dual Licensing
 The Software is dual-licensed under:
-- GNU General Public License v3.0 (GPL-3.0) for open source use
+- Affero General Public License v3.0 or later (AGPL-3.0-or-later) for open source use
 - This Commercial License for commercial/proprietary use
 
 ## 2. Commercial License Grant
-Subject to payment of the applicable license fee and Licensee's compliance with the terms of this Agreement, Licensor grants to Licensee a non-exclusive, worldwide license to use, copy, modify, and distribute the Software in Licensee's proprietary software products without the restrictions of the GPL-3.0 license.
+Subject to payment of the applicable license fee and Licensee's compliance with the terms of this Agreement, Licensor grants to Licensee a non-exclusive, worldwide license to use, copy, modify, and distribute the Software in Licensee's proprietary software products without the restrictions of the AGPL-3.0-or-later license.
 
 ## 3. Pricing and Payment
 For commercial use licensing fees and payment options, please contact:
@@ -26,7 +26,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## 7. Term and Termination
-This Agreement is effective until terminated. Licensor may terminate this Agreement for Licensee's material breach that remains uncured 30 days after written notice. Upon termination, all rights granted to Licensee terminate and Licensee will cease use and distribution of the Software. Sections 5 (Warranty Disclaimer), 6 (Limitation of Liability), and 9–12 (as added below) survive termination.
+This Agreement is effective until terminated. Licensor may terminate this Agreement for Licensee's material breach that remains uncured 30 days after written notice. Upon termination, all rights granted to Licensee terminate and Licensee will cease use and distribution of the Software. The following survive termination: Section 2 (Commercial License Grant), Section 3 (Pricing and Payment) solely for amounts accrued but unpaid, Section 5 (Warranty Disclaimer), and Section 6 (Limitation of Liability).
 
 ---
 To inquire about obtaining a commercial license, please contact:
