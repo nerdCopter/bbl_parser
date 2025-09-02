@@ -8,6 +8,9 @@
 !FRAMES.md
 !Cargo.*
 !.gitignore
+!LICENSE
+!LICENSE_COMMERCIAL
+!CONTRIBUTING.md
 
 # Whitelist src directory and all Rust files within it
 !src/

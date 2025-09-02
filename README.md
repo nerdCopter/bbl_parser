@@ -517,7 +517,15 @@ The GitHub Actions CI enforces strict formatting and code quality:
 
 ## License
 
-This project is provided as-is for educational and development use with flight controller blackbox logs.  
+This project is dual-licensed under:
+
+### Open Source License (AGPL-3.0-or-later)
+Under the [GNU Affero General Public License v3.0 or later](LICENSE), you may use, modify, and distribute this software for both commercial and non-commercial purposes. However, this license imposes copyleft obligations that require any modified or redistributed versions of this work to also be licensed under the AGPL-3.0-or-later and make the source code available. **If you use this software to provide a network service, you must also make the source code available to users of that service.** See the [LICENSE](LICENSE) file for full terms.
+
+### Commercial License
+For proprietary applications that need to use this project without AGPL-3.0-or-later's copyleft and network requirements, a separate commercial license is available as detailed in [LICENSE_COMMERCIAL](LICENSE_COMMERCIAL). Commercial use must abide by the terms in LICENSE_COMMERCIAL if you choose not to comply with AGPL-3.0-or-later. This option allows:
+
+Please contact the project maintainer for commercial licensing details.
 
 ## Acknowledgments
 
