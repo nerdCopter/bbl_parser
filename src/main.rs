@@ -308,7 +308,7 @@ fn build_command() -> Command {
         .arg(
             Arg::new("force-export")
                 .long("force-export")
-                .help("Force export of all logs, including short flights (bypasses smart filtering: <5s skip, 5-15s needs >1500fps, >15s keep)")
+                .help("Force export of all logs, including short flights (bypasses smart filtering: <5s skip, 5-15s needs >1500fps, >15s check gyro activity)")
                 .action(clap::ArgAction::SetTrue),
         )
 }
@@ -1056,7 +1056,7 @@ fn display_log_info(log: &BBLLog) {
 }
 
 /// Determines if a log should be skipped for export based on duration and frame count
-/// Uses smart filtering: <5s always skip, 5-15s keep if good data density (>1500fps), >15s always keep
+/// Uses smart filtering: <5s always skip, 5-15s keep if good data density (>1500fps), >15s check gyro activity for ground test detection
 fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
     if force_export {
         return (false, String::new()); // Never skip when forced
@@ -1135,7 +1135,7 @@ fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Conservative thresholds to avoid false-skips
     const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
-    const VERY_LOW_GYRO_VARIANCE_THRESHOLD: f64 = 0.3; // More aggressive threshold for ground test detection
+    const VERY_LOW_GYRO_VARIANCE_THRESHOLD: f64 = 0.15; // Balanced threshold: allows legitimate flights (0.2) while filtering poor quality logs
 
     let mut gyro_x_values = Vec::new();
     let mut gyro_y_values = Vec::new();
