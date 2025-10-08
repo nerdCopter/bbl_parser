@@ -461,12 +461,6 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // CSV export is always enabled, but inform user if no optional exports were enabled
-    if processed_files > 0 && !export_gpx && !export_event {
-        // Only show this if they might have expected other outputs
-        // (no message needed since CSV is always created)
-    }
-
     Ok(())
 }
 
