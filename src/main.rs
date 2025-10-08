@@ -261,7 +261,7 @@ impl CsvFieldMap {
 fn build_command() -> Command {
     Command::new("BBL Parser")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("Read and parse BBL blackbox log files. Output to various formats.")
+        .about("Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).")
         .arg(
             Arg::new("files")
                 .help("BBL files to parse (.BBL, .BFL, .TXT extensions supported, case-insensitive, supports globbing)")
@@ -276,15 +276,9 @@ fn build_command() -> Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
-            Arg::new("csv")
-                .long("csv")
-                .help("Export decoded frame data to CSV files (creates .XX.csv for flight data and .XX.headers.csv for plaintext headers)")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("output-dir")
                 .long("output-dir")
-                .help("Directory for CSV output files (default: same as input file)")
+                .help("Directory for output files (default: same as input file)")
                 .value_name("DIR"),
         )
         .arg(
@@ -317,7 +311,6 @@ fn main() -> Result<()> {
     let matches = build_command().get_matches();
 
     let debug = matches.get_flag("debug");
-    let export_csv = matches.get_flag("csv");
     let export_gpx = matches.get_flag("gpx") || matches.get_flag("gps");
     let export_event = matches.get_flag("event");
     let force_export = matches.get_flag("force-export");
@@ -335,7 +328,7 @@ fn main() -> Result<()> {
     };
 
     let export_options = ExportOptions {
-        csv: export_csv,
+        csv: true, // CSV export is always enabled for the CLI binary
         gpx: export_gpx,
         event: export_event,
         output_dir: output_dir.clone(),
@@ -468,9 +461,10 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Inform user when no output files were created due to missing --csv flag
-    if processed_files > 0 && !export_csv && !export_gpx && !export_event {
-        println!("\nNote: No output files were created. Use --csv to export data to CSV files.");
+    // CSV export is always enabled, but inform user if no optional exports were enabled
+    if processed_files > 0 && !export_gpx && !export_event {
+        // Only show this if they might have expected other outputs
+        // (no message needed since CSV is always created)
     }
 
     Ok(())
