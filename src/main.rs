@@ -136,10 +136,30 @@ fn find_bbl_files_in_dir_with_depth(
                 return Ok(bbl_files);
             }
 
-            let entries = fs::read_dir(&canonical_dir)?;
+            let entries = match fs::read_dir(&canonical_dir) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Cannot read directory '{}': {}",
+                        canonical_dir.display(),
+                        e
+                    );
+                    return Ok(bbl_files);
+                }
+            };
 
             for entry in entries {
-                let entry = entry?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Cannot read entry in directory '{}': {}",
+                            canonical_dir.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
                 let path = entry.path();
 
                 match path.canonicalize() {
