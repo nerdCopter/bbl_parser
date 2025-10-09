@@ -4,16 +4,37 @@ use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
 use semver::Version;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Maximum recursion depth to prevent stack overflow
+const MAX_RECURSION_DEPTH: usize = 100;
 
 /// Expand input paths to a list of BBL files.
 /// If a path is a file, add it directly (will be filtered later for BBL/BFL/TXT extension).
 /// If a path is a directory, recursively find all BBL files within it.
 /// If a path contains glob patterns, expand them first.
-fn expand_input_paths(input_paths: &[String]) -> Result<Vec<String>> {
+fn expand_input_paths(
+    input_paths: &[String],
+    visited: &mut HashSet<PathBuf>,
+) -> Result<Vec<String>> {
+    expand_input_paths_with_depth(input_paths, visited, 0)
+}
+
+/// Internal function with depth tracking for recursion protection
+fn expand_input_paths_with_depth(
+    input_paths: &[String],
+    visited: &mut HashSet<PathBuf>,
+    depth: usize,
+) -> Result<Vec<String>> {
+    if depth > MAX_RECURSION_DEPTH {
+        return Err(anyhow::anyhow!(
+            "Maximum recursion depth exceeded ({})",
+            MAX_RECURSION_DEPTH
+        ));
+    }
     let mut bbl_files = Vec::new();
 
     for input_path_str in input_paths {
@@ -26,18 +47,26 @@ fn expand_input_paths(input_paths: &[String]) -> Result<Vec<String>> {
                         Ok(paths) => {
                             for path in paths {
                                 if let Some(path_str) = path.to_str() {
-                                    let sub_result = expand_input_paths(&[path_str.to_string()])?;
+                                    let sub_result = expand_input_paths_with_depth(
+                                        &[path_str.to_string()],
+                                        visited,
+                                        depth + 1,
+                                    )?;
                                     bbl_files.extend(sub_result);
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("Error expanding glob pattern '{input_path_str}': {e}");
+                            return Err(anyhow::Error::new(e).context(format!(
+                                "Error expanding glob pattern '{}'",
+                                input_path_str
+                            )));
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Invalid glob pattern '{input_path_str}': {e}");
+                    return Err(anyhow::Error::new(e)
+                        .context(format!("Invalid glob pattern '{}'", input_path_str)));
                 }
             }
             continue;
@@ -45,53 +74,119 @@ fn expand_input_paths(input_paths: &[String]) -> Result<Vec<String>> {
 
         let input_path = Path::new(input_path_str);
 
-        if input_path.is_file() {
-            // It's a file, add it directly
-            bbl_files.push(input_path_str.clone());
-        } else if input_path.is_dir() {
-            // It's a directory, find all BBL files recursively
-            let mut dir_bbl_files = find_bbl_files_in_dir(input_path)?;
-            bbl_files.append(&mut dir_bbl_files);
-        } else {
-            // Path doesn't exist or isn't accessible
-            eprintln!(
-                "Warning: Path not found or not accessible: {}",
-                input_path_str
-            );
+        match input_path.canonicalize() {
+            Ok(canonical_path) => {
+                if canonical_path.is_file() {
+                    // It's a file, add it directly
+                    if let Some(path_str) = canonical_path.to_str() {
+                        bbl_files.push(path_str.to_string());
+                    }
+                } else if canonical_path.is_dir() {
+                    // It's a directory, find all BBL files recursively
+                    // Don't add to visited here since find_bbl_files_in_dir_with_depth will handle it
+                    let mut dir_bbl_files =
+                        find_bbl_files_in_dir_with_depth(&canonical_path, visited, depth + 1)?;
+                    bbl_files.append(&mut dir_bbl_files);
+                } else {
+                    // Path doesn't exist or isn't accessible
+                    eprintln!(
+                        "Warning: Path not found or not accessible: {}",
+                        input_path_str
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to canonicalize path '{}': {}",
+                    input_path_str, e
+                );
+                // Skip this path
+                continue;
+            }
         }
     }
 
     Ok(bbl_files)
 }
 
-/// Recursively find all BBL files in a directory
-fn find_bbl_files_in_dir(dir_path: &Path) -> Result<Vec<String>> {
-    let mut bbl_files = Vec::new();
-
-    if !dir_path.is_dir() {
-        return Ok(bbl_files);
+/// Recursively find all BBL files in a directory, protecting against symlink cycles and depth overflow
+fn find_bbl_files_in_dir_with_depth(
+    dir_path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    depth: usize,
+) -> Result<Vec<String>> {
+    if depth > MAX_RECURSION_DEPTH {
+        return Err(anyhow::anyhow!(
+            "Maximum recursion depth exceeded in directory traversal ({})",
+            MAX_RECURSION_DEPTH
+        ));
     }
 
-    let entries = fs::read_dir(dir_path)?;
+    let mut bbl_files = Vec::new();
 
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
+    match dir_path.canonicalize() {
+        Ok(canonical_dir) => {
+            if visited.contains(&canonical_dir) {
+                // Already visited, skip to avoid cycles
+                return Ok(bbl_files);
+            }
+            visited.insert(canonical_dir.clone());
 
-        if path.is_dir() {
-            // Recursively search subdirectories
-            let mut sub_bbl_files = find_bbl_files_in_dir(&path)?;
-            bbl_files.append(&mut sub_bbl_files);
-        } else if path.is_file() {
-            // Check if it's a BBL file (only BBL for directories, not TXT)
-            if let Some(extension) = path.extension() {
-                let ext_lower = extension.to_string_lossy().to_ascii_lowercase();
-                if ext_lower == "bbl" || ext_lower == "bfl" {
-                    if let Some(path_str) = path.to_str() {
-                        bbl_files.push(path_str.to_string());
+            if !canonical_dir.is_dir() {
+                return Ok(bbl_files);
+            }
+
+            let entries = fs::read_dir(&canonical_dir)?;
+
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+
+                match path.canonicalize() {
+                    Ok(canonical_path) => {
+                        if visited.contains(&canonical_path) {
+                            continue;
+                        }
+                        visited.insert(canonical_path.clone());
+
+                        if canonical_path.is_dir() {
+                            // Recursively search subdirectories
+                            let mut sub_bbl_files = find_bbl_files_in_dir_with_depth(
+                                &canonical_path,
+                                visited,
+                                depth + 1,
+                            )?;
+                            bbl_files.append(&mut sub_bbl_files);
+                        } else if canonical_path.is_file() {
+                            // Check if it's a BBL file (only BBL for directories, not TXT)
+                            if let Some(extension) = canonical_path.extension() {
+                                let ext_lower = extension.to_string_lossy().to_ascii_lowercase();
+                                if ext_lower == "bbl" || ext_lower == "bfl" {
+                                    if let Some(path_str) = canonical_path.to_str() {
+                                        bbl_files.push(path_str.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to canonicalize path in dir '{}': {}",
+                            path.display(),
+                            e
+                        );
+                        continue;
                     }
                 }
             }
+        }
+        Err(e) => {
+            eprintln!(
+                "Warning: Failed to canonicalize directory '{}': {}",
+                dir_path.display(),
+                e
+            );
+            return Ok(bbl_files);
         }
     }
 
@@ -437,11 +532,13 @@ fn main() -> Result<()> {
     }
 
     // Expand input paths (files and directories) to a list of BBL files
+    let mut visited = HashSet::new();
     let input_files = match expand_input_paths(
         &file_patterns
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
+        &mut visited,
     ) {
         Ok(files) => files,
         Err(e) => {
