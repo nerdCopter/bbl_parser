@@ -471,7 +471,7 @@ fn build_command() -> Command {
         .about("Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).")
         .arg(
             Arg::new("files")
-                .help("BBL files or directories to parse. Files: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only. Case-insensitive, supports globbing.")
+                .help("BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.")
                 .required(false)
                 .num_args(1..)
                 .index(1),
@@ -568,7 +568,7 @@ fn main() -> Result<()> {
     };
 
     if input_files.is_empty() {
-        eprintln!("Error: No BBL files found in the specified input paths.");
+        eprintln!("Error: No valid BBL/BFL/TXT files found in the specified input paths.");
         std::process::exit(1);
     }
 
