@@ -44,7 +44,8 @@ fn expand_input_paths_with_depth(
                 Ok(glob_iter) => {
                     let collected = glob_iter.collect::<Result<Vec<_>, _>>();
                     match collected {
-                        Ok(paths) => {
+                        Ok(mut paths) => {
+                            paths.sort(); // deterministic ordering
                             for path in paths {
                                 if let Some(path_str) = path.to_str() {
                                     let sub_result = expand_input_paths_with_depth(
@@ -77,9 +78,11 @@ fn expand_input_paths_with_depth(
         match input_path.canonicalize() {
             Ok(canonical_path) => {
                 if canonical_path.is_file() {
-                    // It's a file, add it directly
-                    if let Some(path_str) = canonical_path.to_str() {
-                        bbl_files.push(path_str.to_string());
+                    // It's a file; dedupe using visited
+                    if visited.insert(canonical_path.clone()) {
+                        if let Some(path_str) = canonical_path.to_str() {
+                            bbl_files.push(path_str.to_string());
+                        }
                     }
                 } else if canonical_path.is_dir() {
                     // It's a directory, find all BBL files recursively
@@ -553,7 +556,7 @@ fn main() -> Result<()> {
 
     // Expand input paths (files and directories) to a list of BBL files
     let mut visited = HashSet::new();
-    let input_files = match expand_input_paths(
+    let mut input_files = match expand_input_paths(
         &file_patterns
             .iter()
             .map(|s| s.to_string())
@@ -566,6 +569,12 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    // Dedupe while preserving original order
+    {
+        let mut seen = std::collections::HashSet::new();
+        input_files.retain(|p| seen.insert(p.clone()));
+    }
 
     if input_files.is_empty() {
         eprintln!("Error: No valid BBL/BFL/TXT files found in the specified input paths.");
