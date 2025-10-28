@@ -32,6 +32,12 @@ By submitting a pull request or otherwise contributing code to this project, you
 - Write meaningful commit messages.
 - Document all public API functions.
 - Add comments for complex or non-obvious code sections.
+- Enable the pre-commit formatting hook (recommended):
+
+```
+cp .github/pre-commit-hook.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
 
 ## Reporting Issues
 
