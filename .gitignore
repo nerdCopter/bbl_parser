@@ -11,6 +11,7 @@
 !LICENSE
 !LICENSE_COMMERCIAL
 !CONTRIBUTING.md
+!CRATE_USAGE.md
 
 # Whitelist src directory and all Rust files within it
 !src/

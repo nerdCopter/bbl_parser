@@ -87,7 +87,7 @@ The BBL parser implements a streaming architecture designed for memory efficienc
 BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`, `TAG2_3S32`, `TAG8_4S16`
 
 ### **Project Structure**
-```
+```text
 src/
 ├── main.rs              # CLI interface, file handling, statistics, CSV export
 ├── lib.rs               # Library API exports and documentation
@@ -119,7 +119,7 @@ src/
 - **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
 - **Smart Export Filtering:** Automatically skips short test flights (<5s) while preserving high-quality short logs
-
+stub
 ### **Library API**
 - **Complete Data Access:** Programmatic access to all BBL data structures
 - **Memory-Based Parsing:** Parse from file paths or memory buffers (`parse_bbl_file`, `parse_bbl_bytes`)
