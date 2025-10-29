@@ -77,55 +77,63 @@ The BBL parser implements a streaming architecture designed for memory efficienc
 - **E-frames:** Flight events with official Betaflight FlightLogEvent enum mapping
 
 ### **Export Functionality**
-- **CSV Export:** blackbox_decode compatible format with proper field ordering
-- **GPX Export:** Standard GPS exchange format for mapping applications  
-- **Event Export:** JSONL format with Betaflight event type descriptions
+- **CSV Export:** blackbox_decode compatible format with proper field ordering (CLI functional, crate stub)
+- **GPX Export:** Standard GPS exchange format for mapping applications (CLI functional)
+- **Event Export:** JSONL format with Betaflight event type descriptions (CLI functional)
+
+**Note:** Export functionality is currently implemented in the CLI (`src/main.rs`). Crate-level export functions in `src/export.rs` are stubs pending systematic migration.
 
 ### **Encoding Support**
 BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`, `TAG2_3S32`, `TAG8_4S16`
 
 ### **Project Structure**
-```
+```text
 src/
-├── main.rs              # CLI interface, file handling, statistics
+├── main.rs              # CLI interface, file handling, statistics, CSV export
+├── lib.rs               # Library API exports and documentation
 ├── bbl_format.rs        # BBL binary format decoding and encoding
+├── conversion.rs        # Unit conversions (GPS coordinates, altitude, speed)
 ├── error.rs             # Error handling and result types
+├── export.rs            # Export function stubs (CSV/GPX/Event migration in progress)
 ├── types/               # Core data structures
-│   ├── mod.rs          #   Module definitions
-│   ├── log.rs          #   Log container types
-│   ├── frame.rs        #   Frame data structures
-│   └── header.rs       #   Header information types
+│   ├── mod.rs          #   Module definitions and re-exports
+│   ├── log.rs          #   BBLLog container type
+│   ├── frame.rs        #   DecodedFrame and FrameDefinition structures
+│   ├── header.rs       #   BBLHeader and field definitions
+│   └── gps.rs          #   GpsCoordinate, GpsHomeCoordinate, EventFrame
 └── parser/              # Parsing implementation
     ├── mod.rs          #   Parser module definitions
-    ├── decoder.rs      #   Frame decoding logic
-    ├── frame.rs        #   Frame parsing implementations
+    ├── main.rs         #   High-level parsing entry points (parse_bbl_file, parse_bbl_bytes)
+    ├── decoder.rs      #   Frame decoding logic and predictors
+    ├── frame.rs        #   Frame parsing implementations (I, P, S, G, H, E frames)
     ├── header.rs       #   Header parsing logic
-    └── stream.rs       #   Binary stream handling
+    └── stream.rs       #   Binary stream handling (BBLDataStream)
 ```
 
 ---
 
 ## 🚀 **Current Features**
 
-### **Current Features**
-
 ### **File Processing**
 - **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
 - **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
+- **Smart Export Filtering:** Automatically skips short test flights (<5s) while preserving high-quality short logs
 
 ### **Library API**
 - **Complete Data Access:** Programmatic access to all BBL data structures
-- **Memory-Based Parsing:** Parse from file paths or memory buffers
-- **Multi-Log Support:** Handle files containing multiple flight sessions
+- **Memory-Based Parsing:** Parse from file paths or memory buffers (`parse_bbl_file`, `parse_bbl_bytes`)
+- **Multi-Log Support:** Handle files containing multiple flight sessions (`parse_bbl_file_all_logs`, `parse_bbl_bytes_all_logs`)
 - **Serde Integration:** Optional serialization support for data structures
 - **Rust Crate:** Available as library dependency for 3rd party projects
 
-### **Data Export Capabilities**
+### **Data Export Capabilities (CLI)**
 - **CSV Export:** blackbox_decode compatible field ordering and formatting
-- **GPS Export:** GPX format generation for mapping applications
-- **Event Export:** Flight event data in JSONL format with Betaflight event type mapping
-- **Multi-log Support:** Individual files for each flight session
+  - Main flight data `[.XX].csv` with proper field order and "time (us)" column
+  - Headers `[.XX].headers.csv` with complete configuration
+- **GPS Export:** GPX format generation for mapping applications (`[.XX].gps.gpx`)
+- **Event Export:** Flight event data in JSONL format (`[.XX].event`)
+- **Multi-log Support:** Individual numbered files for each flight session (`.01.`, `.02.`, etc.)
 - **Metadata Export:** Complete header and configuration information
 
 ### **Architecture Benefits**
@@ -165,35 +173,9 @@ src/
 
 ---
 
-## 🔍 **Current Data Processing**
-
-### **Frame Processing**
-- **Frame Parsing:** Basic parsing of all major frame types
-- **Temporal Resolution:** Maintains flight sequence timing
-- **Error Detection:** Basic validation with diagnostic output
-- **Memory Management:** Streaming architecture for large files
-
-### **Export Quality**
-- **CSV Compatibility:** Basic blackbox_decode format compatibility
-- **GPS Accuracy:** Coordinate conversion with firmware-specific scaling
-- **Event Mapping:** Official Betaflight FlightLogEvent enum compliance
-
----
-
-## 📈 **Development Focus Areas**
-
-### **Current Priorities**
-- **Testing:** Comprehensive validation across firmware versions
-- **Performance:** Optimization for large file processing
-- **Error Handling:** Improved diagnostic and recovery capabilities
-- **Documentation:** Complete API documentation and usage examples
-- **Compatibility:** Enhanced support for edge cases and unusual file formats
-
----
-
 ## 📋 **Usage Examples**
 
-### **Basic Processing**
+### **Command-Line Interface**
 ```bash
 # Single file analysis
 ./target/release/bbl_parser flight.BBL
@@ -213,11 +195,14 @@ src/
 # All export formats
 ./target/release/bbl_parser --csv --gpx --event logs/*.BBL
 
+# Force export all logs (bypasses smart filtering)
+./target/release/bbl_parser --csv --force-export logs/*.BBL
+
 # Debug mode for development analysis
 ./target/release/bbl_parser --debug problematic_file.BBL
 ```
 
-### **Typical Output**
+### **Typical CLI Output**
 ```
 Processing: BTFL_BLACKBOX_LOG_20250601_121852.BBL
 
@@ -243,21 +228,6 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 
 ---
 
-## 🔍 **Current Data Processing**
-
-### **Frame Processing**
-- **Frame Parsing:** Basic parsing of all major frame types
-- **Temporal Resolution:** Maintains flight sequence timing
-- **Error Detection:** Basic validation with diagnostic output
-- **Memory Management:** Streaming architecture for large files
-
-### **Export Quality**
-- **CSV Compatibility:** Basic blackbox_decode format compatibility
-- **GPS Accuracy:** Coordinate conversion with firmware-specific scaling
-- **Event Mapping:** Official Betaflight FlightLogEvent enum compliance
-
----
-
 ## 🎯 **Use Cases & Applications**
 
 ### **Current Applications**
@@ -280,13 +250,18 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 ## 📝 **Documentation**
 
 ### **Available Documentation**
-- **README.md** - User guide, installation, usage examples, and complete library API documentation
-- **OVERVIEW.md** - Technical architecture and feature overview  
+- **README.md** - CLI-focused user guide with installation and quick start
+- **CRATE_USAGE.md** - Rust crate API usage guide with code examples
+- **OVERVIEW.md** - Technical architecture and feature overview (this document)
 - **FRAMES.md** - Frame format specifications and encoding details
 - **GOALS.md** - Project objectives and design principles
+- **examples/README.md** - Example programs demonstrating crate usage
 
 ### **Development Documentation**
-API documentation available via `cargo doc` and comprehensive usage examples in README.md for library integration.
+- API documentation available via `cargo doc`
+- Comprehensive crate usage examples in `CRATE_USAGE.md` and `examples/`
+- Pre-commit hooks for automatic code formatting (`.github/pre-commit-hook.sh`)
+- Development environment setup script (`.github/setup-dev.sh`)
 
 ---
 
