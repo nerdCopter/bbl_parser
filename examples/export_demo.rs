@@ -93,9 +93,15 @@ fn main() -> Result<()> {
             "Exporting GPX file ({} GPS coordinates)...",
             log.gps_coordinates.len()
         );
+        let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid log number: {} cannot be used to compute index",
+                log.log_number
+            )
+        })?;
         export_to_gpx(
             input_path,
-            log.log_number - 1,
+            log_index,
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts,
@@ -111,12 +117,13 @@ fn main() -> Result<()> {
             "Exporting event file ({} events)...",
             log.event_frames.len()
         );
-        export_to_event(
-            input_path,
-            log.log_number - 1,
-            &log.event_frames,
-            &export_opts,
-        )?;
+        let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid log number: {} cannot be used to compute index",
+                log.log_number
+            )
+        })?;
+        export_to_event(input_path, log_index, &log.event_frames, &export_opts)?;
         println!("✓ Event export complete");
 
         // Display sample events
