@@ -8,6 +8,7 @@ Focused guidance for using the bbl_parser Rust crate.
 - [Basic usage](#basic-usage)
 - [Multi-log processing](#multi-log-processing)
 - [Parsing from memory](#parsing-from-memory)
+- [Export functionality](#export-functionality)
 - [Examples](#examples)
 - [Notes](#notes)
 
@@ -74,6 +75,141 @@ fn main() -> anyhow::Result<()> {
     let bytes = std::fs::read("flight.BBL")?;
     let log = parse_bbl_bytes(&bytes, ExportOptions::default(), false)?;
     println!("frames: {}", log.sample_frames.len());
+    Ok(())
+}
+```
+
+## Export functionality
+
+The crate now provides full export capabilities for CSV, GPX, and Event data formats.
+
+### CSV Export
+
+Export parsed log data to CSV files (flight data + headers):
+
+```rust
+use bbl_parser::{parse_bbl_file, export_to_csv, ExportOptions};
+use std::path::Path;
+
+fn main() -> anyhow::Result<()> {
+    let export_opts = ExportOptions {
+        csv: true,
+        gpx: false,
+        event: false,
+        output_dir: Some("output".to_string()),
+        force_export: false,
+    };
+    
+    let log = parse_bbl_file(Path::new("flight.BBL"), export_opts.clone(), false)?;
+    export_to_csv(&log, Path::new("flight.BBL"), &export_opts)?;
+    println!("CSV exported successfully");
+    Ok(())
+}
+```
+
+This creates two files:
+- `flight.csv` - Main flight data with blackbox_decode compatible format
+- `flight.headers.csv` - Complete header information
+
+### GPX Export
+
+Export GPS data to GPX format for mapping applications:
+
+```rust
+use bbl_parser::{parse_bbl_file, export_to_gpx, ExportOptions};
+use std::path::Path;
+
+fn main() -> anyhow::Result<()> {
+    let export_opts = ExportOptions {
+        csv: false,
+        gpx: true,
+        event: false,
+        output_dir: None,
+        force_export: false,
+    };
+    
+    let log = parse_bbl_file(Path::new("flight.BBL"), export_opts.clone(), false)?;
+    
+    if !log.gps_coordinates.is_empty() {
+        export_to_gpx(
+            Path::new("flight.BBL"),
+            0,  // log index
+            &log.gps_coordinates,
+            &log.home_coordinates,
+            &export_opts
+        )?;
+        println!("GPX exported successfully");
+    }
+    Ok(())
+}
+```
+
+### Event Export
+
+Export flight events to JSONL format:
+
+```rust
+use bbl_parser::{parse_bbl_file, export_to_event, ExportOptions};
+use std::path::Path;
+
+fn main() -> anyhow::Result<()> {
+    let export_opts = ExportOptions {
+        csv: false,
+        gpx: false,
+        event: true,
+        output_dir: None,
+        force_export: false,
+    };
+    
+    let log = parse_bbl_file(Path::new("flight.BBL"), export_opts.clone(), false)?;
+    
+    if !log.event_frames.is_empty() {
+        export_to_event(
+            Path::new("flight.BBL"),
+            0,  // log index
+            &log.event_frames,
+            &export_opts
+        )?;
+        println!("Events exported successfully");
+    }
+    Ok(())
+}
+```
+
+### Complete Export Example
+
+Export all formats at once:
+
+```rust
+use bbl_parser::{parse_bbl_file, export_to_csv, export_to_gpx, export_to_event, ExportOptions};
+use std::path::Path;
+
+fn main() -> anyhow::Result<()> {
+    let export_opts = ExportOptions {
+        csv: true,
+        gpx: true,
+        event: true,
+        output_dir: Some("output".to_string()),
+        force_export: false,
+    };
+    
+    let input_path = Path::new("flight.BBL");
+    let log = parse_bbl_file(input_path, export_opts.clone(), false)?;
+    
+    // Export CSV
+    export_to_csv(&log, input_path, &export_opts)?;
+    
+    // Export GPX if GPS data exists
+    if !log.gps_coordinates.is_empty() {
+        export_to_gpx(input_path, 0, &log.gps_coordinates, &log.home_coordinates, &export_opts)?;
+    }
+    
+    // Export events if event data exists
+    if !log.event_frames.is_empty() {
+        export_to_event(input_path, 0, &log.event_frames, &export_opts)?;
+    }
+    
+    println!("All exports completed successfully");
     Ok(())
 }
 ```

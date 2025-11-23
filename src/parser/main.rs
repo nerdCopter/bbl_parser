@@ -135,7 +135,7 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, sample_frames, debug_frames) =
+    let (mut stats, sample_frames, debug_frames, gps_coordinates, home_coordinates, event_frames) =
         crate::parser::frame::parse_frames(binary_data, &header, debug)?;
 
     // Update frame stats timing from actual frame data
@@ -151,9 +151,9 @@ fn parse_single_log(
         stats,
         sample_frames,
         debug_frames,
-        gps_coordinates: Vec::new(),  // TODO: Extract from parsed frames
-        home_coordinates: Vec::new(), // TODO: Extract from parsed frames
-        event_frames: Vec::new(),     // TODO: Extract from parsed frames
+        gps_coordinates,
+        home_coordinates,
+        event_frames,
     };
 
     Ok(log)
