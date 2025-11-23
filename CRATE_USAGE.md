@@ -167,7 +167,7 @@ fn main() -> anyhow::Result<()> {
         export_to_event(
             Path::new("flight.BBL"),
             0,  // log index
-            1,  // total_logs
+            log.total_logs,
             &log.event_frames,
             &export_opts
         )?;
