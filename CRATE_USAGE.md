@@ -167,6 +167,7 @@ fn main() -> anyhow::Result<()> {
         export_to_event(
             Path::new("flight.BBL"),
             0,  // log index
+            1,  // total_logs
             &log.event_frames,
             &export_opts
         )?;
@@ -206,7 +207,7 @@ fn main() -> anyhow::Result<()> {
     
     // Export events if event data exists
     if !log.event_frames.is_empty() {
-        export_to_event(input_path, 0, &log.event_frames, &export_opts)?;
+        export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?
     }
     
     println!("All exports completed successfully");

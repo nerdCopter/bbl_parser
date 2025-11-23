@@ -123,7 +123,13 @@ fn main() -> Result<()> {
                 log.log_number
             )
         })?;
-        export_to_event(input_path, log_index, &log.event_frames, &export_opts)?;
+        export_to_event(
+            input_path,
+            log_index,
+            log.total_logs,
+            &log.event_frames,
+            &export_opts,
+        )?;
         println!("✓ Event export complete");
 
         // Display sample events

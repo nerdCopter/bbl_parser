@@ -99,6 +99,7 @@ fn main() -> anyhow::Result<()> {
         export_to_event(
             Path::new(&input_file),
             log.log_number - 1,
+            log.total_logs,
             &log.event_frames,
             &export_opts,
         )?;

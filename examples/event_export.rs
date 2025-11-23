@@ -44,6 +44,7 @@ fn main() -> anyhow::Result<()> {
         export_to_event(
             Path::new(&input_file),
             0, // log index
+            1, // total_logs (assuming single log for this example)
             &log.event_frames,
             &export_opts,
         )?;
