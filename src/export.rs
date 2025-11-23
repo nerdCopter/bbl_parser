@@ -304,6 +304,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 pub fn export_to_gpx(
     input_path: &Path,
     log_index: usize,
+    total_logs: usize,
     gps_coordinates: &[GpsCoordinate],
     _home_coordinates: &[GpsHomeCoordinate],
     export_options: &ExportOptions,
@@ -322,9 +323,6 @@ pub fn export_to_gpx(
         .as_deref()
         .map(Path::new)
         .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
-
-    // Determine total logs from context (if log_index is 0, assume single log)
-    let total_logs = if log_index > 0 { log_index + 1 } else { 1 };
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {

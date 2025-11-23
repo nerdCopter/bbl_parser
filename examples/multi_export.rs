@@ -76,6 +76,7 @@ fn main() -> anyhow::Result<()> {
         export_to_gpx(
             Path::new(&input_file),
             log.log_number - 1,
+            log.total_logs,
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts,

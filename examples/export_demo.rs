@@ -87,21 +87,24 @@ fn main() -> Result<()> {
     export_to_csv(&log, input_path, &export_opts)?;
     println!("✓ CSV export complete");
 
+    // Compute log index once (log_number is 1-based)
+    let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid log number: {} cannot be used to compute index",
+            log.log_number
+        )
+    })?;
+
     // Export GPX if GPS data exists
     if !log.gps_coordinates.is_empty() {
         println!(
             "Exporting GPX file ({} GPS coordinates)...",
             log.gps_coordinates.len()
         );
-        let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid log number: {} cannot be used to compute index",
-                log.log_number
-            )
-        })?;
         export_to_gpx(
             input_path,
             log_index,
+            log.total_logs,
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts,
@@ -117,12 +120,6 @@ fn main() -> Result<()> {
             "Exporting event file ({} events)...",
             log.event_frames.len()
         );
-        let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid log number: {} cannot be used to compute index",
-                log.log_number
-            )
-        })?;
         export_to_event(
             input_path,
             log_index,

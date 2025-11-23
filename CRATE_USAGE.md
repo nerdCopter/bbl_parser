@@ -134,6 +134,7 @@ fn main() -> anyhow::Result<()> {
         export_to_gpx(
             Path::new("flight.BBL"),
             0,  // log index
+            log.total_logs,
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts
@@ -202,12 +203,12 @@ fn main() -> anyhow::Result<()> {
     
     // Export GPX if GPS data exists
     if !log.gps_coordinates.is_empty() {
-        export_to_gpx(input_path, 0, &log.gps_coordinates, &log.home_coordinates, &export_opts)?;
+        export_to_gpx(input_path, 0, log.total_logs, &log.gps_coordinates, &log.home_coordinates, &export_opts)?;
     }
     
     // Export events if event data exists
     if !log.event_frames.is_empty() {
-        export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?
+        export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?;
     }
     
     println!("All exports completed successfully");
