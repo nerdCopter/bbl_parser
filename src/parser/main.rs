@@ -110,6 +110,17 @@ pub fn parse_bbl_bytes(
 // This is a placeholder for the systematic migration process
 
 /// Internal function to parse a single BBL log from binary data
+/// Exposed for CLI usage
+pub fn parse_single_log_internal(
+    log_data: &[u8],
+    log_number: usize,
+    total_logs: usize,
+    debug: bool,
+) -> Result<BBLLog> {
+    parse_single_log(log_data, log_number, total_logs, debug)
+}
+
+/// Internal function to parse a single BBL log from binary data
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,

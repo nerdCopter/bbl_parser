@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "  {}. {} (time: {:.3}s)",
                 i + 1,
-                event.event_name,
+                event.event_description,
                 event.timestamp_us as f64 / 1_000_000.0
             );
         }

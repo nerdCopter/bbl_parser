@@ -53,9 +53,14 @@ fn main() -> anyhow::Result<()> {
         println!("✓ GPX export complete");
         println!("  Exported {} GPS coordinates", log.gps_coordinates.len());
     } else {
-        println!("\n⊘ No GPS coordinates available");
-        println!("Note: GPS data collection in parser module not yet implemented.");
-        println!("For GPS export, use the CLI: bbl_parser --gps flight.BBL");
+        println!("\n⊘ No GPS coordinates available in this log");
+        println!(
+            "This log contains {} G-frames but no valid GPS coordinates.",
+            log.stats.g_frames
+        );
+        if log.stats.g_frames == 0 {
+            println!("GPS data was not recorded during this flight.");
+        }
     }
 
     Ok(())

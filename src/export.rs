@@ -412,7 +412,7 @@ pub fn export_to_event(
         writeln!(
             event_file,
             r#"{{"name":"{}", "time":{}}}"#,
-            event.event_name.replace('"', "\\\""),
+            event.event_description.replace('"', "\\\""),
             event.timestamp_us
         )?;
     }

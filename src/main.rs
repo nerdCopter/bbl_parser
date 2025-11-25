@@ -9,6 +9,12 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// Import types from the crate for CLI usage
+use bbl_parser::{
+    BBLHeader, BBLLog, DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats,
+    GpsCoordinate, GpsHomeCoordinate,
+};
+
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
@@ -218,165 +224,7 @@ fn find_bbl_files_in_dir_with_depth(
     Ok(bbl_files)
 }
 
-#[derive(Debug, Clone)]
-struct FieldDefinition {
-    name: String,
-    signed: bool,
-    predictor: u8,
-    encoding: u8,
-}
-
-#[derive(Debug, Clone)]
-struct FrameDefinition {
-    fields: Vec<FieldDefinition>,
-    field_names: Vec<String>,
-    count: usize,
-}
-
-impl FrameDefinition {
-    fn new() -> Self {
-        Self {
-            fields: Vec::new(),
-            field_names: Vec::new(),
-            count: 0,
-        }
-    }
-
-    fn from_field_names(names: Vec<String>) -> Self {
-        let fields = names
-            .iter()
-            .map(|name| FieldDefinition {
-                name: name.clone(),
-                signed: false,
-                predictor: 0,
-                encoding: 0,
-            })
-            .collect();
-        let count = names.len();
-        Self {
-            fields,
-            field_names: names,
-            count,
-        }
-    }
-
-    fn update_signed(&mut self, signed_data: &[bool]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < signed_data.len() {
-                field.signed = signed_data[i];
-            }
-        }
-    }
-
-    fn update_predictors(&mut self, predictors: &[u8]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < predictors.len() {
-                field.predictor = predictors[i];
-            }
-        }
-    }
-
-    fn update_encoding(&mut self, encodings: &[u8]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < encodings.len() {
-                field.encoding = encodings[i];
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-struct BBLHeader {
-    firmware_revision: String,
-    board_info: String,
-    craft_name: String,
-    data_version: u8,
-    looptime: u32,
-    i_frame_def: FrameDefinition,
-    p_frame_def: FrameDefinition,
-    s_frame_def: FrameDefinition,
-    g_frame_def: FrameDefinition,
-    h_frame_def: FrameDefinition,
-    sysconfig: HashMap<String, i32>,
-    all_headers: Vec<String>,
-}
-
-#[derive(Debug, Default)]
-struct FrameStats {
-    i_frames: u32,
-    p_frames: u32,
-    h_frames: u32,
-    g_frames: u32,
-    e_frames: u32,
-    s_frames: u32,
-    total_frames: u32,
-    total_bytes: u64,
-    start_time_us: u64,
-    end_time_us: u64,
-    failed_frames: u32,
-    missing_iterations: u64,
-}
-
-#[derive(Debug, Clone)]
-struct DecodedFrame {
-    frame_type: char,
-    timestamp_us: u64,
-    #[allow(dead_code)]
-    loop_iteration: u32,
-    data: HashMap<String, i32>,
-}
-
-// GPS related structures for GPX export
-#[derive(Debug, Clone)]
-struct GpsCoordinate {
-    latitude: f64,
-    longitude: f64,
-    altitude: f64,
-    timestamp_us: u64,
-    num_sats: Option<i32>,
-    #[allow(dead_code)]
-    speed: Option<f64>,
-    #[allow(dead_code)]
-    ground_course: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-struct GpsHomeCoordinate {
-    #[allow(dead_code)]
-    home_latitude: f64,
-    #[allow(dead_code)]
-    home_longitude: f64,
-    #[allow(dead_code)]
-    timestamp_us: u64,
-}
-
-// Event structure for JSON export
-#[derive(Debug, Clone)]
-struct EventFrame {
-    timestamp_us: u64,
-    event_type: u8,
-    #[allow(dead_code)]
-    event_data: Vec<u8>,
-    event_description: String,
-}
-
-#[derive(Debug)]
-struct BBLLog {
-    log_number: usize,
-    total_logs: usize,
-    header: BBLHeader,
-    stats: FrameStats,
-    sample_frames: Vec<DecodedFrame>, // Only store a few sample frames, not all
-    debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>, // Frame data by type for debug output
-}
-
-// Frame history for prediction during parsing
-struct FrameHistory {
-    current_frame: Vec<i32>,
-    previous_frame: Vec<i32>,
-    previous2_frame: Vec<i32>,
-    valid: bool,
-}
+// All type definitions (FieldDefinition, FrameDefinition, BBLHeader, etc.) are now imported from the bbl_parser crate
 
 #[allow(dead_code)]
 fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool {
@@ -730,7 +578,7 @@ fn parse_bbl_file(
         let log_data = &file_data[start_pos..end_pos];
 
         // Parse this individual log
-        let (log, _gps_coords, _home_coords, _events) = parse_single_log(
+        let log = parse_single_log(
             log_data,
             log_index + 1,
             log_positions.len(),
@@ -743,21 +591,13 @@ fn parse_bbl_file(
     Ok(logs)
 }
 
-// Type alias to reduce complexity
-type ParseSingleLogResult = (
-    BBLLog,
-    Vec<GpsCoordinate>,
-    Vec<GpsHomeCoordinate>,
-    Vec<EventFrame>,
-);
-
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
     total_logs: usize,
     debug: bool,
     export_options: &ExportOptions,
-) -> Result<ParseSingleLogResult> {
+) -> Result<BBLLog> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
     for i in 1..log_data.len() {
@@ -820,9 +660,12 @@ fn parse_single_log(
         stats,
         sample_frames: frames,
         debug_frames,
+        gps_coordinates: gps_coords,
+        home_coordinates: home_coords,
+        event_frames: events,
     };
 
-    Ok((log, gps_coords, home_coords, events))
+    Ok(log)
 }
 
 fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> {
@@ -2817,13 +2660,12 @@ fn parse_bbl_file_streaming(
             .unwrap_or(file_data.len());
         let log_data = &file_data[start_pos..end_pos];
 
-        // Parse this individual log
-        let (log, gps_coords, home_coords, events) = parse_single_log(
+        // Parse this individual log using the crate's parser
+        let log = bbl_parser::parser::main::parse_single_log_internal(
             log_data,
             log_index + 1,
             log_positions.len(),
             debug,
-            export_options,
         )?;
 
         // Display log info immediately
@@ -2857,13 +2699,13 @@ fn parse_bbl_file_streaming(
         }
 
         // Export GPS data to GPX if requested
-        if export_options.gpx && !gps_coords.is_empty() {
+        if export_options.gpx && !log.gps_coordinates.is_empty() {
             if let Err(e) = export_gpx_file(
                 file_path,
                 log_index,
                 log_positions.len(),
-                &gps_coords,
-                &home_coords,
+                &log.gps_coordinates,
+                &log.home_coordinates,
                 export_options,
             ) {
                 let filename = file_path
@@ -2878,12 +2720,12 @@ fn parse_bbl_file_streaming(
         }
 
         // Export event data to JSON if requested
-        if export_options.event && !events.is_empty() {
+        if export_options.event && !log.event_frames.is_empty() {
             if let Err(e) = export_event_file(
                 file_path,
                 log_index,
                 log_positions.len(),
-                &events,
+                &log.event_frames,
                 export_options,
             ) {
                 let filename = file_path

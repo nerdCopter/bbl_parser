@@ -130,3 +130,205 @@ pub fn apply_predictor(
         _ => Err(BBLError::InvalidPredictor(predictor)),
     }
 }
+
+/// Parse H-frame (GPS Home) data
+pub fn parse_h_frame(
+    stream: &mut BBLDataStream,
+    frame_def: &crate::types::FrameDefinition,
+    debug: bool,
+) -> Result<std::collections::HashMap<String, i32>> {
+    let mut data = std::collections::HashMap::new();
+
+    if debug {
+        println!("Parsing H frame with {} fields", frame_def.count);
+    }
+
+    // H frames contain GPS home position data
+    for (i, field) in frame_def.fields.iter().enumerate() {
+        if i >= frame_def.count {
+            break;
+        }
+
+        let value = match field.encoding {
+            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
+            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
+            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
+            ENCODING_NULL => 0,
+            _ => {
+                if debug {
+                    println!(
+                        "Unsupported H-frame encoding {} for field {}",
+                        field.encoding, field.name
+                    );
+                }
+                stream.read_signed_vb().unwrap_or(0)
+            }
+        };
+
+        data.insert(field.name.clone(), value);
+    }
+
+    Ok(data)
+}
+
+/// Parse E-frame (Event) data based on C reference implementation
+pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<crate::types::EventFrame> {
+    if debug {
+        println!("Parsing E frame (Event frame)");
+    }
+
+    // Read event type (1 byte)
+    let event_type = stream.read_byte()?;
+
+    // Read event data - the length depends on the event_type
+    let event_data = Vec::new();
+    let event_description = match event_type {
+        0 => {
+            // FLIGHT_LOG_EVENT_SYNC_BEEP
+            "Sync beep".to_string()
+        }
+        1 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START
+            "Autotune cycle start".to_string()
+        }
+        2 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT
+            let _axis = stream.read_byte()?;
+            let p_gain = stream.read_signed_vb()? as f32 / 1000.0;
+            let i_gain = stream.read_signed_vb()? as f32 / 1000.0;
+            let d_gain = stream.read_signed_vb()? as f32 / 1000.0;
+            format!(
+                "Autotune cycle result - Axis: {}, P: {:.3}, I: {:.3}, D: {:.3}",
+                _axis, p_gain, i_gain, d_gain
+            )
+        }
+        3 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS
+            let current_angle = stream.read_signed_vb()?;
+            let target_angle = stream.read_signed_vb()?;
+            let target_angle_at_peak = stream.read_signed_vb()?;
+            let first_peak_angle = stream.read_signed_vb()?;
+            let second_peak_angle = stream.read_signed_vb()?;
+            format!("Autotune targets - Current: {}, Target: {}, Peak target: {}, First peak: {}, Second peak: {}", 
+                   current_angle, target_angle, target_angle_at_peak, first_peak_angle, second_peak_angle)
+        }
+        4 => {
+            // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
+            let adjustment_function = stream.read_byte()?;
+            if adjustment_function > 127 {
+                // Float value
+                let new_value = stream.read_unsigned_vb()? as f32;
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {:.3}",
+                    adjustment_function, new_value
+                )
+            } else {
+                // Integer value
+                let new_value = stream.read_signed_vb()?;
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {}",
+                    adjustment_function, new_value
+                )
+            }
+        }
+        5 => {
+            // FLIGHT_LOG_EVENT_LOGGING_RESUME
+            let log_iteration = stream.read_unsigned_vb()?;
+            let current_time = stream.read_unsigned_vb()?;
+            format!(
+                "Logging resume - Iteration: {}, Time: {}",
+                log_iteration, current_time
+            )
+        }
+        6 => {
+            // FLIGHT_LOG_EVENT_LOG_END (old numbering)
+            // Read end message bytes
+            for _ in 0..4 {
+                if !stream.eof {
+                    let _ = stream.read_byte()?;
+                }
+            }
+            "Log end".to_string()
+        }
+        10 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START (UNUSED)
+            "Autotune cycle start (unused)".to_string()
+        }
+        11 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT (UNUSED)
+            "Autotune cycle result (unused)".to_string()
+        }
+        12 => {
+            // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS (UNUSED)
+            "Autotune targets (unused)".to_string()
+        }
+        13 => {
+            // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
+            let adjustment_function = stream.read_byte()?;
+            if adjustment_function > 127 {
+                let new_value = stream.read_unsigned_vb()? as f32;
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {:.3}",
+                    adjustment_function, new_value
+                )
+            } else {
+                let new_value = stream.read_signed_vb()?;
+                format!(
+                    "Inflight adjustment - Function: {}, New value: {}",
+                    adjustment_function, new_value
+                )
+            }
+        }
+        14 => {
+            // FLIGHT_LOG_EVENT_LOGGING_RESUME
+            let log_iteration = stream.read_unsigned_vb()?;
+            let current_time = stream.read_unsigned_vb()?;
+            format!(
+                "Logging resume - Iteration: {}, Time: {}",
+                log_iteration, current_time
+            )
+        }
+        15 => {
+            // FLIGHT_LOG_EVENT_DISARM
+            "Disarm".to_string()
+        }
+        30 => {
+            // FLIGHT_LOG_EVENT_FLIGHTMODE - flight mode status event
+            // Read flight mode data
+            for _ in 0..4 {
+                if !stream.eof {
+                    let _ = stream.read_byte()?;
+                }
+            }
+            "Flight mode change".to_string()
+        }
+        255 => {
+            // FLIGHT_LOG_EVENT_LOG_END
+            "Log end".to_string()
+        }
+        _ => {
+            // Unknown event type - read a few bytes as data
+            for _ in 0..8 {
+                if stream.eof {
+                    break;
+                }
+                let _ = stream.read_byte()?;
+            }
+            format!("Unknown event type: {}", event_type)
+        }
+    };
+
+    if debug {
+        println!(
+            "DEBUG: Event - Type: {}, Description: {}",
+            event_type, event_description
+        );
+    }
+
+    Ok(crate::types::EventFrame {
+        timestamp_us: 0, // Will be set later from context
+        event_type,
+        event_data,
+        event_description,
+    })
+}

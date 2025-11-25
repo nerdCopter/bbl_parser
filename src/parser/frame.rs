@@ -6,6 +6,9 @@ use crate::types::{
 };
 use std::collections::HashMap;
 
+// Import GPS/Event parsing functions
+use super::decoder::{parse_e_frame, parse_h_frame};
+
 /// Parse frames from binary data
 #[allow(clippy::type_complexity)]
 pub fn parse_frames(
@@ -26,11 +29,15 @@ pub fn parse_frames(
         if debug { Some(HashMap::new()) } else { None };
 
     // Collections for GPS and Event export
-    let gps_coordinates: Vec<GpsCoordinate> = Vec::new();
-    let home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
-    let event_frames: Vec<EventFrame> = Vec::new();
-    // Note: GPS/Event collection not yet implemented in parser module
-    // Use CLI for full GPS/Event export functionality
+    let mut gps_coordinates: Vec<GpsCoordinate> = Vec::new();
+    let mut home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
+    let mut event_frames: Vec<EventFrame> = Vec::new();
+
+    // GPS frame history for differential encoding
+    let mut gps_frame_history: Vec<i32> = Vec::new();
+
+    // Track last main frame timestamp for GPS/Event frames
+    let mut last_main_frame_timestamp = 0u64;
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -139,6 +146,12 @@ pub fn parse_frames(
 
                                 // Update history for future P-frames
                                 frame_history.update(frame_history.current_frame.clone());
+
+                                // Update last main frame timestamp
+                                if let Some(&time) = frame_data.get("time") {
+                                    last_main_frame_timestamp = time as u64;
+                                }
+
                                 parsing_success = true;
                                 stats.i_frames += 1;
                             }
@@ -185,6 +198,12 @@ pub fn parse_frames(
 
                                 // Update history
                                 frame_history.update(frame_history.current_frame.clone());
+
+                                // Update last main frame timestamp
+                                if let Some(&time) = frame_data.get("time") {
+                                    last_main_frame_timestamp = time as u64;
+                                }
+
                                 parsing_success = true;
                                 stats.p_frames += 1;
                             }
@@ -221,14 +240,190 @@ pub fn parse_frames(
                         }
                     }
                     'G' | 'H' | 'E' => {
-                        skip_frame(&mut stream, frame_type, debug)?;
                         match frame_type {
-                            'G' => stats.g_frames += 1,
-                            'H' => stats.h_frames += 1,
-                            'E' => stats.e_frames += 1,
+                            'H' => {
+                                // Parse H-frame (GPS Home)
+                                if header.h_frame_def.count > 0 {
+                                    if let Ok(data) =
+                                        parse_h_frame(&mut stream, &header.h_frame_def, debug)
+                                    {
+                                        frame_data = data.clone();
+                                        parsing_success = true;
+                                        stats.h_frames += 1;
+
+                                        // Extract GPS home coordinates for GPX export
+                                        let timestamp = last_main_frame_timestamp;
+
+                                        if let (Some(&home_lat_raw), Some(&home_lon_raw)) = (
+                                            frame_data.get("GPS_home[0]"),
+                                            frame_data.get("GPS_home[1]"),
+                                        ) {
+                                            use crate::conversion::convert_gps_coordinate;
+
+                                            if debug && home_coordinates.is_empty() {
+                                                println!("DEBUG: HOME raw values - home_lat_raw: {}, home_lon_raw: {}", home_lat_raw, home_lon_raw);
+                                                println!(
+                                                    "DEBUG: HOME converted - lat: {:.7}, lon: {:.7}",
+                                                    convert_gps_coordinate(home_lat_raw),
+                                                    convert_gps_coordinate(home_lon_raw)
+                                                );
+                                            }
+
+                                            let home_coordinate = GpsHomeCoordinate {
+                                                home_latitude: convert_gps_coordinate(home_lat_raw),
+                                                home_longitude: convert_gps_coordinate(
+                                                    home_lon_raw,
+                                                ),
+                                                timestamp_us: timestamp,
+                                            };
+                                            home_coordinates.push(home_coordinate);
+                                        }
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.h_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
+                            'G' => {
+                                // Parse G-frame (GPS data)
+                                if header.g_frame_def.count > 0 {
+                                    // Initialize GPS frame history if needed
+                                    if gps_frame_history.is_empty() {
+                                        gps_frame_history = vec![0i32; header.g_frame_def.count];
+                                    }
+
+                                    let mut g_frame_values = vec![0i32; header.g_frame_def.count];
+
+                                    if parse_frame_data(
+                                        &mut stream,
+                                        &header.g_frame_def,
+                                        &mut g_frame_values,
+                                        Some(&gps_frame_history), // Use GPS frame history for differential encoding
+                                        None,  // GPS frames typically don't use previous2
+                                        0,     // TODO: Calculate skipped frames properly
+                                        false, // Not raw
+                                        header.data_version,
+                                        &header.sysconfig,
+                                    )
+                                    .is_ok()
+                                    {
+                                        // Update GPS frame history with new values
+                                        gps_frame_history.copy_from_slice(&g_frame_values);
+
+                                        // Copy GPS frame data to output
+                                        for (i, field_name) in
+                                            header.g_frame_def.field_names.iter().enumerate()
+                                        {
+                                            if i < g_frame_values.len() {
+                                                let value = g_frame_values[i];
+                                                frame_data.insert(field_name.clone(), value);
+                                            }
+                                        }
+
+                                        parsing_success = true;
+                                        stats.g_frames += 1;
+
+                                        // Extract GPS coordinates for GPX export
+                                        let gps_time =
+                                            frame_data.get("time").copied().unwrap_or(0) as u64;
+                                        let timestamp = if gps_time > 0 {
+                                            gps_time
+                                        } else {
+                                            last_main_frame_timestamp
+                                        };
+
+                                        if let (Some(&lat_raw), Some(&lon_raw), Some(&alt_raw)) = (
+                                            frame_data.get("GPS_coord[0]"),
+                                            frame_data.get("GPS_coord[1]"),
+                                            frame_data.get("GPS_altitude"),
+                                        ) {
+                                            use crate::conversion::{
+                                                convert_gps_altitude, convert_gps_coordinate,
+                                                convert_gps_course, convert_gps_speed,
+                                            };
+
+                                            // GPS coordinates are deltas from home position
+                                            // Need to add home coordinates to get actual GPS position
+                                            let actual_lat = if let Some(home_coord) =
+                                                home_coordinates.first()
+                                            {
+                                                home_coord.home_latitude
+                                                    + convert_gps_coordinate(lat_raw)
+                                            } else {
+                                                convert_gps_coordinate(lat_raw)
+                                            };
+
+                                            let actual_lon = if let Some(home_coord) =
+                                                home_coordinates.first()
+                                            {
+                                                home_coord.home_longitude
+                                                    + convert_gps_coordinate(lon_raw)
+                                            } else {
+                                                convert_gps_coordinate(lon_raw)
+                                            };
+
+                                            if debug && gps_coordinates.len() < 3 {
+                                                println!("DEBUG: GPS raw values - lat_raw: {}, lon_raw: {}, alt_raw: {}", lat_raw, lon_raw, alt_raw);
+                                                println!("DEBUG: GPS converted - lat: {:.7}, lon: {:.7}, alt: {:.2}", 
+                                                       actual_lat, actual_lon,
+                                                       convert_gps_altitude(alt_raw, &header.firmware_revision));
+                                            }
+
+                                            let coordinate = GpsCoordinate {
+                                                latitude: actual_lat,
+                                                longitude: actual_lon,
+                                                altitude: convert_gps_altitude(
+                                                    alt_raw,
+                                                    &header.firmware_revision,
+                                                ),
+                                                timestamp_us: timestamp,
+                                                num_sats: frame_data.get("GPS_numSat").copied(),
+                                                speed: frame_data
+                                                    .get("GPS_speed")
+                                                    .map(|&s| convert_gps_speed(s)),
+                                                ground_course: frame_data
+                                                    .get("GPS_ground_course")
+                                                    .map(|&c| convert_gps_course(c)),
+                                            };
+                                            gps_coordinates.push(coordinate);
+                                        }
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.g_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
+                            'E' => {
+                                // Parse E-frame (Event)
+                                if let Ok(mut event_frame) = parse_e_frame(&mut stream, debug) {
+                                    // Store event data for potential export
+                                    frame_data.insert(
+                                        "event_type".to_string(),
+                                        event_frame.event_type as i32,
+                                    );
+                                    parsing_success = true;
+                                    stats.e_frames += 1;
+
+                                    // Collect event frames for export
+                                    event_frame.timestamp_us = last_main_frame_timestamp;
+                                    event_frames.push(event_frame);
+
+                                    if debug && stats.e_frames <= 3 {
+                                        println!(
+                                            "DEBUG: Parsed E-frame - Type: {}",
+                                            frame_data.get("event_type").unwrap_or(&0)
+                                        );
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.e_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
                             _ => {}
                         }
-                        parsing_success = true;
                     }
                     _ => {}
                 };

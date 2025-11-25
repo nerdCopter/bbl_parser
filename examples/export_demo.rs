@@ -135,7 +135,7 @@ fn main() -> Result<()> {
             println!(
                 "  {}. {} (time: {} μs)",
                 i + 1,
-                event.event_name,
+                event.event_description,
                 event.timestamp_us
             );
         }
