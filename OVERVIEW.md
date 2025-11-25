@@ -77,11 +77,9 @@ The BBL parser implements a streaming architecture designed for memory efficienc
 - **E-frames:** Flight events with official Betaflight FlightLogEvent enum mapping
 
 ### **Export Functionality**
-- **CSV Export:** blackbox_decode compatible format with proper field ordering (CLI functional, crate stub)
-- **GPX Export:** Standard GPS exchange format for mapping applications (CLI functional)
-- **Event Export:** JSONL format with Betaflight event type descriptions (CLI functional)
-
-**Note:** Export functionality is currently implemented in the CLI (`src/main.rs`). Crate-level export functions in `src/export.rs` are stubs pending systematic migration.
+- **CSV Export:** blackbox_decode compatible format with proper field ordering (CLI and crate functional)
+- **GPX Export:** Standard GPS exchange format for mapping applications (CLI and crate functional)
+- **Event Export:** JSONL format with Betaflight event type descriptions (CLI and crate functional)
 
 ### **Encoding Support**
 BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`, `TAG2_3S32`, `TAG8_4S16`
@@ -89,12 +87,12 @@ BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`
 ### **Project Structure**
 ```text
 src/
-├── main.rs              # CLI interface, file handling, statistics, CSV export
+├── main.rs              # CLI interface, file handling, statistics
 ├── lib.rs               # Library API exports and documentation
 ├── bbl_format.rs        # BBL binary format decoding and encoding
 ├── conversion.rs        # Unit conversions (GPS coordinates, altitude, speed)
 ├── error.rs             # Error handling and result types
-├── export.rs            # Export function stubs (CSV/GPX/Event migration in progress)
+├── export.rs            # Export functions for CSV/GPX/Event formats
 ├── types/               # Core data structures
 │   ├── mod.rs          #   Module definitions and re-exports
 │   ├── log.rs          #   BBLLog container type
@@ -127,7 +125,7 @@ src/
 - **Serde Integration:** Optional serialization support for data structures
 - **Rust Crate:** Available as library dependency for 3rd party projects
 
-### **Data Export Capabilities (CLI)**
+### **Data Export Capabilities (CLI and Crate)**
 - **CSV Export:** blackbox_decode compatible field ordering and formatting
   - Main flight data `[.XX].csv` with proper field order and "time (us)" column
   - Headers `[.XX].headers.csv` with complete configuration

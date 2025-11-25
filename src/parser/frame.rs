@@ -1,6 +1,9 @@
 use crate::error::Result;
 use crate::parser::{decoder::*, stream::BBLDataStream};
-use crate::types::{DecodedFrame, FrameDefinition, FrameHistory, FrameStats};
+use crate::types::{
+    DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
+    GpsHomeCoordinate,
+};
 use std::collections::HashMap;
 
 /// Parse frames from binary data
@@ -13,11 +16,21 @@ pub fn parse_frames(
     FrameStats,
     Vec<DecodedFrame>,
     Option<HashMap<char, Vec<DecodedFrame>>>,
+    Vec<GpsCoordinate>,
+    Vec<GpsHomeCoordinate>,
+    Vec<EventFrame>,
 )> {
     let mut stats = FrameStats::default();
     let mut sample_frames = Vec::new();
     let mut debug_frames: Option<HashMap<char, Vec<DecodedFrame>>> =
         if debug { Some(HashMap::new()) } else { None };
+
+    // Collections for GPS and Event export
+    let gps_coordinates: Vec<GpsCoordinate> = Vec::new();
+    let home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
+    let event_frames: Vec<EventFrame> = Vec::new();
+    // Note: GPS/Event collection not yet implemented in parser module
+    // Use CLI for full GPS/Event export functionality
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -30,7 +43,14 @@ pub fn parse_frames(
     }
 
     if binary_data.is_empty() {
-        return Ok((stats, sample_frames, debug_frames));
+        return Ok((
+            stats,
+            sample_frames,
+            debug_frames,
+            gps_coordinates,
+            home_coordinates,
+            event_frames,
+        ));
     }
 
     // Initialize frame history for proper P-frame parsing
@@ -285,7 +305,14 @@ pub fn parse_frames(
         println!("Failed to parse: {} frames", stats.failed_frames);
     }
 
-    Ok((stats, sample_frames, debug_frames))
+    Ok((
+        stats,
+        sample_frames,
+        debug_frames,
+        gps_coordinates,
+        home_coordinates,
+        event_frames,
+    ))
 }
 
 fn create_decoded_frame(frame_type: char, frame_data: &HashMap<String, i32>) -> DecodedFrame {
