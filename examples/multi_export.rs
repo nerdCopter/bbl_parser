@@ -70,12 +70,15 @@ fn main() -> anyhow::Result<()> {
     export_to_csv(&log, Path::new(&input_file), &export_opts)?;
     println!("✓ CSV export complete");
 
+    // Compute log index once (log_number is 1-based)
+    let log_index = log.log_number - 1;
+
     // GPS Export (if data available)
     if !log.gps_coordinates.is_empty() {
         println!("Exporting GPX...");
         export_to_gpx(
             Path::new(&input_file),
-            log.log_number - 1,
+            log_index,
             log.total_logs,
             &log.gps_coordinates,
             &log.home_coordinates,
@@ -99,7 +102,7 @@ fn main() -> anyhow::Result<()> {
         println!("Exporting Events...");
         export_to_event(
             Path::new(&input_file),
-            log.log_number - 1,
+            log_index,
             log.total_logs,
             &log.event_frames,
             &export_opts,
