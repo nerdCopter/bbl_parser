@@ -220,21 +220,17 @@ impl<'a> BBLDataStream<'a> {
         Ok(())
     }
 
-    /// Read negative 14-bit encoding - exact replica of JavaScript implementation
+    /// Read negative 14-bit encoding
+    /// Uses the established pattern: read unsigned variable byte and apply 14-bit sign-extension with negation
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
-        let byte1 = self.read_byte()? as u16;
-        let byte2 = self.read_byte()? as u16;
-
-        let unsigned_value = (byte1 << 6) | (byte2 >> 2);
-
-        // Convert to signed 14-bit value and make it negative
-        let signed_value = if unsigned_value > 8191 {
-            (unsigned_value as i32) - 16384
+        let value = self.read_unsigned_vb()? as u16;
+        // Apply sign-extension to 14-bit value and negate
+        let sign_extended = if (value & 0x2000) != 0 {
+            -((value & 0x1fff) as i32)
         } else {
-            unsigned_value as i32
+            (value & 0x1fff) as i32
         };
-
-        Ok(-signed_value)
+        Ok(-sign_extended)
     }
 }
 
