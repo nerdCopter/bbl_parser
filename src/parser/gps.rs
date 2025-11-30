@@ -48,7 +48,15 @@ pub fn parse_h_frame(
                         field.encoding, field.name
                     );
                 }
-                stream.read_signed_vb().unwrap_or(0)
+                match stream.read_signed_vb() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        if debug {
+                            println!("Warning: Failed to read field {}: {}", field.name, e);
+                        }
+                        0
+                    }
+                }
             }
         };
 
@@ -103,8 +111,12 @@ pub fn parse_g_frame(
     gps_frame_history: &mut Vec<i32>,
     data_version: u8,
     sysconfig: &HashMap<String, i32>,
-    _debug: bool,
+    debug: bool,
 ) -> Result<HashMap<String, i32>> {
+    if debug {
+        println!("Parsing G frame with {} fields", frame_def.count);
+    }
+
     // Initialize or resize GPS frame history if needed
     // This prevents panic in copy_from_slice if caller passes pre-populated history with wrong length
     if gps_frame_history.len() != frame_def.count {
@@ -158,17 +170,13 @@ pub fn extract_gps_coordinate(
     ) {
         // GPS coordinates are deltas from home position
         // Need to add home coordinates to get actual GPS position
-        let actual_lat = if let Some(home_coord) = home_coordinates.first() {
-            home_coord.home_latitude + convert_gps_coordinate(lat_raw)
-        } else {
-            convert_gps_coordinate(lat_raw)
-        };
+        let (home_lat, home_lon) = home_coordinates
+            .first()
+            .map(|h| (h.home_latitude, h.home_longitude))
+            .unwrap_or((0.0, 0.0));
 
-        let actual_lon = if let Some(home_coord) = home_coordinates.first() {
-            home_coord.home_longitude + convert_gps_coordinate(lon_raw)
-        } else {
-            convert_gps_coordinate(lon_raw)
-        };
+        let actual_lat = home_lat + convert_gps_coordinate(lat_raw);
+        let actual_lon = home_lon + convert_gps_coordinate(lon_raw);
 
         if debug {
             println!(

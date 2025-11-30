@@ -7,6 +7,29 @@ use crate::parser::stream::BBLDataStream;
 use crate::types::EventFrame;
 use crate::Result;
 
+/// Helper function to parse inflight adjustment events (types 4 and 13)
+/// Returns the event description string
+fn parse_inflight_adjustment(
+    stream: &mut BBLDataStream,
+    event_data: &mut Vec<u8>,
+) -> Result<String> {
+    let adjustment_function = stream.read_byte()?;
+    event_data.extend_from_slice(&[adjustment_function]);
+    if adjustment_function > 127 {
+        let new_value = stream.read_unsigned_vb()? as f32;
+        Ok(format!(
+            "Inflight adjustment - Function: {}, New value: {:.3}",
+            adjustment_function, new_value
+        ))
+    } else {
+        let new_value = stream.read_signed_vb()?;
+        Ok(format!(
+            "Inflight adjustment - Function: {}, New value: {}",
+            adjustment_function, new_value
+        ))
+    }
+}
+
 /// Parse E-frame (Event frame) data from the stream
 ///
 /// E-frames contain various event types such as sync beeps, autotune cycles,
@@ -57,24 +80,7 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         }
         4 => {
             // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            let adjustment_function = stream.read_byte()?;
-            if adjustment_function > 127 {
-                // Float value
-                let new_value = stream.read_unsigned_vb()? as f32;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {:.3}",
-                    adjustment_function, new_value
-                )
-            } else {
-                // Integer value
-                let new_value = stream.read_signed_vb()?;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {}",
-                    adjustment_function, new_value
-                )
-            }
+            parse_inflight_adjustment(stream, &mut event_data)?
         }
         5 => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME
@@ -109,22 +115,7 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         }
         13 => {
             // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            let adjustment_function = stream.read_byte()?;
-            if adjustment_function > 127 {
-                let new_value = stream.read_unsigned_vb()? as f32;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {:.3}",
-                    adjustment_function, new_value
-                )
-            } else {
-                let new_value = stream.read_signed_vb()?;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {}",
-                    adjustment_function, new_value
-                )
-            }
+            parse_inflight_adjustment(stream, &mut event_data)?
         }
         14 => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME
