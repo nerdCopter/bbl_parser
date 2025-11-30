@@ -105,9 +105,10 @@ pub fn parse_g_frame(
     sysconfig: &HashMap<String, i32>,
     _debug: bool,
 ) -> Result<HashMap<String, i32>> {
-    // Initialize GPS frame history if needed
-    if gps_frame_history.is_empty() {
-        *gps_frame_history = vec![0i32; frame_def.count];
+    // Initialize or resize GPS frame history if needed
+    // This prevents panic in copy_from_slice if caller passes pre-populated history with wrong length
+    if gps_frame_history.len() != frame_def.count {
+        gps_frame_history.resize(frame_def.count, 0);
     }
 
     let mut g_frame_values = vec![0i32; frame_def.count];
