@@ -42,21 +42,12 @@ pub fn parse_h_frame(
             ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
             ENCODING_NULL => 0,
             _ => {
-                if debug {
-                    println!(
-                        "Unsupported H-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                match stream.read_signed_vb() {
-                    Ok(v) => v,
-                    Err(e) => {
-                        if debug {
-                            println!("Warning: Failed to read field {}: {}", field.name, e);
-                        }
-                        0
-                    }
-                }
+                // Unsupported H-frame encoding - return error instead of silently continuing
+                // This prevents stream desynchronization from being masked by default values
+                return Err(anyhow::anyhow!(
+                    "Unsupported H-frame encoding {} for field '{}' - stream desynchronization possible",
+                    field.encoding, field.name
+                ));
             }
         };
 
