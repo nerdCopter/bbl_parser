@@ -12,7 +12,7 @@ use crate::parser::decoder::{
 use crate::parser::frame::parse_frame_data;
 use crate::parser::stream::BBLDataStream;
 use crate::types::{FrameDefinition, GpsCoordinate, GpsHomeCoordinate};
-use crate::Result;
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Parse H-frame (GPS home position) data from the stream

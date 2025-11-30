@@ -1,5 +1,5 @@
-use crate::error::{BBLError, Result};
 use crate::types::{BBLHeader, FrameDefinition};
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Parse BBL headers from text
@@ -157,9 +157,7 @@ fn parse_predictor_info(line: &str, frame_def: &mut FrameDefinition) -> Result<(
             frame_def.update_predictors(&predictors);
             Ok(())
         }
-        Err(_) => Err(BBLError::InvalidHeader(
-            "Invalid predictor values".to_string(),
-        )),
+        Err(_) => Err(anyhow::anyhow!("Invalid header: Invalid predictor values")),
     }
 }
 
@@ -178,9 +176,7 @@ fn parse_encoding_info(line: &str, frame_def: &mut FrameDefinition) -> Result<()
             frame_def.update_encoding(&encodings);
             Ok(())
         }
-        Err(_) => Err(BBLError::InvalidHeader(
-            "Invalid encoding values".to_string(),
-        )),
+        Err(_) => Err(anyhow::anyhow!("Invalid header: Invalid encoding values")),
     }
 }
 

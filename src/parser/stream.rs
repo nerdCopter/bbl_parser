@@ -1,4 +1,4 @@
-use crate::error::{BBLError, Result};
+use anyhow::Result;
 
 /// BBL data stream for reading binary data
 pub struct BBLDataStream<'a> {
@@ -30,7 +30,7 @@ impl<'a> BBLDataStream<'a> {
             Ok(byte)
         } else {
             self.eof = true;
-            Err(BBLError::UnexpectedEof)
+            Err(anyhow::anyhow!("EOF"))
         }
     }
 

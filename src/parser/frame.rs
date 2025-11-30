@@ -1,9 +1,9 @@
-use crate::error::Result;
 use crate::parser::{decoder::*, event::parse_e_frame, gps::*, stream::BBLDataStream};
 use crate::types::{
     DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
     GpsHomeCoordinate,
 };
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Parse frames from binary data
