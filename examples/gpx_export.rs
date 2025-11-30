@@ -1,9 +1,7 @@
 //! GPX Export Example
 //!
 //! Demonstrates how to export GPS data to GPX format for use with mapping applications.
-//! Note: GPS data collection requires the parser to populate gps_coordinates.
-//!       Currently, the parser module returns empty GPS vectors.
-//!       Use the CLI for GPS export: `bbl_parser --gps flight.BBL`
+//! The parser module now fully supports GPS frame parsing (G-frames and H-frames).
 
 use bbl_parser::{export_to_gpx, parse_bbl_file, ExportOptions};
 use std::path::Path;
@@ -54,8 +52,8 @@ fn main() -> anyhow::Result<()> {
         println!("  Exported {} GPS coordinates", log.gps_coordinates.len());
     } else {
         println!("\n⊘ No GPS coordinates available");
-        println!("Note: GPS data collection in parser module not yet implemented.");
-        println!("For GPS export, use the CLI: bbl_parser --gps flight.BBL");
+        println!("Note: This BBL file may not contain GPS data (no G-frames).");
+        println!("Check that your flight controller has GPS enabled and connected.");
     }
 
     Ok(())

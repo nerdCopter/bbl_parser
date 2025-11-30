@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::parser::{decoder::*, stream::BBLDataStream};
+use crate::parser::{decoder::*, event::parse_e_frame, gps::*, stream::BBLDataStream};
 use crate::types::{
     DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
     GpsHomeCoordinate,
@@ -26,11 +26,15 @@ pub fn parse_frames(
         if debug { Some(HashMap::new()) } else { None };
 
     // Collections for GPS and Event export
-    let gps_coordinates: Vec<GpsCoordinate> = Vec::new();
-    let home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
-    let event_frames: Vec<EventFrame> = Vec::new();
-    // Note: GPS/Event collection not yet implemented in parser module
-    // Use CLI for full GPS/Event export functionality
+    let mut gps_coordinates: Vec<GpsCoordinate> = Vec::new();
+    let mut home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
+    let mut event_frames: Vec<EventFrame> = Vec::new();
+
+    // GPS frame history for differential encoding (like P-frames)
+    let mut gps_frame_history: Vec<i32> = Vec::new();
+
+    // Track the last main frame timestamp for G/H/E frame timestamping
+    let mut last_main_frame_timestamp: u64 = 0;
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -141,6 +145,13 @@ pub fn parse_frames(
                                 frame_history.update(frame_history.current_frame.clone());
                                 parsing_success = true;
                                 stats.i_frames += 1;
+
+                                // Update last_main_frame_timestamp for G/H/E frame timestamping
+                                if let Some(&time_val) = frame_data.get("time") {
+                                    if time_val > 0 {
+                                        last_main_frame_timestamp = time_val as u64;
+                                    }
+                                }
                             }
                         }
                     }
@@ -187,6 +198,13 @@ pub fn parse_frames(
                                 frame_history.update(frame_history.current_frame.clone());
                                 parsing_success = true;
                                 stats.p_frames += 1;
+
+                                // Update last_main_frame_timestamp for G/H/E frame timestamping
+                                if let Some(&time_val) = frame_data.get("time") {
+                                    if time_val > 0 {
+                                        last_main_frame_timestamp = time_val as u64;
+                                    }
+                                }
                             }
                         } else {
                             // Skip P-frame if we don't have valid I-frame history
@@ -221,14 +239,99 @@ pub fn parse_frames(
                         }
                     }
                     'G' | 'H' | 'E' => {
-                        skip_frame(&mut stream, frame_type, debug)?;
                         match frame_type {
-                            'G' => stats.g_frames += 1,
-                            'H' => stats.h_frames += 1,
-                            'E' => stats.e_frames += 1,
+                            'H' => {
+                                // Parse H-frame (GPS home position)
+                                if header.h_frame_def.count > 0 {
+                                    if let Ok(data) =
+                                        parse_h_frame(&mut stream, &header.h_frame_def, debug)
+                                    {
+                                        frame_data = data.clone();
+                                        parsing_success = true;
+                                        stats.h_frames += 1;
+
+                                        // Extract GPS home coordinates
+                                        let timestamp = last_main_frame_timestamp;
+                                        if let Some(home_coord) =
+                                            extract_home_coordinate(&frame_data, timestamp, debug)
+                                        {
+                                            home_coordinates.push(home_coord);
+                                        }
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.h_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
+                            'G' => {
+                                // Parse G-frame (GPS position data)
+                                if header.g_frame_def.count > 0 {
+                                    if let Ok(data) = parse_g_frame(
+                                        &mut stream,
+                                        &header.g_frame_def,
+                                        &mut gps_frame_history,
+                                        header.data_version,
+                                        &header.sysconfig,
+                                        debug,
+                                    ) {
+                                        frame_data = data.clone();
+                                        parsing_success = true;
+                                        stats.g_frames += 1;
+
+                                        // Extract GPS coordinates
+                                        let gps_time =
+                                            frame_data.get("time").copied().unwrap_or(0) as u64;
+                                        let timestamp = if gps_time > 0 {
+                                            gps_time
+                                        } else {
+                                            last_main_frame_timestamp
+                                        };
+
+                                        if let Some(coord) = extract_gps_coordinate(
+                                            &frame_data,
+                                            &home_coordinates,
+                                            timestamp,
+                                            &header.firmware_revision,
+                                            debug,
+                                        ) {
+                                            gps_coordinates.push(coord);
+                                        }
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.g_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
+                            'E' => {
+                                // Parse E-frame (Event data)
+                                if let Ok(mut event_frame) = parse_e_frame(&mut stream, debug) {
+                                    frame_data.insert(
+                                        "event_type".to_string(),
+                                        event_frame.event_type as i32,
+                                    );
+                                    parsing_success = true;
+                                    stats.e_frames += 1;
+
+                                    // Set timestamp and collect event frame
+                                    event_frame.timestamp_us = last_main_frame_timestamp;
+                                    event_frames.push(event_frame);
+
+                                    if debug && stats.e_frames <= 3 {
+                                        println!(
+                                            "DEBUG: Parsed E-frame - Type: {}",
+                                            frame_data.get("event_type").unwrap_or(&0)
+                                        );
+                                    }
+                                } else {
+                                    skip_frame(&mut stream, frame_type, debug)?;
+                                    stats.e_frames += 1;
+                                    parsing_success = true;
+                                }
+                            }
                             _ => {}
                         }
-                        parsing_success = true;
                     }
                     _ => {}
                 };
