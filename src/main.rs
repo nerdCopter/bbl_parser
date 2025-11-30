@@ -9,6 +9,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// Import conversion functions from crate library to avoid code duplication
+use bbl_parser::conversion::{
+    convert_gps_altitude, convert_gps_coordinate, convert_gps_course, convert_gps_speed,
+};
+
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
@@ -3012,46 +3017,7 @@ fn format_failsafe_phase(phase: i32) -> String {
 }
 
 // GPS/GPX export functions
-fn extract_major_firmware_version(firmware_revision: &str) -> u8 {
-    // Extract major version from firmware string like "Betaflight 4.5.1 (77d01ba3b) AT32F435M"
-    if let Some(start) = firmware_revision.find(' ') {
-        let version_part = &firmware_revision[start + 1..];
-        if let Some(end) = version_part.find('.') {
-            if let Ok(major) = version_part[..end].parse::<u8>() {
-                return major;
-            }
-        }
-    }
-    // Default to 4 if parsing fails (assume modern firmware)
-    4
-}
-
-fn convert_gps_coordinate(raw_value: i32) -> f64 {
-    // GPS coordinates are stored as degrees * 10000000
-    raw_value as f64 / 10000000.0
-}
-
-fn convert_gps_altitude(raw_value: i32, firmware_revision: &str) -> f64 {
-    // Altitude units changed between firmware versions:
-    // Before Betaflight 4: centimeters (factor 0.01)
-    // Betaflight 4+: decimeters (factor 0.1)
-    let major_version = extract_major_firmware_version(firmware_revision);
-    if major_version >= 4 {
-        raw_value as f64 / 10.0 // decimeters to meters
-    } else {
-        raw_value as f64 / 100.0 // centimeters to meters
-    }
-}
-
-fn convert_gps_speed(raw_value: i32) -> f64 {
-    // Speed is stored as cm/s * 100, convert to m/s
-    raw_value as f64 / 100.0
-}
-
-fn convert_gps_course(raw_value: i32) -> f64 {
-    // Course is stored as degrees * 10
-    raw_value as f64 / 10.0
-}
+// Note: GPS conversion functions now imported from bbl_parser::conversion module
 
 fn export_gpx_file(
     file_path: &Path,
