@@ -357,7 +357,7 @@ struct EventFrame {
     event_type: u8,
     #[allow(dead_code)]
     event_data: Vec<u8>,
-    event_description: String,
+    event_name: String,
 }
 
 #[derive(Debug)]
@@ -2498,7 +2498,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
 
     // Read event data - the length depends on the event type
     let mut event_data = Vec::new();
-    let event_description = match event_type {
+    let event_name = match event_type {
         0 => {
             // FLIGHT_LOG_EVENT_SYNC_BEEP
             "Sync beep".to_string()
@@ -2642,7 +2642,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
     if debug {
         println!(
             "DEBUG: Event - Type: {}, Description: {}",
-            event_type, event_description
+            event_type, event_name
         );
     }
 
@@ -2650,7 +2650,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
         timestamp_us: 0, // Will be set later from context
         event_type,
         event_data,
-        event_description,
+        event_name,
     })
 }
 
@@ -3163,7 +3163,7 @@ fn export_event_file(
         writeln!(
             event_file,
             r#"{{"name":"{}", "time":{}}}"#,
-            event.event_description.replace('"', "\\\""),
+            event.event_name.replace('"', "\\\""),
             event.timestamp_us
         )?;
     }
