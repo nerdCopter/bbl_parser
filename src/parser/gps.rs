@@ -164,7 +164,12 @@ pub fn extract_gps_coordinate(
         let (home_lat, home_lon) = home_coordinates
             .first()
             .map(|h| (h.home_latitude, h.home_longitude))
-            .unwrap_or((0.0, 0.0));
+            .unwrap_or_else(|| {
+                if debug {
+                    println!("DEBUG: No home coordinates available, using (0.0, 0.0)");
+                }
+                (0.0, 0.0)
+            });
 
         let actual_lat = home_lat + convert_gps_coordinate(lat_raw);
         let actual_lon = home_lon + convert_gps_coordinate(lon_raw);

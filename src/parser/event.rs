@@ -84,6 +84,7 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         }
         5 => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME
+            // Note: Event type 14 has identical implementation - both use this newer numbering
             let log_iteration = stream.read_unsigned_vb()?;
             let current_time = stream.read_unsigned_vb()?;
             format!(
@@ -118,7 +119,8 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
             parse_inflight_adjustment(stream, &mut event_data)?
         }
         14 => {
-            // FLIGHT_LOG_EVENT_LOGGING_RESUME
+            // FLIGHT_LOG_EVENT_LOGGING_RESUME (newer numbering, same as type 5)
+            // Both event type numbers are used in different firmware versions
             let log_iteration = stream.read_unsigned_vb()?;
             let current_time = stream.read_unsigned_vb()?;
             format!(
