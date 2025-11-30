@@ -15,7 +15,7 @@
 
 # Whitelist src directory and all Rust files within it
 !src/
-!src/*.rs
+!src/**
 !src/**/*.rs
 
 # Whitelist examples directory
