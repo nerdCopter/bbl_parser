@@ -216,21 +216,11 @@ pub fn apply_predictor_with_debug(
         }
 
         PREDICT_MINMOTOR => {
-            // Get the min motor value from motorOutput or motorOutput[0]
+            // Get the min motor value from motorOutput[0] or motorOutput
             let minmotor = sysconfig
                 .get("motorOutput[0]")
+                .or_else(|| sysconfig.get("motorOutput"))
                 .copied()
-                .or_else(|| {
-                    sysconfig.get("motorOutput").and_then(|&val| {
-                        // Parse "48,2047" format to get first value
-                        let motor_output_str = val.to_string();
-                        if let Some(comma_pos) = motor_output_str.find(',') {
-                            motor_output_str[..comma_pos].parse().ok()
-                        } else {
-                            motor_output_str.parse().ok()
-                        }
-                    })
-                })
                 .unwrap_or(48);
             raw_value + minmotor
         }
