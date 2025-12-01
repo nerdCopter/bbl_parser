@@ -1,3 +1,7 @@
+use crate::parser::helpers::{
+    sign_extend_14bit, sign_extend_16bit, sign_extend_24bit, sign_extend_2bit, sign_extend_4bit,
+    sign_extend_6bit, sign_extend_8bit,
+};
 use anyhow::Result;
 
 /// BBL data stream for reading binary data
@@ -226,82 +230,32 @@ impl<'a> BBLDataStream<'a> {
     /// Returns the negated value to match blackbox_decode behavior.
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
         let unsigned = self.read_unsigned_vb()? as u16;
-        Ok(-sign_extend_14bit_sign_magnitude(unsigned))
-    }
-}
-
-/// Sign-magnitude 14-bit encoding (matches bbl_format::sign_extend_14bit and blackbox_decode)
-/// Bit 13 indicates sign, bits 0-12 are the magnitude
-fn sign_extend_14bit_sign_magnitude(value: u16) -> i32 {
-    if (value & 0x2000) != 0 {
-        -((value & 0x1fff) as i32)
-    } else {
-        (value & 0x1fff) as i32
-    }
-}
-
-// Sign extension helper functions - exact replicas of JavaScript implementation
-fn sign_extend_2bit(value: u8) -> i32 {
-    if (value & 0x02) != 0 {
-        (value as i32) | !0x03
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_4bit(value: u8) -> i32 {
-    if (value & 0x08) != 0 {
-        (value as i32) | !0x0f
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_6bit(value: u8) -> i32 {
-    if (value & 0x20) != 0 {
-        (value as i32) | !0x3f
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_8bit(value: u8) -> i32 {
-    value as i8 as i32
-}
-
-fn sign_extend_16bit(value: u16) -> i32 {
-    value as i16 as i32
-}
-
-fn sign_extend_24bit(value: u32) -> i32 {
-    if (value & 0x800000) != 0 {
-        (value as i32) | !0xffffff
-    } else {
-        value as i32
+        Ok(-sign_extend_14bit(unsigned))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::helpers::sign_extend_14bit;
 
     #[test]
     fn test_sign_extend_14bit_sign_magnitude_positive() {
         // Positive values have bit 13 = 0 (sign bit clear)
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x0000), 0); // 0
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x0001), 1); // 1
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x1FFF), 0x1FFF); // 8191 (max positive magnitude)
+        assert_eq!(sign_extend_14bit(0x0000), 0); // 0
+        assert_eq!(sign_extend_14bit(0x0001), 1); // 1
+        assert_eq!(sign_extend_14bit(0x1FFF), 0x1FFF); // 8191 (max positive magnitude)
     }
 
     #[test]
     fn test_sign_extend_14bit_sign_magnitude_negative() {
         // Negative values have bit 13 = 1 (sign bit set), magnitude in bits 0-12
         // 0x2000 = bit 13 set, magnitude 0 -> returns -0 = 0 (actually negative zero)
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x2000), 0); // -0
-                                                                 // 0x2001 = bit 13 set, magnitude 1 -> returns -1
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x2001), -1);
+        assert_eq!(sign_extend_14bit(0x2000), 0); // -0
+                                                  // 0x2001 = bit 13 set, magnitude 1 -> returns -1
+        assert_eq!(sign_extend_14bit(0x2001), -1);
         // 0x3FFF = bit 13 set, magnitude 0x1FFF (8191) -> returns -8191
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x3FFF), -8191);
+        assert_eq!(sign_extend_14bit(0x3FFF), -8191);
     }
 
     #[test]

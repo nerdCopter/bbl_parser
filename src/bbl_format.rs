@@ -1,5 +1,12 @@
 use anyhow::Result;
+use bbl_parser::parser::helpers::{
+    sign_extend_16bit, sign_extend_24bit, sign_extend_2bit, sign_extend_4bit, sign_extend_6bit,
+    sign_extend_8bit,
+};
 use std::collections::HashMap;
+
+// Re-export sign_extend_14bit for backward compatibility with main.rs
+pub use bbl_parser::parser::helpers::sign_extend_14bit;
 
 // BBL Encoding constants - directly from JavaScript reference
 pub const ENCODING_SIGNED_VB: u8 = 0;
@@ -263,58 +270,6 @@ impl<'a> BBLDataStream<'a> {
             }
         }
         Ok(())
-    }
-}
-
-// Sign extension functions - exact replicas of JavaScript implementations
-pub fn sign_extend_2bit(value: u8) -> i32 {
-    let val = value as i32;
-    if (val & 0x02) != 0 {
-        val | !0x03
-    } else {
-        val & 0x03
-    }
-}
-
-pub fn sign_extend_4bit(value: u8) -> i32 {
-    let val = value as i32;
-    if (val & 0x08) != 0 {
-        val | !0x0f
-    } else {
-        val & 0x0f
-    }
-}
-
-pub fn sign_extend_6bit(value: u8) -> i32 {
-    let val = value as i32;
-    if (val & 0x20) != 0 {
-        val | !0x3f
-    } else {
-        val & 0x3f
-    }
-}
-
-pub fn sign_extend_8bit(value: u8) -> i32 {
-    value as i8 as i32
-}
-
-pub fn sign_extend_16bit(value: u16) -> i32 {
-    value as i16 as i32
-}
-
-pub fn sign_extend_24bit(value: u32) -> i32 {
-    if (value & 0x800000) != 0 {
-        (value | 0xff000000) as i32
-    } else {
-        (value & 0x7fffff) as i32
-    }
-}
-
-pub fn sign_extend_14bit(value: u16) -> i32 {
-    if (value & 0x2000) != 0 {
-        -((value & 0x1fff) as i32)
-    } else {
-        (value & 0x1fff) as i32
     }
 }
 

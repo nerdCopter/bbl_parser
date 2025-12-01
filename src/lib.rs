@@ -16,7 +16,6 @@
 //! ```
 
 // Module declarations
-mod bbl_format;
 pub mod conversion;
 pub mod error;
 pub mod export;
@@ -24,8 +23,6 @@ pub mod parser;
 pub mod types;
 
 // Re-export everything from modules for convenience
-#[allow(ambiguous_glob_reexports)]
-pub use bbl_format::*;
 #[allow(ambiguous_glob_reexports)]
 pub use conversion::*;
 #[allow(ambiguous_glob_reexports)]
