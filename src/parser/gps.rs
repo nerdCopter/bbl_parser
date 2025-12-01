@@ -129,6 +129,7 @@ pub fn parse_g_frame(
         false,                   // Not raw
         data_version,
         sysconfig,
+        false, // debug - GPS parsing doesn't need verbose output
     )?;
 
     // Update GPS frame history with new values

@@ -209,8 +209,11 @@ impl<'a> BBLDataStream<'a> {
     }
 
     /// Read Tag8_8SVB encoding - exact replica of JavaScript implementation
+    /// When value_count is 1, reads single signed VB without header byte.
+    /// Otherwise reads header byte followed by up to 8 values based on header bits.
     #[allow(clippy::needless_range_loop)]
     pub fn read_tag8_8svb(&mut self, values: &mut [i32]) -> Result<()> {
+        // Fixed 8-value version for internal use
         let selector = self.read_byte()?;
 
         for i in 0..8 {
@@ -221,6 +224,27 @@ impl<'a> BBLDataStream<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    /// Read Tag8_8SVB encoding with variable count
+    /// When value_count is 1, reads single signed VB without header byte.
+    /// Otherwise reads header byte followed by up to value_count values based on header bits.
+    #[allow(clippy::needless_range_loop)]
+    pub fn read_tag8_8svb_counted(&mut self, values: &mut [i32], value_count: usize) -> Result<()> {
+        if value_count == 1 {
+            values[0] = self.read_signed_vb()?;
+        } else {
+            let mut header = self.read_byte()?;
+            for i in 0..8.min(value_count) {
+                values[i] = if header & 0x01 != 0 {
+                    self.read_signed_vb()?
+                } else {
+                    0
+                };
+                header >>= 1;
+            }
+        }
         Ok(())
     }
 

@@ -1,5 +1,3 @@
-mod bbl_format;
-
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
@@ -14,6 +12,16 @@ use bbl_parser::conversion::{
     convert_gps_altitude, convert_gps_coordinate, convert_gps_course, convert_gps_speed,
     format_failsafe_phase, format_flight_mode_flags, format_state_flags,
 };
+
+// Import parser types from crate library
+use bbl_parser::parser::helpers::sign_extend_14bit;
+use bbl_parser::parser::{
+    parse_frame_data, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL, ENCODING_SIGNED_VB,
+    ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
+};
+
+// Import types from crate library
+use bbl_parser::types::FrameDefinition;
 
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
@@ -224,72 +232,7 @@ fn find_bbl_files_in_dir_with_depth(
     Ok(bbl_files)
 }
 
-#[derive(Debug, Clone)]
-struct FieldDefinition {
-    name: String,
-    signed: bool,
-    predictor: u8,
-    encoding: u8,
-}
-
-#[derive(Debug, Clone)]
-struct FrameDefinition {
-    fields: Vec<FieldDefinition>,
-    field_names: Vec<String>,
-    count: usize,
-}
-
-impl FrameDefinition {
-    fn new() -> Self {
-        Self {
-            fields: Vec::new(),
-            field_names: Vec::new(),
-            count: 0,
-        }
-    }
-
-    fn from_field_names(names: Vec<String>) -> Self {
-        let fields = names
-            .iter()
-            .map(|name| FieldDefinition {
-                name: name.clone(),
-                signed: false,
-                predictor: 0,
-                encoding: 0,
-            })
-            .collect();
-        let count = names.len();
-        Self {
-            fields,
-            field_names: names,
-            count,
-        }
-    }
-
-    fn update_signed(&mut self, signed_data: &[bool]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < signed_data.len() {
-                field.signed = signed_data[i];
-            }
-        }
-    }
-
-    fn update_predictors(&mut self, predictors: &[u8]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < predictors.len() {
-                field.predictor = predictors[i];
-            }
-        }
-    }
-
-    fn update_encoding(&mut self, encodings: &[u8]) {
-        for (i, field) in self.fields.iter_mut().enumerate() {
-            if i < encodings.len() {
-                field.encoding = encodings[i];
-            }
-        }
-    }
-}
+// FieldDefinition and FrameDefinition now imported from bbl_parser::types
 
 #[derive(Debug)]
 struct BBLHeader {
@@ -1763,7 +1706,7 @@ fn parse_frames(
     // GPS frame history for differential encoding
     let mut gps_frame_history: Vec<i32> = Vec::new();
 
-    let mut stream = bbl_format::BBLDataStream::new(binary_data);
+    let mut stream = BBLDataStream::new(binary_data);
 
     // Main frame parsing loop - process frames as a stream, don't store all
     while !stream.eof {
@@ -1804,7 +1747,7 @@ fn parse_frames(
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
 
-                            if bbl_format::parse_frame_data(
+                            if parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
@@ -1886,7 +1829,7 @@ fn parse_frames(
                         if header.p_frame_def.count > 0 && frame_history.valid {
                             let mut p_frame_values = vec![0i32; header.p_frame_def.count];
 
-                            if bbl_format::parse_frame_data(
+                            if parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
                                 &mut p_frame_values,
@@ -2080,7 +2023,7 @@ fn parse_frames(
 
                             let mut g_frame_values = vec![0i32; header.g_frame_def.count];
 
-                            if bbl_format::parse_frame_data(
+                            if parse_frame_data(
                                 &mut stream,
                                 &header.g_frame_def,
                                 &mut g_frame_values,
@@ -2354,7 +2297,7 @@ fn parse_frames(
 
 #[allow(dead_code)]
 fn parse_i_frame(
-    stream: &mut bbl_format::BBLDataStream,
+    stream: &mut BBLDataStream,
     frame_def: &FrameDefinition,
     debug: bool,
 ) -> Result<HashMap<String, i32>> {
@@ -2363,12 +2306,10 @@ fn parse_i_frame(
     // Parse each field according to the frame definition
     for field in &frame_def.fields {
         let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
+            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
+            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
+            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NULL => 0,
             _ => {
                 if debug {
                     println!(
@@ -2387,7 +2328,7 @@ fn parse_i_frame(
 }
 
 fn parse_s_frame(
-    stream: &mut bbl_format::BBLDataStream,
+    stream: &mut BBLDataStream,
     frame_def: &FrameDefinition,
     debug: bool,
 ) -> Result<HashMap<String, i32>> {
@@ -2398,22 +2339,22 @@ fn parse_s_frame(
         let field = &frame_def.fields[field_index];
 
         match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => {
+            ENCODING_SIGNED_VB => {
                 let value = stream.read_signed_vb()?;
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             }
-            bbl_format::ENCODING_UNSIGNED_VB => {
+            ENCODING_UNSIGNED_VB => {
                 let value = stream.read_unsigned_vb()? as i32;
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             }
-            bbl_format::ENCODING_NEG_14BIT => {
-                let value = -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16));
+            ENCODING_NEG_14BIT => {
+                let value = -(sign_extend_14bit(stream.read_unsigned_vb()? as u16));
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             }
-            bbl_format::ENCODING_TAG2_3S32 => {
+            ENCODING_TAG2_3S32 => {
                 // This encoding handles 3 fields at once
                 let mut values = [0i32; 8];
                 stream.read_tag2_3s32(&mut values)?;
@@ -2427,7 +2368,7 @@ fn parse_s_frame(
                 }
                 field_index += 3;
             }
-            bbl_format::ENCODING_NULL => {
+            ENCODING_NULL => {
                 data.insert(field.name.clone(), 0);
                 field_index += 1;
             }
@@ -2450,7 +2391,7 @@ fn parse_s_frame(
 }
 
 fn parse_h_frame(
-    stream: &mut bbl_format::BBLDataStream,
+    stream: &mut BBLDataStream,
     frame_def: &FrameDefinition,
     debug: bool,
 ) -> Result<HashMap<String, i32>> {
@@ -2467,12 +2408,10 @@ fn parse_h_frame(
         }
 
         let value = match field.encoding {
-            bbl_format::ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            bbl_format::ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            bbl_format::ENCODING_NEG_14BIT => {
-                -(bbl_format::sign_extend_14bit(stream.read_unsigned_vb()? as u16))
-            }
-            bbl_format::ENCODING_NULL => 0,
+            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
+            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
+            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NULL => 0,
             _ => {
                 if debug {
                     println!(
@@ -2494,7 +2433,7 @@ fn parse_h_frame(
 // like P frames in the main parsing loop for correct GPS coordinate calculation
 
 // Parse E frames (Event frames) - based on C reference implementation
-fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<EventFrame> {
+fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFrame> {
     if debug {
         println!("Parsing E frame (Event frame)");
     }
@@ -2660,7 +2599,7 @@ fn parse_e_frame(stream: &mut bbl_format::BBLDataStream, debug: bool) -> Result<
     })
 }
 
-fn skip_frame(stream: &mut bbl_format::BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
+fn skip_frame(stream: &mut BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
     if debug {
         println!("Skipping {frame_type} frame");
     }
