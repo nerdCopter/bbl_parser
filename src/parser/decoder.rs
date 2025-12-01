@@ -1,5 +1,5 @@
-use crate::error::{BBLError, Result};
 use crate::parser::stream::BBLDataStream;
+use anyhow::Result;
 
 // BBL Encoding constants - directly from JavaScript reference
 pub const ENCODING_SIGNED_VB: u8 = 0;
@@ -46,7 +46,7 @@ pub fn decode_field_value(
             values[index] = 0;
         }
         _ => {
-            return Err(BBLError::InvalidEncoding(encoding));
+            return Err(anyhow::anyhow!("Invalid encoding type: {}", encoding));
         }
     }
     Ok(())
@@ -127,6 +127,6 @@ pub fn apply_predictor(
             let motor_output_min = sysconfig.get("motorOutput[0]").copied().unwrap_or(48);
             Ok(value + motor_output_min) // Force signed 32-bit like Betaflight
         }
-        _ => Err(BBLError::InvalidPredictor(predictor)),
+        _ => Err(anyhow::anyhow!("Invalid predictor type: {}", predictor)),
     }
 }

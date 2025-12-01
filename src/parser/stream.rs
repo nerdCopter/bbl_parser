@@ -1,4 +1,4 @@
-use crate::error::{BBLError, Result};
+use anyhow::Result;
 
 /// BBL data stream for reading binary data
 pub struct BBLDataStream<'a> {
@@ -30,7 +30,7 @@ impl<'a> BBLDataStream<'a> {
             Ok(byte)
         } else {
             self.eof = true;
-            Err(BBLError::UnexpectedEof)
+            Err(anyhow::anyhow!("EOF"))
         }
     }
 
@@ -220,17 +220,23 @@ impl<'a> BBLDataStream<'a> {
         Ok(())
     }
 
-    /// Read negative 14-bit encoding
-    /// Reads an unsigned variable byte and interprets it as a 14-bit two's complement signed value.
-    /// The value is masked to 14 bits (0x3FFF), with bit 13 serving as the sign bit.
-    /// Negative values (sign bit set) are sign-extended to i32.
+    /// Read negative 14-bit encoding (sign-magnitude format)
+    /// Reads an unsigned variable byte and interprets it as a 14-bit sign-magnitude value.
+    /// Bit 13 is the sign bit, bits 0-12 are the magnitude.
+    /// Returns the negated value to match blackbox_decode behavior.
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
-        let unsigned = self.read_unsigned_vb()?;
+        let unsigned = self.read_unsigned_vb()? as u16;
+        Ok(-sign_extend_14bit_sign_magnitude(unsigned))
+    }
+}
 
-        // Mask to 14 bits and perform sign-extension
-        // If bit 13 is set, the value is negative and needs sign-extension
-        let masked = (unsigned & 0x3FFF) as u16;
-        Ok(sign_extend_14bit_twos_complement(masked))
+/// Sign-magnitude 14-bit encoding (matches bbl_format::sign_extend_14bit and blackbox_decode)
+/// Bit 13 indicates sign, bits 0-12 are the magnitude
+fn sign_extend_14bit_sign_magnitude(value: u16) -> i32 {
+    if (value & 0x2000) != 0 {
+        -((value & 0x1fff) as i32)
+    } else {
+        (value & 0x1fff) as i32
     }
 }
 
@@ -263,16 +269,6 @@ fn sign_extend_8bit(value: u8) -> i32 {
     value as i8 as i32
 }
 
-// Two's complement sign extension for 14-bit values (distinct from bbl_format.rs::sign_extend_14bit
-// which uses sign-magnitude encoding)
-fn sign_extend_14bit_twos_complement(value: u16) -> i32 {
-    if (value & 0x2000) != 0 {
-        (value as i32) | !0x3fff
-    } else {
-        (value & 0x3fff) as i32
-    }
-}
-
 fn sign_extend_16bit(value: u16) -> i32 {
     value as i16 as i32
 }
@@ -290,70 +286,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sign_extend_14bit_positive() {
-        // Positive values have bit 13 = 0
-        assert_eq!(sign_extend_14bit_twos_complement(0x0000), 0); // 0
-        assert_eq!(sign_extend_14bit_twos_complement(0x0001), 1); // 1
-        assert_eq!(sign_extend_14bit_twos_complement(0x1FFF), 0x1FFF); // 8191 (max positive)
+    fn test_sign_extend_14bit_sign_magnitude_positive() {
+        // Positive values have bit 13 = 0 (sign bit clear)
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x0000), 0); // 0
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x0001), 1); // 1
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x1FFF), 0x1FFF); // 8191 (max positive magnitude)
     }
 
     #[test]
-    fn test_sign_extend_14bit_negative() {
-        // Negative values have bit 13 = 1, sign extended to all upper bits
-        assert_eq!(sign_extend_14bit_twos_complement(0x2000), -8192); // -8192 (min negative)
-        assert_eq!(sign_extend_14bit_twos_complement(0x3FFF), -1); // -1
-        assert_eq!(sign_extend_14bit_twos_complement(0x2001), -8191); // -8191
+    fn test_sign_extend_14bit_sign_magnitude_negative() {
+        // Negative values have bit 13 = 1 (sign bit set), magnitude in bits 0-12
+        // 0x2000 = bit 13 set, magnitude 0 -> returns -0 = 0 (actually negative zero)
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x2000), 0); // -0
+                                                                 // 0x2001 = bit 13 set, magnitude 1 -> returns -1
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x2001), -1);
+        // 0x3FFF = bit 13 set, magnitude 0x1FFF (8191) -> returns -8191
+        assert_eq!(sign_extend_14bit_sign_magnitude(0x3FFF), -8191);
     }
 
     #[test]
     fn test_read_neg_14bit_positive() {
         // Test reading positive 14-bit value from variable byte encoding
         // VB encoding of 100 is [100] (single byte since 100 < 128)
+        // sign_extend_14bit_sign_magnitude(100) = 100 (bit 13 not set)
+        // read_neg_14bit returns -100 (negation)
         let data = vec![100u8];
         let mut stream = BBLDataStream::new(&data);
-        assert_eq!(stream.read_neg_14bit().unwrap(), 100);
+        // The function returns the negation: -sign_extend_14bit_sign_magnitude(100) = -100
+        assert_eq!(stream.read_neg_14bit().unwrap(), -100);
     }
 
     #[test]
     fn test_read_neg_14bit_negative() {
-        // Test reading negative 14-bit value
-        // 14-bit value -1 (0x3FFF in two's complement)
-        // VB encode 0x3FFF: 0x3FFF = 16383
-        // 16383 in VB: 0xFF (127 + continuation), 0x7F (127, final) = 127 + 127*128 = 16383
-        let data = vec![0xFF, 0x7Fu8];
+        // Test reading value with sign bit set
+        // VB encode 0x2001 = 8193: 0x81 (1 + continuation), 0x40 (64, final) = 1 + 64*128 = 8193
+        let data = vec![0x81, 0x40u8];
         let mut stream = BBLDataStream::new(&data);
-        assert_eq!(stream.read_neg_14bit().unwrap(), -1);
+        // 0x2001: bit 13 set, magnitude = 1, sign_extend returns -1
+        // read_neg_14bit returns -(-1) = 1
+        assert_eq!(stream.read_neg_14bit().unwrap(), 1);
     }
 
     #[test]
     fn test_read_neg_14bit_boundary() {
         // Test boundary values
-        // Max positive: 0x1FFF (8191)
-        // VB encode 0x1FFF: 0xFF (127 + continuation), 0x3F (63, final) = 127 + 63*128 = 8191
+        // Value 0: VB = [0], sign_extend_14bit(0) = 0, read_neg_14bit returns -0 = 0
+        let data = vec![0u8];
+        let mut stream = BBLDataStream::new(&data);
+        assert_eq!(stream.read_neg_14bit().unwrap(), 0);
+
+        // Max magnitude positive (no sign): 0x1FFF = 8191
+        // VB encode 0x1FFF: 0xFF, 0x3F = 127 + 63*128 = 8191
+        // sign_extend returns 8191, read_neg_14bit returns -8191
         let data = vec![0xFF, 0x3Fu8];
         let mut stream = BBLDataStream::new(&data);
-        assert_eq!(stream.read_neg_14bit().unwrap(), 8191);
-
-        // Min negative: 0x2000 (-8192)
-        // VB encode 0x2000: 0x80 (0 + continuation), 0x20 (32, final) = 0 + 32*128 = 4096
-        // But 0x2000 & 0x3FFF = 0x2000, and bit 13 is set, so it's negative
-        // Actually we need the full 14-bit value 0x2000 = 8192
-        // In VB that's: 0x80, 0x40 = 0 + 64*128 = 8192
-        let data = vec![0x80, 0x40u8];
-        let mut stream = BBLDataStream::new(&data);
-        assert_eq!(stream.read_neg_14bit().unwrap(), -8192);
+        assert_eq!(stream.read_neg_14bit().unwrap(), -8191);
     }
 
     #[test]
-    fn test_read_neg_14bit_masks_14_bits() {
-        // Verify that only lower 14 bits are used even if VB encodes more
-        // If VB reads a value > 0x3FFF, only lower 14 bits are used
-        // Encode 0x1FFFFF (large value), which masks to 0x3FFF = -1
-        // VB encode 0x1FFFFF: 0xFF, 0xFF, 0x7F = 127 + 127*128 + 127*128^2
-        let data = vec![0xFF, 0xFF, 0x7Fu8];
+    fn test_read_neg_14bit_with_sign_bit() {
+        // When sign bit (bit 13) is set, sign_extend returns negative, then we negate again
+        // 0x2001 encodes as VB: 0x81, 0x40 = 1 + 64*128 = 8193
+        // sign_extend_14bit_sign_magnitude(0x2001) = -1 (sign bit set, magnitude 1)
+        // read_neg_14bit returns -(-1) = 1
+        let data = vec![0x81, 0x40u8];
         let mut stream = BBLDataStream::new(&data);
-        let result = stream.read_neg_14bit().unwrap();
-        // 0x1FFFFF & 0x3FFF = 0x3FFF, which is -1 in 14-bit two's complement
-        assert_eq!(result, -1);
+        assert_eq!(stream.read_neg_14bit().unwrap(), 1);
     }
 }

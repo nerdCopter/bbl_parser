@@ -5,7 +5,7 @@
 
 use crate::parser::stream::BBLDataStream;
 use crate::types::EventFrame;
-use crate::Result;
+use anyhow::Result;
 
 /// Helper function to parse inflight adjustment events (types 4 and 13)
 /// Returns the event description string

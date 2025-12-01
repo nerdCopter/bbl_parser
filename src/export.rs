@@ -5,8 +5,7 @@
 
 use crate::conversion::*;
 use crate::types::*;
-use crate::Result;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
