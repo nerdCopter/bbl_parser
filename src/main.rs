@@ -14,7 +14,6 @@ use bbl_parser::conversion::{
 };
 
 // Import parser types from crate library
-use bbl_parser::parser::helpers::sign_extend_14bit;
 use bbl_parser::parser::{
     parse_frame_data, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL, ENCODING_SIGNED_VB,
     ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
@@ -2308,7 +2307,7 @@ fn parse_i_frame(
         let value = match field.encoding {
             ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
             ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -2350,7 +2349,7 @@ fn parse_s_frame(
                 field_index += 1;
             }
             ENCODING_NEG_14BIT => {
-                let value = -(sign_extend_14bit(stream.read_unsigned_vb()? as u16));
+                let value = stream.read_neg_14bit()?;
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             }
@@ -2410,7 +2409,7 @@ fn parse_h_frame(
         let value = match field.encoding {
             ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
             ENCODING_NULL => 0,
             _ => {
                 if debug {
