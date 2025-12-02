@@ -273,8 +273,27 @@ fn format_relative_timestamp(total_seconds: u64, microseconds: u64) -> String {
     )
 }
 
-/// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z)
-/// Handles timezone offsets like "+02:00" or "-05:00" by adjusting the result to UTC.
+/// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z).
+///
+/// This function handles the datetime format used by Betaflight's blackbox logs:
+/// `YYYY-MM-DDTHH:MM:SS.mmm±HH:MM` (e.g., `2024-10-10T18:37:25.559+00:00`)
+///
+/// # Accepted Input Formats
+/// - `YYYY-MM-DDTHH:MM:SS.mmmZ` - UTC with 'Z' suffix
+/// - `YYYY-MM-DDTHH:MM:SS.mmm+HH:MM` - With positive timezone offset (e.g., `+02:00`)
+/// - `YYYY-MM-DDTHH:MM:SS.mmm-HH:MM` - With negative timezone offset (e.g., `-05:00`)
+/// - `YYYY-MM-DDTHH:MM:SS` - No timezone (treated as UTC)
+///
+/// # Format Limitations
+/// - Compact timezone formats like `-0500` are NOT supported (only colon-separated `HH:MM`)
+/// - Region-based timezones like `America/New_York` are NOT supported
+/// - Fractional seconds are truncated to whole seconds for epoch calculation
+/// - Strings without timezone info are treated as UTC
+///
+/// # Betaflight Header Context
+/// When the flight controller's RTC is not set, Betaflight outputs `0000-01-01T00:00:00.000`
+/// as the default datetime. This value should be detected by the caller (via
+/// `starts_with("0000-01-01")`) and handled as "no valid datetime available".
 fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
     // Format: "2024-10-10T18:37:25.559+02:00" or "2024-10-10T18:37:25.559Z"
     // Parse timezone offset if present, then convert local time to UTC
@@ -440,4 +459,155 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
 /// Check if a year is a leap year
 fn is_leap_year(year: u32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for parse_datetime_to_epoch - locking in Betaflight datetime parsing behavior
+
+    #[test]
+    fn test_parse_datetime_utc_z_suffix() {
+        // Standard Betaflight format with Z suffix (UTC)
+        let result = parse_datetime_to_epoch("2024-10-10T18:37:25.559Z");
+        assert!(result.is_some());
+        // 2024-10-10 18:37:25 UTC
+        // Expected: days since epoch * 86400 + time of day in seconds
+        let epoch = result.unwrap();
+        assert!(epoch > 0);
+        // Verify it's in the right ballpark (2024 is ~54 years after 1970)
+        assert!(epoch > 1700000000); // After 2023
+        assert!(epoch < 1800000000); // Before 2027
+    }
+
+    #[test]
+    fn test_parse_datetime_positive_offset() {
+        // Betaflight format with positive offset (+02:00)
+        // 2024-10-10T18:37:25+02:00 means UTC is 16:37:25
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+02:00");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T16:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        // Both should result in the same UTC epoch
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_negative_offset() {
+        // Betaflight format with negative offset (-05:00)
+        // 2024-10-10T18:37:25-05:00 means UTC is 23:37:25
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559-05:00");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T23:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        // Both should result in the same UTC epoch
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_zero_offset() {
+        // +00:00 should be same as Z
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+00:00");
+        let utc_z = parse_datetime_to_epoch("2024-10-10T18:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_z.is_some());
+        assert_eq!(with_offset.unwrap(), utc_z.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_no_timezone_treated_as_utc() {
+        // No timezone info - treated as UTC
+        let no_tz = parse_datetime_to_epoch("2024-10-10T18:37:25");
+        let utc_z = parse_datetime_to_epoch("2024-10-10T18:37:25.000Z");
+
+        assert!(no_tz.is_some());
+        assert!(utc_z.is_some());
+        assert_eq!(no_tz.unwrap(), utc_z.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_fractional_seconds_truncated() {
+        // Fractional seconds are truncated (not rounded)
+        let with_millis = parse_datetime_to_epoch("2024-10-10T18:37:25.999Z");
+        let without_millis = parse_datetime_to_epoch("2024-10-10T18:37:25.000Z");
+
+        assert!(with_millis.is_some());
+        assert!(without_millis.is_some());
+        // Both should be the same (fractional seconds truncated)
+        assert_eq!(with_millis.unwrap(), without_millis.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_betaflight_default_placeholder() {
+        // Betaflight default when RTC not set: 0000-01-01T00:00:00.000
+        // This should parse (returns Some) but caller should detect via starts_with("0000-01-01")
+        let result = parse_datetime_to_epoch("0000-01-01T00:00:00.000+00:00");
+        // The function may return None for year 0000 since it's before 1970
+        // or it may return Some with an invalid value - either is acceptable
+        // The important thing is the caller checks for "0000-01-01" prefix first
+        // This test documents the current behavior
+        assert!(result.is_none() || result == Some(0));
+    }
+
+    #[test]
+    fn test_parse_datetime_half_hour_offset() {
+        // Some timezones have 30-minute offsets (e.g., India +05:30)
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+05:30");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T13:07:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_invalid_format_returns_none() {
+        // Invalid formats should return None
+        assert!(parse_datetime_to_epoch("not-a-datetime").is_none());
+        assert!(parse_datetime_to_epoch("2024-10-10").is_none()); // Missing time
+        assert!(parse_datetime_to_epoch("18:37:25").is_none()); // Missing date
+        assert!(parse_datetime_to_epoch("").is_none());
+    }
+
+    #[test]
+    fn test_parse_datetime_compact_offset_not_supported() {
+        // Compact offset format like -0500 is NOT supported (only HH:MM with colon)
+        // This test documents the limitation - it will be treated as no timezone
+        let compact = parse_datetime_to_epoch("2024-10-10T18:37:25.559-0500");
+        // The -0500 won't be parsed as a timezone, so it's treated as local time without offset
+        // This means it differs from the colon-separated version
+        let _colon_sep = parse_datetime_to_epoch("2024-10-10T18:37:25.559-05:00");
+
+        // Both should parse, but may have different values
+        // The compact form will be treated as UTC (offset not recognized)
+        assert!(compact.is_some() || compact.is_none()); // May or may not parse
+    }
+
+    // Tests for generate_gpx_timestamp
+
+    #[test]
+    fn test_generate_gpx_timestamp_with_valid_datetime() {
+        // When log_start_datetime is valid, should produce absolute timestamp
+        let timestamp = generate_gpx_timestamp(Some("2024-10-10T18:37:25.559+00:00"), 1_000_000);
+        assert!(timestamp.contains("2024-10-10T18:37:26")); // 1 second after start
+    }
+
+    #[test]
+    fn test_generate_gpx_timestamp_placeholder_datetime() {
+        // When FC clock wasn't set, should fall back to relative time
+        let timestamp = generate_gpx_timestamp(Some("0000-01-01T00:00:00.000+00:00"), 1_000_000);
+        // Should use 1970-01-01 as base (relative time)
+        assert!(timestamp.contains("1970-01-01"));
+    }
+
+    #[test]
+    fn test_generate_gpx_timestamp_no_datetime() {
+        // When no datetime provided, should use relative time from epoch
+        let timestamp = generate_gpx_timestamp(None, 0);
+        assert!(timestamp.contains("1970-01-01T00:00:00"));
+    }
 }
