@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use glob::glob;
-use semver::Version;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -9,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 // Import conversion functions from crate library to avoid code duplication
 use bbl_parser::conversion::{
-    convert_gps_altitude, convert_gps_coordinate, convert_gps_course, convert_gps_speed,
-    format_failsafe_phase, format_flight_mode_flags, format_state_flags, generate_gpx_timestamp,
+    convert_amperage_to_amps, convert_gps_altitude, convert_gps_coordinate, convert_gps_course,
+    convert_gps_speed, convert_vbat_to_volts, format_failsafe_phase, format_flight_mode_flags,
+    format_state_flags, generate_gpx_timestamp,
 };
 
 // Import parser types from crate library
@@ -2258,59 +2258,6 @@ fn parse_numeric_data(numeric_data: &str) -> Vec<u8> {
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect()
-}
-
-/// Converts raw vbatLatest value to volts using firmware-aware scaling.
-///
-/// Betaflight < 4.3.0: tenths (0.1V units)
-/// Betaflight >= 4.3.0: hundredths (0.01V units)
-/// EmuFlight: always tenths (0.1V units)
-/// iNav: always hundredths (0.01V units)
-fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
-    // Determine scaling factor based on firmware
-    let scale_factor = if firmware_revision.contains("EmuFlight") {
-        // EmuFlight always uses tenths
-        0.1
-    } else if firmware_revision.contains("iNav") {
-        // iNav always uses hundredths
-        0.01
-    } else if firmware_revision.contains("Betaflight") {
-        // Betaflight version-dependent scaling
-        if let Some(version) = extract_firmware_version(firmware_revision) {
-            if version >= Version::new(4, 3, 0) {
-                0.01 // hundredths for >= 4.3.0
-            } else {
-                0.1 // tenths for < 4.3.0
-            }
-        } else {
-            // Default to modern Betaflight scaling if version can't be parsed
-            0.01
-        }
-    } else {
-        // Unknown firmware, default to hundredths
-        0.01
-    };
-
-    raw_value as f32 * scale_factor
-}
-
-/// Extract version from firmware revision string
-fn extract_firmware_version(firmware_revision: &str) -> Option<Version> {
-    // Parse version from strings like "Betaflight 4.5.1 (77d01ba3b) AT32F435M"
-    let words: Vec<&str> = firmware_revision.split_whitespace().collect();
-    for (i, word) in words.iter().enumerate() {
-        if word.to_lowercase().contains("betaflight") && i + 1 < words.len() {
-            if let Ok(version) = Version::parse(words[i + 1]) {
-                return Some(version);
-            }
-        }
-    }
-    None
-}
-
-/// Converts raw amperageLatest value to amps (0.01A units)
-fn convert_amperage_to_amps(raw_value: i32) -> f32 {
-    raw_value as f32 / 100.0
 }
 
 fn parse_bbl_file_streaming(
