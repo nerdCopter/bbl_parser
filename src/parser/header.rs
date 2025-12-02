@@ -46,6 +46,14 @@ pub fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHead
             {
                 header.data_version = version;
             }
+        } else if line.starts_with("H Log start datetime:") {
+            // Parse log start datetime for GPX timestamp generation
+            // Format: "2024-10-10T18:37:25.559+00:00" or "0000-01-01T00:00:00.000+00:00" if not set
+            if let Some(datetime_str) = line.strip_prefix("H Log start datetime:") {
+                let datetime = datetime_str.trim().to_string();
+                // Store even if it's the placeholder "0000-01-01..." so we know the header exists
+                header.log_start_datetime = Some(datetime);
+            }
         } else if line.starts_with("H looptime:") {
             if let Ok(lt) = line
                 .strip_prefix("H looptime:")

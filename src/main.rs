@@ -240,6 +240,8 @@ struct BBLHeader {
     craft_name: String,
     data_version: u8,
     looptime: u32,
+    /// Log start datetime from header (ISO 8601 format)
+    log_start_datetime: Option<String>,
     i_frame_def: FrameDefinition,
     p_frame_def: FrameDefinition,
     s_frame_def: FrameDefinition,
@@ -780,6 +782,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
     let mut craft_name = String::new();
     let mut data_version = 2u8;
     let mut looptime = 0u32;
+    let mut log_start_datetime: Option<String> = None;
     let mut sysconfig = HashMap::new();
 
     // Initialize frame definitions
@@ -824,6 +827,12 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
                 .parse()
             {
                 data_version = version;
+            }
+        } else if line.starts_with("H Log start datetime:") {
+            // Parse log start datetime for GPX timestamp generation
+            // Format: "2024-10-10T18:37:25.559+00:00" or "0000-01-01T00:00:00.000+00:00" if not set
+            if let Some(datetime_str) = line.strip_prefix("H Log start datetime:") {
+                log_start_datetime = Some(datetime_str.trim().to_string());
             }
         } else if line.starts_with("H looptime:") {
             if let Ok(lt) = line
@@ -968,6 +977,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         craft_name,
         data_version,
         looptime,
+        log_start_datetime,
         i_frame_def,
         p_frame_def,
         s_frame_def,
@@ -2809,6 +2819,7 @@ fn parse_bbl_file_streaming(
                 &gps_coords,
                 &home_coords,
                 export_options,
+                log.header.log_start_datetime.as_deref(),
             ) {
                 let filename = file_path
                     .file_name()
@@ -2860,6 +2871,188 @@ fn parse_bbl_file_streaming(
 // GPS/GPX export functions
 // Note: GPS conversion functions now imported from bbl_parser::conversion module
 
+/// Generate GPX timestamp from log_start_datetime header + frame timestamp.
+/// Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+/// If log_start_datetime is not available or invalid, falls back to relative time from epoch.
+fn generate_gpx_timestamp(log_start_datetime: Option<&str>, frame_timestamp_us: u64) -> String {
+    let total_seconds = frame_timestamp_us / 1_000_000;
+    let microseconds = frame_timestamp_us % 1_000_000;
+
+    // Try to parse the log start datetime if available
+    if let Some(datetime_str) = log_start_datetime {
+        // Check for placeholder datetime (clock not set on FC)
+        if datetime_str.starts_with("0000-01-01") {
+            // FC clock wasn't set, fall back to relative time
+            return format_relative_timestamp(total_seconds, microseconds);
+        }
+
+        // Parse ISO 8601 datetime: "2024-10-10T18:37:25.559+00:00"
+        // We only need the date and base time parts for combining with frame offset
+        if let Some(base_time) = parse_datetime_to_epoch(datetime_str) {
+            let absolute_secs = base_time + total_seconds;
+
+            // Convert back to date/time components
+            let secs_per_minute = 60u64;
+            let secs_per_hour = 3600u64;
+            let secs_per_day = 86400u64;
+
+            // Calculate time components
+            let time_of_day = absolute_secs % secs_per_day;
+            let hours = (time_of_day / secs_per_hour) % 24;
+            let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+            let seconds = time_of_day % secs_per_minute;
+
+            // Calculate date components (days since epoch 1970-01-01)
+            let days_since_epoch = absolute_secs / secs_per_day;
+            let (year, month, day) = days_to_ymd(days_since_epoch);
+
+            return format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+                year, month, day, hours, minutes, seconds, microseconds
+            );
+        }
+    }
+
+    // Fallback: use relative time from epoch
+    format_relative_timestamp(total_seconds, microseconds)
+}
+
+/// Format a relative timestamp (when no absolute datetime is available)
+fn format_relative_timestamp(total_seconds: u64, microseconds: u64) -> String {
+    // Use 1970-01-01 as base, add the relative seconds
+    let secs_per_minute = 60u64;
+    let secs_per_hour = 3600u64;
+    let secs_per_day = 86400u64;
+
+    let days = total_seconds / secs_per_day;
+    let time_of_day = total_seconds % secs_per_day;
+    let hours = time_of_day / secs_per_hour;
+    let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+    let seconds = time_of_day % secs_per_minute;
+
+    let (year, month, day) = days_to_ymd(days);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, hours, minutes, seconds, microseconds
+    )
+}
+
+/// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z)
+fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
+    // Format: "2024-10-10T18:37:25.559+00:00" or "2024-10-10T18:37:25.559Z"
+    // We ignore timezone and treat as UTC for simplicity
+
+    // Split into date and time parts
+    let datetime_part = datetime_str.split('+').next()?.split('Z').next()?;
+    let parts: Vec<&str> = datetime_part.split('T').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+    if date_parts.len() != 3 {
+        return None;
+    }
+
+    let time_part = parts[1].split('.').next()?; // Ignore fractional seconds
+    let time_parts: Vec<u32> = time_part
+        .split(':')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if time_parts.len() != 3 {
+        return None;
+    }
+
+    let year = date_parts[0];
+    let month = date_parts[1];
+    let day = date_parts[2];
+    let hour = time_parts[0];
+    let minute = time_parts[1];
+    let second = time_parts[2];
+
+    // Convert to days since epoch (simplified, doesn't handle all edge cases)
+    let days = ymd_to_days(year, month, day)?;
+    let secs =
+        (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
+
+    Some(secs)
+}
+
+/// Convert year/month/day to days since Unix epoch (1970-01-01)
+fn ymd_to_days(year: u32, month: u32, day: u32) -> Option<u64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    // Days in each month (non-leap year)
+    let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let mut total_days: i64 = 0;
+
+    // Add days for complete years since 1970
+    for y in 1970..year {
+        total_days += if is_leap_year(y) { 366 } else { 365 };
+    }
+
+    // Add days for complete months in current year
+    for m in 1..month {
+        total_days += days_in_month[m as usize] as i64;
+        if m == 2 && is_leap_year(year) {
+            total_days += 1;
+        }
+    }
+
+    // Add days in current month
+    total_days += (day - 1) as i64;
+
+    if total_days >= 0 {
+        Some(total_days as u64)
+    } else {
+        None
+    }
+}
+
+/// Convert days since Unix epoch to year/month/day
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    let mut remaining_days = days as i64;
+    let mut year = 1970u32;
+
+    // Find the year
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    // Days in each month (non-leap year)
+    let mut days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if is_leap_year(year) {
+        days_in_month[2] = 29;
+    }
+
+    // Find the month
+    let mut month = 1u32;
+    for (m, &days) in days_in_month.iter().enumerate().skip(1) {
+        if remaining_days < days as i64 {
+            month = m as u32;
+            break;
+        }
+        remaining_days -= days as i64;
+    }
+
+    let day = (remaining_days + 1) as u32;
+
+    (year, month, day)
+}
+
+/// Check if a year is a leap year
+fn is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
 fn export_gpx_file(
     file_path: &Path,
     log_number: usize,
@@ -2867,6 +3060,7 @@ fn export_gpx_file(
     gps_coords: &[GpsCoordinate],
     _home_coords: &[GpsHomeCoordinate], // TODO: Use home coordinates for reference point
     export_options: &ExportOptions,
+    log_start_datetime: Option<&str>,
 ) -> Result<()> {
     if gps_coords.is_empty() {
         return Ok(());
@@ -2910,20 +3104,14 @@ fn export_gpx_file(
             }
         }
 
-        // Convert timestamp to ISO format
-        // Simplified timestamp calculation to approximate BBD format
-        let total_seconds = coord.timestamp_us / 1_000_000;
-        let microseconds = coord.timestamp_us % 1_000_000;
-
-        // Use March 26, 2025 as base date to match BBD format more closely
-        let hours = 5 + (total_seconds / 3600) % 24; // Start at 05:xx like BBD
-        let minutes = (total_seconds % 3600) / 60;
-        let seconds = total_seconds % 60;
+        // Generate GPX timestamp from log_start_datetime + frame timestamp
+        // Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+        let timestamp_str = generate_gpx_timestamp(log_start_datetime, coord.timestamp_us);
 
         writeln!(
             gpx_file,
-            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>2025-03-26T{:02}:{:02}:{:02}.{:06}Z</time></trkpt>"#,
-            coord.latitude, coord.longitude, coord.altitude, hours, minutes, seconds, microseconds
+            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>{}</time></trkpt>"#,
+            coord.latitude, coord.longitude, coord.altitude, timestamp_str
         )?;
     }
 
@@ -3092,6 +3280,7 @@ mod tests {
             craft_name: "TestCraft".to_string(),
             data_version: 2,
             looptime: 500,
+            log_start_datetime: None,
             i_frame_def: FrameDefinition::new(),
             p_frame_def: FrameDefinition::new(),
             s_frame_def: FrameDefinition::new(),
