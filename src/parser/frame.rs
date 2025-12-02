@@ -1,4 +1,7 @@
-use crate::parser::{decoder::*, event::parse_e_frame, gps::*, stream::BBLDataStream};
+use crate::parser::{
+    decoder::apply_predictor_with_debug, decoder::*, event::parse_e_frame, gps::*,
+    stream::BBLDataStream,
+};
 use crate::types::{
     DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
     GpsHomeCoordinate,
@@ -116,6 +119,7 @@ pub fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -169,6 +173,7 @@ pub fn parse_frames(
                                 false, // Not raw
                                 header.data_version,
                                 &header.sysconfig,
+                                debug,
                             )
                             .is_ok()
                             {
@@ -438,10 +443,11 @@ pub fn parse_frame_data(
     current_frame: &mut [i32],
     previous_frame: Option<&[i32]>,
     previous2_frame: Option<&[i32]>,
-    _skipped_frames: u32,
+    skipped_frames: u32,
     raw: bool,
     _data_version: u8,
     sysconfig: &HashMap<String, i32>,
+    debug: bool,
 ) -> Result<()> {
     let mut i = 0;
     let mut values = [0i32; 8];
@@ -450,15 +456,18 @@ pub fn parse_frame_data(
         let field = &frame_def.fields[i];
 
         if field.predictor == PREDICT_INC {
-            current_frame[i] = apply_predictor(
+            current_frame[i] = apply_predictor_with_debug(
+                i,
                 field.predictor,
                 0,
-                i,
                 current_frame,
-                previous_frame.unwrap_or(&[]),
-                previous2_frame.unwrap_or(&[]),
+                previous_frame,
+                previous2_frame,
+                skipped_frames,
                 sysconfig,
-            )?;
+                &frame_def.field_names,
+                debug,
+            );
             i += 1;
             continue;
         }
@@ -477,15 +486,18 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
+                    current_frame[i + j] = apply_predictor_with_debug(
+                        i + j,
                         predictor,
                         values[j],
-                        i + j,
                         current_frame,
-                        previous_frame.unwrap_or(&[]),
-                        previous2_frame.unwrap_or(&[]),
+                        previous_frame,
+                        previous2_frame,
+                        skipped_frames,
                         sysconfig,
-                    )?;
+                        &frame_def.field_names,
+                        debug,
+                    );
                 }
                 i += 4;
                 continue;
@@ -504,25 +516,37 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
+                    current_frame[i + j] = apply_predictor_with_debug(
+                        i + j,
                         predictor,
                         values[j],
-                        i + j,
                         current_frame,
-                        previous_frame.unwrap_or(&[]),
-                        previous2_frame.unwrap_or(&[]),
+                        previous_frame,
+                        previous2_frame,
+                        skipped_frames,
                         sysconfig,
-                    )?;
+                        &frame_def.field_names,
+                        debug,
+                    );
                 }
                 i += 3;
                 continue;
             }
 
             ENCODING_TAG8_8SVB => {
-                stream.read_tag8_8svb(&mut values)?;
+                // Count how many consecutive fields use this encoding
+                let mut group_count = 1;
+                for j in i + 1..i + 8.min(frame_def.fields.len() - i) {
+                    if frame_def.fields[j].encoding != ENCODING_TAG8_8SVB {
+                        break;
+                    }
+                    group_count += 1;
+                }
 
-                // Apply predictors for the 8 fields
-                for j in 0..8 {
+                stream.read_tag8_8svb_counted(&mut values, group_count)?;
+
+                // Apply predictors for the group
+                for j in 0..group_count {
                     if i + j >= frame_def.fields.len() {
                         break;
                     }
@@ -531,17 +555,20 @@ pub fn parse_frame_data(
                     } else {
                         frame_def.fields[i + j].predictor
                     };
-                    current_frame[i + j] = apply_predictor(
+                    current_frame[i + j] = apply_predictor_with_debug(
+                        i + j,
                         predictor,
                         values[j],
-                        i + j,
                         current_frame,
-                        previous_frame.unwrap_or(&[]),
-                        previous2_frame.unwrap_or(&[]),
+                        previous_frame,
+                        previous2_frame,
+                        skipped_frames,
                         sysconfig,
-                    )?;
+                        &frame_def.field_names,
+                        debug,
+                    );
                 }
-                i += 8;
+                i += group_count;
                 continue;
             }
 
@@ -549,15 +576,18 @@ pub fn parse_frame_data(
                 decode_field_value(stream, field.encoding, &mut values, 0)?;
                 let raw_value = values[0];
                 let predictor = if raw { PREDICT_0 } else { field.predictor };
-                current_frame[i] = apply_predictor(
+                current_frame[i] = apply_predictor_with_debug(
+                    i,
                     predictor,
                     raw_value,
-                    i,
                     current_frame,
-                    previous_frame.unwrap_or(&[]),
-                    previous2_frame.unwrap_or(&[]),
+                    previous_frame,
+                    previous2_frame,
+                    skipped_frames,
                     sysconfig,
-                )?;
+                    &frame_def.field_names,
+                    debug,
+                );
             }
         }
 

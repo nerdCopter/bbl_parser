@@ -1,3 +1,7 @@
+use crate::parser::helpers::{
+    sign_extend_14bit, sign_extend_16bit, sign_extend_24bit, sign_extend_2bit, sign_extend_4bit,
+    sign_extend_6bit, sign_extend_8bit,
+};
 use anyhow::Result;
 
 /// BBL data stream for reading binary data
@@ -205,8 +209,11 @@ impl<'a> BBLDataStream<'a> {
     }
 
     /// Read Tag8_8SVB encoding - exact replica of JavaScript implementation
+    /// When value_count is 1, reads single signed VB without header byte.
+    /// Otherwise reads header byte followed by up to 8 values based on header bits.
     #[allow(clippy::needless_range_loop)]
     pub fn read_tag8_8svb(&mut self, values: &mut [i32]) -> Result<()> {
+        // Fixed 8-value version for internal use
         let selector = self.read_byte()?;
 
         for i in 0..8 {
@@ -220,88 +227,59 @@ impl<'a> BBLDataStream<'a> {
         Ok(())
     }
 
+    /// Read Tag8_8SVB encoding with variable count
+    /// When value_count is 1, reads single signed VB without header byte.
+    /// Otherwise reads header byte followed by up to value_count values based on header bits.
+    #[allow(clippy::needless_range_loop)]
+    pub fn read_tag8_8svb_counted(&mut self, values: &mut [i32], value_count: usize) -> Result<()> {
+        if value_count == 1 {
+            values[0] = self.read_signed_vb()?;
+        } else {
+            let mut header = self.read_byte()?;
+            for i in 0..8.min(value_count) {
+                values[i] = if header & 0x01 != 0 {
+                    self.read_signed_vb()?
+                } else {
+                    0
+                };
+                header >>= 1;
+            }
+        }
+        Ok(())
+    }
+
     /// Read negative 14-bit encoding (sign-magnitude format)
     /// Reads an unsigned variable byte and interprets it as a 14-bit sign-magnitude value.
     /// Bit 13 is the sign bit, bits 0-12 are the magnitude.
     /// Returns the negated value to match blackbox_decode behavior.
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
         let unsigned = self.read_unsigned_vb()? as u16;
-        Ok(-sign_extend_14bit_sign_magnitude(unsigned))
-    }
-}
-
-/// Sign-magnitude 14-bit encoding (matches bbl_format::sign_extend_14bit and blackbox_decode)
-/// Bit 13 indicates sign, bits 0-12 are the magnitude
-fn sign_extend_14bit_sign_magnitude(value: u16) -> i32 {
-    if (value & 0x2000) != 0 {
-        -((value & 0x1fff) as i32)
-    } else {
-        (value & 0x1fff) as i32
-    }
-}
-
-// Sign extension helper functions - exact replicas of JavaScript implementation
-fn sign_extend_2bit(value: u8) -> i32 {
-    if (value & 0x02) != 0 {
-        (value as i32) | !0x03
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_4bit(value: u8) -> i32 {
-    if (value & 0x08) != 0 {
-        (value as i32) | !0x0f
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_6bit(value: u8) -> i32 {
-    if (value & 0x20) != 0 {
-        (value as i32) | !0x3f
-    } else {
-        value as i32
-    }
-}
-
-fn sign_extend_8bit(value: u8) -> i32 {
-    value as i8 as i32
-}
-
-fn sign_extend_16bit(value: u16) -> i32 {
-    value as i16 as i32
-}
-
-fn sign_extend_24bit(value: u32) -> i32 {
-    if (value & 0x800000) != 0 {
-        (value as i32) | !0xffffff
-    } else {
-        value as i32
+        Ok(-sign_extend_14bit(unsigned))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::helpers::sign_extend_14bit;
 
     #[test]
     fn test_sign_extend_14bit_sign_magnitude_positive() {
         // Positive values have bit 13 = 0 (sign bit clear)
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x0000), 0); // 0
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x0001), 1); // 1
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x1FFF), 0x1FFF); // 8191 (max positive magnitude)
+        assert_eq!(sign_extend_14bit(0x0000), 0); // 0
+        assert_eq!(sign_extend_14bit(0x0001), 1); // 1
+        assert_eq!(sign_extend_14bit(0x1FFF), 0x1FFF); // 8191 (max positive magnitude)
     }
 
     #[test]
     fn test_sign_extend_14bit_sign_magnitude_negative() {
         // Negative values have bit 13 = 1 (sign bit set), magnitude in bits 0-12
         // 0x2000 = bit 13 set, magnitude 0 -> returns -0 = 0 (actually negative zero)
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x2000), 0); // -0
-                                                                 // 0x2001 = bit 13 set, magnitude 1 -> returns -1
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x2001), -1);
+        assert_eq!(sign_extend_14bit(0x2000), 0); // -0
+                                                  // 0x2001 = bit 13 set, magnitude 1 -> returns -1
+        assert_eq!(sign_extend_14bit(0x2001), -1);
         // 0x3FFF = bit 13 set, magnitude 0x1FFF (8191) -> returns -8191
-        assert_eq!(sign_extend_14bit_sign_magnitude(0x3FFF), -8191);
+        assert_eq!(sign_extend_14bit(0x3FFF), -8191);
     }
 
     #[test]
