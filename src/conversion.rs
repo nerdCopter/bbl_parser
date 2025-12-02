@@ -207,6 +207,27 @@ pub fn format_failsafe_phase(phase: i32) -> String {
 // GPX Timestamp Generation (for GPS export)
 // ============================================================================
 
+/// Convert epoch seconds and microseconds to ISO 8601 string.
+/// Helper function to eliminate duplication between timestamp formatting functions.
+fn epoch_seconds_to_iso8601(total_seconds: u64, microseconds: u64) -> String {
+    let secs_per_minute = 60u64;
+    let secs_per_hour = 3600u64;
+    let secs_per_day = 86400u64;
+
+    let time_of_day = total_seconds % secs_per_day;
+    let hours = (time_of_day / secs_per_hour) % 24;
+    let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+    let seconds = time_of_day % secs_per_minute;
+
+    let days_since_epoch = total_seconds / secs_per_day;
+    let (year, month, day) = days_to_ymd(days_since_epoch);
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, hours, minutes, seconds, microseconds
+    )
+}
+
 /// Generate GPX timestamp from log_start_datetime header + frame timestamp.
 /// Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
 /// If log_start_datetime is not available or invalid, falls back to relative time from epoch.
@@ -219,58 +240,19 @@ pub fn generate_gpx_timestamp(log_start_datetime: Option<&str>, frame_timestamp_
         // Check for placeholder datetime (clock not set on FC)
         if datetime_str.starts_with("0000-01-01") {
             // FC clock wasn't set, fall back to relative time
-            return format_relative_timestamp(total_seconds, microseconds);
+            return epoch_seconds_to_iso8601(total_seconds, microseconds);
         }
 
         // Parse ISO 8601 datetime: "2024-10-10T18:37:25.559+00:00"
         // We only need the date and base time parts for combining with frame offset
         if let Some(base_time) = parse_datetime_to_epoch(datetime_str) {
             let absolute_secs = base_time + total_seconds;
-
-            // Convert back to date/time components
-            let secs_per_minute = 60u64;
-            let secs_per_hour = 3600u64;
-            let secs_per_day = 86400u64;
-
-            // Calculate time components
-            let time_of_day = absolute_secs % secs_per_day;
-            let hours = (time_of_day / secs_per_hour) % 24;
-            let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
-            let seconds = time_of_day % secs_per_minute;
-
-            // Calculate date components (days since epoch 1970-01-01)
-            let days_since_epoch = absolute_secs / secs_per_day;
-            let (year, month, day) = days_to_ymd(days_since_epoch);
-
-            return format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
-                year, month, day, hours, minutes, seconds, microseconds
-            );
+            return epoch_seconds_to_iso8601(absolute_secs, microseconds);
         }
     }
 
     // Fallback: use relative time from epoch
-    format_relative_timestamp(total_seconds, microseconds)
-}
-
-/// Format a relative timestamp (when no absolute datetime is available)
-fn format_relative_timestamp(total_seconds: u64, microseconds: u64) -> String {
-    // Use 1970-01-01 as base, add the relative seconds
-    let secs_per_minute = 60u64;
-    let secs_per_hour = 3600u64;
-    let secs_per_day = 86400u64;
-
-    let days = total_seconds / secs_per_day;
-    let time_of_day = total_seconds % secs_per_day;
-    let hours = time_of_day / secs_per_hour;
-    let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
-    let seconds = time_of_day % secs_per_minute;
-
-    let (year, month, day) = days_to_ymd(days);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
-        year, month, day, hours, minutes, seconds, microseconds
-    )
+    epoch_seconds_to_iso8601(total_seconds, microseconds)
 }
 
 /// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z).
@@ -449,6 +431,11 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
             break;
         }
         remaining_days -= days as i64;
+    }
+    // Defensive: if somehow we exhausted all months (shouldn't happen), default to December
+    // This satisfies the year-loop invariant that remaining_days < 365/366
+    if remaining_days >= days_in_month[month as usize] as i64 {
+        month = 12;
     }
 
     let day = (remaining_days + 1) as u32;
