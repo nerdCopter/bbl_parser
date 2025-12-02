@@ -183,11 +183,12 @@ pub fn apply_predictor_with_debug(
                 }
             }
             // Fallback: use hardcoded position (typically field 39 in I-frame)
+            // This is frame-definition-dependent and may not be correct for all firmware versions
             let motor0_index = 39;
             if motor0_index < current_frame.len() {
                 if debug {
                     eprintln!(
-                        "DEBUG: PREDICT_MOTOR_0 using hardcoded fallback index {}",
+                        "WARNING: PREDICT_MOTOR_0 falling back to hardcoded index {} (motor[0] not found in field_names)",
                         motor0_index
                     );
                 }
