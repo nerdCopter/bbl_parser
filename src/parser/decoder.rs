@@ -13,9 +13,6 @@ pub const ENCODING_TAG2_3SVARIABLE: u8 = 10;
 
 // Predictor constants - directly from JavaScript reference
 pub const PREDICT_0: u8 = 0;
-
-// Maximum reasonable raw vbatLatest value before considering it corrupted
-const MAX_REASONABLE_VBAT_RAW: i32 = 1000;
 pub const PREDICT_PREVIOUS: u8 = 1;
 pub const PREDICT_STRAIGHT_LINE: u8 = 2;
 pub const PREDICT_AVERAGE_2: u8 = 3;
@@ -27,6 +24,10 @@ pub const PREDICT_1500: u8 = 8;
 pub const PREDICT_VBATREF: u8 = 9;
 pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
+
+// Domain-specific constants for corruption detection
+// Maximum reasonable raw vbatLatest value before considering it corrupted
+const MAX_REASONABLE_VBAT_RAW: i32 = 1000;
 
 /// Decode a field value using the specified encoding
 pub fn decode_field_value(
