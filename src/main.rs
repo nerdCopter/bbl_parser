@@ -15,12 +15,12 @@ use bbl_parser::conversion::{
 
 // Import parser types from crate library
 use bbl_parser::parser::{
-    parse_frame_data, parse_h_frame, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL,
-    ENCODING_SIGNED_VB, ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
+    parse_e_frame, parse_frame_data, parse_h_frame, BBLDataStream, ENCODING_NEG_14BIT,
+    ENCODING_NULL, ENCODING_SIGNED_VB, ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
 };
 
 // Import types from crate library
-use bbl_parser::types::FrameDefinition;
+use bbl_parser::types::{EventFrame, FrameDefinition};
 
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
@@ -298,16 +298,6 @@ struct GpsHomeCoordinate {
     home_longitude: f64,
     #[allow(dead_code)]
     timestamp_us: u64,
-}
-
-// Event structure for JSON export
-#[derive(Debug, Clone)]
-struct EventFrame {
-    timestamp_us: u64,
-    event_type: u8,
-    #[allow(dead_code)]
-    event_data: Vec<u8>,
-    event_name: String,
 }
 
 #[derive(Debug)]
@@ -2369,173 +2359,6 @@ fn parse_s_frame(
 
 // Note: parse_g_frame is no longer used - G frames now use differential encoding
 // like P frames in the main parsing loop for correct GPS coordinate calculation
-
-// Parse E frames (Event frames) - based on C reference implementation
-fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFrame> {
-    if debug {
-        println!("Parsing E frame (Event frame)");
-    }
-
-    // Read event type (1 byte)
-    let event_type = stream.read_byte()?;
-
-    // Read event data - the length depends on the event type
-    let mut event_data = Vec::new();
-    let event_name = match event_type {
-        0 => {
-            // FLIGHT_LOG_EVENT_SYNC_BEEP
-            "Sync beep".to_string()
-        }
-        1 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START
-            "Autotune cycle start".to_string()
-        }
-        2 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT
-            let axis = stream.read_byte()?;
-            let p_gain = stream.read_signed_vb()? as f32 / 1000.0;
-            let i_gain = stream.read_signed_vb()? as f32 / 1000.0;
-            let d_gain = stream.read_signed_vb()? as f32 / 1000.0;
-            event_data.extend_from_slice(&[axis]);
-            format!(
-                "Autotune cycle result - Axis: {}, P: {:.3}, I: {:.3}, D: {:.3}",
-                axis, p_gain, i_gain, d_gain
-            )
-        }
-        3 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS
-            let current_angle = stream.read_signed_vb()?;
-            let target_angle = stream.read_signed_vb()?;
-            let target_angle_at_peak = stream.read_signed_vb()?;
-            let first_peak_angle = stream.read_signed_vb()?;
-            let second_peak_angle = stream.read_signed_vb()?;
-            format!("Autotune targets - Current: {}, Target: {}, Peak target: {}, First peak: {}, Second peak: {}", 
-                   current_angle, target_angle, target_angle_at_peak, first_peak_angle, second_peak_angle)
-        }
-        4 => {
-            // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            let adjustment_function = stream.read_byte()?;
-            if adjustment_function > 127 {
-                // Float value
-                let new_value = stream.read_unsigned_vb()? as f32;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {:.3}",
-                    adjustment_function, new_value
-                )
-            } else {
-                // Integer value
-                let new_value = stream.read_signed_vb()?;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {}",
-                    adjustment_function, new_value
-                )
-            }
-        }
-        5 => {
-            // FLIGHT_LOG_EVENT_LOGGING_RESUME
-            let log_iteration = stream.read_unsigned_vb()?;
-            let current_time = stream.read_unsigned_vb()?;
-            format!(
-                "Logging resume - Iteration: {}, Time: {}",
-                log_iteration, current_time
-            )
-        }
-        6 => {
-            // FLIGHT_LOG_EVENT_LOG_END (old numbering)
-            // Read end message bytes
-            for _ in 0..4 {
-                if !stream.eof {
-                    event_data.push(stream.read_byte()?);
-                }
-            }
-            "Log end".to_string()
-        }
-        10 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START (UNUSED)
-            "Autotune cycle start (unused)".to_string()
-        }
-        11 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT (UNUSED)
-            "Autotune cycle result (unused)".to_string()
-        }
-        12 => {
-            // FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS (UNUSED)
-            "Autotune targets (unused)".to_string()
-        }
-        13 => {
-            // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            let adjustment_function = stream.read_byte()?;
-            if adjustment_function > 127 {
-                let new_value = stream.read_unsigned_vb()? as f32;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {:.3}",
-                    adjustment_function, new_value
-                )
-            } else {
-                let new_value = stream.read_signed_vb()?;
-                event_data.extend_from_slice(&[adjustment_function]);
-                format!(
-                    "Inflight adjustment - Function: {}, New value: {}",
-                    adjustment_function, new_value
-                )
-            }
-        }
-        14 => {
-            // FLIGHT_LOG_EVENT_LOGGING_RESUME
-            let log_iteration = stream.read_unsigned_vb()?;
-            let current_time = stream.read_unsigned_vb()?;
-            format!(
-                "Logging resume - Iteration: {}, Time: {}",
-                log_iteration, current_time
-            )
-        }
-        15 => {
-            // FLIGHT_LOG_EVENT_DISARM
-            "Disarm".to_string()
-        }
-        30 => {
-            // FLIGHT_LOG_EVENT_FLIGHTMODE - flight mode status event
-            // Read flight mode data
-            for _ in 0..4 {
-                if !stream.eof {
-                    event_data.push(stream.read_byte()?);
-                }
-            }
-            "Flight mode change".to_string()
-        }
-        255 => {
-            // FLIGHT_LOG_EVENT_LOG_END
-            "Log end".to_string()
-        }
-        _ => {
-            // Unknown event type - read a few bytes as data
-            for _ in 0..8 {
-                if stream.eof {
-                    break;
-                }
-                event_data.push(stream.read_byte()?);
-            }
-            format!("Unknown event type: {}", event_type)
-        }
-    };
-
-    if debug {
-        println!(
-            "DEBUG: Event - Type: {}, Description: {}",
-            event_type, event_name
-        );
-    }
-
-    Ok(EventFrame {
-        timestamp_us: 0, // Will be set later from context
-        event_type,
-        event_data,
-        event_name,
-    })
-}
 
 fn skip_frame(stream: &mut BBLDataStream, frame_type: char, debug: bool) -> Result<()> {
     if debug {
