@@ -598,6 +598,11 @@ fn parse_bbl_file(
     Ok(logs)
 }
 
+/// Parse a single log from binary data.
+///
+/// Note: This CLI-specific implementation differs from the crate's `parse_single_log`
+/// because CSV export requires storing ALL frames, whereas the crate only stores
+/// 10 sample frames for memory efficiency. See issue #16 Phase 5c for details.
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
