@@ -2304,38 +2304,6 @@ fn parse_frames(
     ))
 }
 
-#[allow(dead_code)]
-fn parse_i_frame(
-    stream: &mut BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
-    // Parse each field according to the frame definition
-    for field in &frame_def.fields {
-        let value = match field.encoding {
-            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
-            ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported I-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                0
-            }
-        };
-
-        data.insert(field.name.clone(), value);
-    }
-
-    Ok(data)
-}
-
 fn parse_s_frame(
     stream: &mut BBLDataStream,
     frame_def: &FrameDefinition,
