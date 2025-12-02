@@ -597,21 +597,56 @@ pub fn parse_frame_data(
     Ok(())
 }
 
-fn parse_s_frame(
+/// Parse S-frame (Slow/periodic data) from the stream
+///
+/// S-frames contain slowly-changing data that is logged less frequently.
+/// This function handles all standard encodings including TAG2_3S32 which
+/// reads 3 values at once.
+pub fn parse_s_frame(
     stream: &mut BBLDataStream,
     frame_def: &FrameDefinition,
     debug: bool,
 ) -> Result<HashMap<String, i32>> {
     let mut data = HashMap::new();
+    let mut field_index = 0;
 
-    // Parse each field according to the frame definition
-    for field in &frame_def.fields {
-        let _values = [0i32; 1];
-        let value = match field.encoding {
-            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
-            ENCODING_NULL => 0,
+    while field_index < frame_def.fields.len() {
+        let field = &frame_def.fields[field_index];
+
+        match field.encoding {
+            ENCODING_SIGNED_VB => {
+                let value = stream.read_signed_vb()?;
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            }
+            ENCODING_UNSIGNED_VB => {
+                let value = stream.read_unsigned_vb()? as i32;
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            }
+            ENCODING_NEG_14BIT => {
+                let value = stream.read_neg_14bit()?;
+                data.insert(field.name.clone(), value);
+                field_index += 1;
+            }
+            ENCODING_TAG2_3S32 => {
+                // This encoding handles 3 fields at once
+                let mut values = [0i32; 8];
+                stream.read_tag2_3s32(&mut values)?;
+
+                #[allow(clippy::needless_range_loop)]
+                for j in 0..3 {
+                    if field_index + j < frame_def.fields.len() {
+                        let current_field = &frame_def.fields[field_index + j];
+                        data.insert(current_field.name.clone(), values[j]);
+                    }
+                }
+                field_index += 3;
+            }
+            ENCODING_NULL => {
+                data.insert(field.name.clone(), 0);
+                field_index += 1;
+            }
             _ => {
                 if debug {
                     println!(
@@ -620,11 +655,11 @@ fn parse_s_frame(
                     );
                 }
                 // For unsupported encodings, try to read as signed VB
-                stream.read_signed_vb().unwrap_or(0)
+                let value = stream.read_signed_vb().unwrap_or(0);
+                data.insert(field.name.clone(), value);
+                field_index += 1;
             }
-        };
-
-        data.insert(field.name.clone(), value);
+        }
     }
 
     Ok(data)
