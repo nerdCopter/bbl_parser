@@ -26,7 +26,19 @@ pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
 
 // Domain-specific constants for corruption detection
-// Maximum reasonable raw vbatLatest value before considering it corrupted
+//
+// MAX_REASONABLE_VBAT_RAW: Maximum reasonable raw vbatLatest value before considering it corrupted.
+//
+// Voltage Mapping (using Betaflight's default vbat_scale of 110):
+//   Voltage = (raw_value * vbat_scale) / 4095 * 3.3V * (10+1)/1  [typical voltage divider]
+//   Simplified: raw_value of 1000 ≈ 9.0V, 1420 ≈ 12.6V (fully charged 3S LiPo)
+//
+// Threshold Reasoning:
+//   1000 was chosen as a conservative corruption detection threshold at the low edge.
+//   Values outside the symmetric range (-MAX..=+MAX) are treated as corrupted data.
+//   This is intentionally strict to catch obvious corruption; operators needing to
+//   adjust the margin for operational safety may require this to be configurable
+//   in a future version.
 const MAX_REASONABLE_VBAT_RAW: i32 = 1000;
 
 /// Decode a field value using the specified encoding
