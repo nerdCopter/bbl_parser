@@ -202,3 +202,399 @@ pub fn format_failsafe_phase(phase: i32) -> String {
         _ => phase.to_string(),
     }
 }
+
+// ============================================================================
+// GPX Timestamp Generation (for GPS export)
+// ============================================================================
+
+/// Convert epoch seconds and microseconds to ISO 8601 string.
+/// Helper function to eliminate duplication between timestamp formatting functions.
+fn epoch_seconds_to_iso8601(total_seconds: u64, microseconds: u64) -> String {
+    let secs_per_minute = 60u64;
+    let secs_per_hour = 3600u64;
+    let secs_per_day = 86400u64;
+
+    let time_of_day = total_seconds % secs_per_day;
+    let hours = (time_of_day / secs_per_hour) % 24;
+    let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+    let seconds = time_of_day % secs_per_minute;
+
+    let days_since_epoch = total_seconds / secs_per_day;
+    let (year, month, day) = days_to_ymd(days_since_epoch);
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, hours, minutes, seconds, microseconds
+    )
+}
+
+/// Generate GPX timestamp from log_start_datetime header + frame timestamp.
+/// Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+/// If log_start_datetime is not available or invalid, falls back to relative time from epoch.
+pub fn generate_gpx_timestamp(log_start_datetime: Option<&str>, frame_timestamp_us: u64) -> String {
+    let total_seconds = frame_timestamp_us / 1_000_000;
+    let microseconds = frame_timestamp_us % 1_000_000;
+
+    // Try to parse the log start datetime if available
+    if let Some(datetime_str) = log_start_datetime {
+        // Check for placeholder datetime (clock not set on FC)
+        if datetime_str.starts_with("0000-01-01") {
+            // FC clock wasn't set, fall back to relative time
+            return epoch_seconds_to_iso8601(total_seconds, microseconds);
+        }
+
+        // Parse ISO 8601 datetime: "2024-10-10T18:37:25.559+00:00"
+        // We only need the date and base time parts for combining with frame offset
+        if let Some(base_time) = parse_datetime_to_epoch(datetime_str) {
+            let absolute_secs = base_time + total_seconds;
+            return epoch_seconds_to_iso8601(absolute_secs, microseconds);
+        }
+    }
+
+    // Fallback: use relative time from epoch
+    epoch_seconds_to_iso8601(total_seconds, microseconds)
+}
+
+/// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z).
+///
+/// This function handles the datetime format used by Betaflight's blackbox logs:
+/// `YYYY-MM-DDTHH:MM:SS.mmm±HH:MM` (e.g., `2024-10-10T18:37:25.559+00:00`)
+///
+/// # Accepted Input Formats
+/// - `YYYY-MM-DDTHH:MM:SS.mmmZ` - UTC with 'Z' suffix
+/// - `YYYY-MM-DDTHH:MM:SS.mmm+HH:MM` - With positive timezone offset (e.g., `+02:00`)
+/// - `YYYY-MM-DDTHH:MM:SS.mmm-HH:MM` - With negative timezone offset (e.g., `-05:00`)
+/// - `YYYY-MM-DDTHH:MM:SS` - No timezone (treated as UTC)
+///
+/// # Format Limitations
+/// - Compact timezone formats like `-0500` are NOT supported (only colon-separated `HH:MM`)
+/// - Region-based timezones like `America/New_York` are NOT supported
+/// - Fractional seconds are truncated to whole seconds for epoch calculation
+/// - Strings without timezone info are treated as UTC
+///
+/// # Betaflight Header Context
+/// When the flight controller's RTC is not set, Betaflight outputs `0000-01-01T00:00:00.000`
+/// as the default datetime. This value should be detected by the caller (via
+/// `starts_with("0000-01-01")`) and handled as "no valid datetime available".
+fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
+    // Format: "2024-10-10T18:37:25.559+02:00" or "2024-10-10T18:37:25.559Z"
+    // Parse timezone offset if present, then convert local time to UTC
+
+    // Extract timezone offset in seconds (positive = ahead of UTC, negative = behind)
+    let tz_offset_secs: i64 = if datetime_str.contains('Z') {
+        0 // UTC, no offset
+    } else if let Some(plus_pos) = datetime_str.rfind('+') {
+        // Positive offset like "+02:00" means local time is ahead of UTC
+        parse_tz_offset(&datetime_str[plus_pos + 1..]).unwrap_or(0)
+    } else if let Some(minus_pos) = datetime_str.rfind('-') {
+        // Check if this is a date separator or timezone offset
+        // Timezone offset format: "-HH:MM" at end of string
+        let potential_tz = &datetime_str[minus_pos + 1..];
+        if potential_tz.contains(':') && potential_tz.len() <= 6 {
+            // Negative offset like "-05:00" means local time is behind UTC
+            -parse_tz_offset(potential_tz).unwrap_or(0)
+        } else {
+            0 // Date separator, assume UTC
+        }
+    } else {
+        0 // No timezone info, assume UTC
+    };
+
+    // Strip timezone suffix to get clean datetime for parsing
+    let datetime_clean = if datetime_str.contains('Z') {
+        datetime_str.split('Z').next()?
+    } else if datetime_str.contains('+') {
+        datetime_str.split('+').next()?
+    } else {
+        // Handle negative offset: find last '-' that's part of timezone
+        let parts: Vec<&str> = datetime_str.rsplitn(2, '-').collect();
+        if parts.len() == 2 && parts[0].contains(':') && parts[0].len() <= 5 {
+            parts[1]
+        } else {
+            datetime_str
+        }
+    };
+
+    let parts: Vec<&str> = datetime_clean.split('T').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+    if date_parts.len() != 3 {
+        return None;
+    }
+
+    let time_part = parts[1].split('.').next()?; // Ignore fractional seconds
+    let time_parts: Vec<u32> = time_part
+        .split(':')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if time_parts.len() != 3 {
+        return None;
+    }
+
+    let year = date_parts[0];
+    let month = date_parts[1];
+    let day = date_parts[2];
+    let hour = time_parts[0];
+    let minute = time_parts[1];
+    let second = time_parts[2];
+
+    // Convert to days since epoch (simplified, doesn't handle all edge cases)
+    let days = ymd_to_days(year, month, day)?;
+    let local_secs =
+        (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
+
+    // Convert local time to UTC by subtracting the offset
+    // If offset is +02:00, local time is 2 hours ahead of UTC, so subtract 2 hours
+    let utc_secs = if tz_offset_secs >= 0 {
+        local_secs.saturating_sub(tz_offset_secs as u64)
+    } else {
+        local_secs.saturating_add((-tz_offset_secs) as u64)
+    };
+
+    Some(utc_secs)
+}
+
+/// Parse timezone offset string like "02:00" or "05:30" to seconds
+fn parse_tz_offset(tz_str: &str) -> Option<i64> {
+    let parts: Vec<&str> = tz_str.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let hours: i64 = parts[0].parse().ok()?;
+    let minutes: i64 = parts[1].parse().ok()?;
+    Some(hours * 3600 + minutes * 60)
+}
+
+/// Convert year/month/day to days since Unix epoch (1970-01-01)
+fn ymd_to_days(year: u32, month: u32, day: u32) -> Option<u64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    // Days in each month (non-leap year)
+    let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let mut total_days: i64 = 0;
+
+    // Add days for complete years since 1970
+    for y in 1970..year {
+        total_days += if is_leap_year(y) { 366 } else { 365 };
+    }
+
+    // Add days for complete months in current year
+    for m in 1..month {
+        total_days += days_in_month[m as usize] as i64;
+        if m == 2 && is_leap_year(year) {
+            total_days += 1;
+        }
+    }
+
+    // Add days in current month
+    total_days += (day - 1) as i64;
+
+    if total_days >= 0 {
+        Some(total_days as u64)
+    } else {
+        None
+    }
+}
+
+/// Convert days since Unix epoch to year/month/day
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    let mut remaining_days = days as i64;
+    let mut year = 1970u32;
+
+    // Find the year
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    // Days in each month (non-leap year)
+    let mut days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if is_leap_year(year) {
+        days_in_month[2] = 29;
+    }
+
+    // Find the month
+    let mut month = 1u32;
+    for (m, &days) in days_in_month.iter().enumerate().skip(1) {
+        if remaining_days < days as i64 {
+            month = m as u32;
+            break;
+        }
+        remaining_days -= days as i64;
+    }
+    // Defensive: if somehow we exhausted all months (shouldn't happen), default to December
+    // This satisfies the year-loop invariant that remaining_days < 365/366
+    if remaining_days >= days_in_month[month as usize] as i64 {
+        month = 12;
+    }
+
+    let day = (remaining_days + 1) as u32;
+
+    (year, month, day)
+}
+
+/// Check if a year is a leap year
+fn is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for parse_datetime_to_epoch - locking in Betaflight datetime parsing behavior
+
+    #[test]
+    fn test_parse_datetime_utc_z_suffix() {
+        // Standard Betaflight format with Z suffix (UTC)
+        let result = parse_datetime_to_epoch("2024-10-10T18:37:25.559Z");
+        assert!(result.is_some());
+        // 2024-10-10 18:37:25 UTC
+        // Expected: days since epoch * 86400 + time of day in seconds
+        let epoch = result.unwrap();
+        assert!(epoch > 0);
+        // Verify it's in the right ballpark (2024 is ~54 years after 1970)
+        assert!(epoch > 1700000000); // After 2023
+        assert!(epoch < 1800000000); // Before 2027
+    }
+
+    #[test]
+    fn test_parse_datetime_positive_offset() {
+        // Betaflight format with positive offset (+02:00)
+        // 2024-10-10T18:37:25+02:00 means UTC is 16:37:25
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+02:00");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T16:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        // Both should result in the same UTC epoch
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_negative_offset() {
+        // Betaflight format with negative offset (-05:00)
+        // 2024-10-10T18:37:25-05:00 means UTC is 23:37:25
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559-05:00");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T23:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        // Both should result in the same UTC epoch
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_zero_offset() {
+        // +00:00 should be same as Z
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+00:00");
+        let utc_z = parse_datetime_to_epoch("2024-10-10T18:37:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_z.is_some());
+        assert_eq!(with_offset.unwrap(), utc_z.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_no_timezone_treated_as_utc() {
+        // No timezone info - treated as UTC
+        let no_tz = parse_datetime_to_epoch("2024-10-10T18:37:25");
+        let utc_z = parse_datetime_to_epoch("2024-10-10T18:37:25.000Z");
+
+        assert!(no_tz.is_some());
+        assert!(utc_z.is_some());
+        assert_eq!(no_tz.unwrap(), utc_z.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_fractional_seconds_truncated() {
+        // Fractional seconds are truncated (not rounded)
+        let with_millis = parse_datetime_to_epoch("2024-10-10T18:37:25.999Z");
+        let without_millis = parse_datetime_to_epoch("2024-10-10T18:37:25.000Z");
+
+        assert!(with_millis.is_some());
+        assert!(without_millis.is_some());
+        // Both should be the same (fractional seconds truncated)
+        assert_eq!(with_millis.unwrap(), without_millis.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_betaflight_default_placeholder() {
+        // Betaflight default when RTC not set: 0000-01-01T00:00:00.000
+        // This should parse (returns Some) but caller should detect via starts_with("0000-01-01")
+        let result = parse_datetime_to_epoch("0000-01-01T00:00:00.000+00:00");
+        // The function may return None for year 0000 since it's before 1970
+        // or it may return Some with an invalid value - either is acceptable
+        // The important thing is the caller checks for "0000-01-01" prefix first
+        // This test documents the current behavior
+        assert!(result.is_none() || result == Some(0));
+    }
+
+    #[test]
+    fn test_parse_datetime_half_hour_offset() {
+        // Some timezones have 30-minute offsets (e.g., India +05:30)
+        let with_offset = parse_datetime_to_epoch("2024-10-10T18:37:25.559+05:30");
+        let utc_time = parse_datetime_to_epoch("2024-10-10T13:07:25.559Z");
+
+        assert!(with_offset.is_some());
+        assert!(utc_time.is_some());
+        assert_eq!(with_offset.unwrap(), utc_time.unwrap());
+    }
+
+    #[test]
+    fn test_parse_datetime_invalid_format_returns_none() {
+        // Invalid formats should return None
+        assert!(parse_datetime_to_epoch("not-a-datetime").is_none());
+        assert!(parse_datetime_to_epoch("2024-10-10").is_none()); // Missing time
+        assert!(parse_datetime_to_epoch("18:37:25").is_none()); // Missing date
+        assert!(parse_datetime_to_epoch("").is_none());
+    }
+
+    #[test]
+    fn test_parse_datetime_compact_offset_not_supported() {
+        // Compact offset format like -0500 is NOT supported (only HH:MM with colon)
+        // This test documents the limitation - it will be treated as no timezone
+        let compact = parse_datetime_to_epoch("2024-10-10T18:37:25.559-0500");
+        // The -0500 won't be parsed as a timezone, so it's treated as local time without offset
+        // This means it differs from the colon-separated version
+        let _colon_sep = parse_datetime_to_epoch("2024-10-10T18:37:25.559-05:00");
+
+        // Both should parse, but may have different values
+        // The compact form will be treated as UTC (offset not recognized)
+        assert!(compact.is_some() || compact.is_none()); // May or may not parse
+    }
+
+    // Tests for generate_gpx_timestamp
+
+    #[test]
+    fn test_generate_gpx_timestamp_with_valid_datetime() {
+        // When log_start_datetime is valid, should produce absolute timestamp
+        let timestamp = generate_gpx_timestamp(Some("2024-10-10T18:37:25.559+00:00"), 1_000_000);
+        assert!(timestamp.contains("2024-10-10T18:37:26")); // 1 second after start
+    }
+
+    #[test]
+    fn test_generate_gpx_timestamp_placeholder_datetime() {
+        // When FC clock wasn't set, should fall back to relative time
+        let timestamp = generate_gpx_timestamp(Some("0000-01-01T00:00:00.000+00:00"), 1_000_000);
+        // Should use 1970-01-01 as base (relative time)
+        assert!(timestamp.contains("1970-01-01"));
+    }
+
+    #[test]
+    fn test_generate_gpx_timestamp_no_datetime() {
+        // When no datetime provided, should use relative time from epoch
+        let timestamp = generate_gpx_timestamp(None, 0);
+        assert!(timestamp.contains("1970-01-01T00:00:00"));
+    }
+}

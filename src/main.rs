@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 // Import conversion functions from crate library to avoid code duplication
 use bbl_parser::conversion::{
     convert_gps_altitude, convert_gps_coordinate, convert_gps_course, convert_gps_speed,
-    format_failsafe_phase, format_flight_mode_flags, format_state_flags,
+    format_failsafe_phase, format_flight_mode_flags, format_state_flags, generate_gpx_timestamp,
 };
 
 // Import parser types from crate library
-use bbl_parser::parser::helpers::sign_extend_14bit;
 use bbl_parser::parser::{
     parse_frame_data, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL, ENCODING_SIGNED_VB,
     ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
@@ -241,6 +240,8 @@ struct BBLHeader {
     craft_name: String,
     data_version: u8,
     looptime: u32,
+    /// Log start datetime from header (ISO 8601 format)
+    log_start_datetime: Option<String>,
     i_frame_def: FrameDefinition,
     p_frame_def: FrameDefinition,
     s_frame_def: FrameDefinition,
@@ -781,6 +782,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
     let mut craft_name = String::new();
     let mut data_version = 2u8;
     let mut looptime = 0u32;
+    let mut log_start_datetime: Option<String> = None;
     let mut sysconfig = HashMap::new();
 
     // Initialize frame definitions
@@ -825,6 +827,12 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
                 .parse()
             {
                 data_version = version;
+            }
+        } else if line.starts_with("H Log start datetime:") {
+            // Parse log start datetime for GPX timestamp generation
+            // Format: "2024-10-10T18:37:25.559+00:00" or "0000-01-01T00:00:00.000+00:00" if not set
+            if let Some(datetime_str) = line.strip_prefix("H Log start datetime:") {
+                log_start_datetime = Some(datetime_str.trim().to_string());
             }
         } else if line.starts_with("H looptime:") {
             if let Ok(lt) = line
@@ -969,6 +977,7 @@ fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHeader> 
         craft_name,
         data_version,
         looptime,
+        log_start_datetime,
         i_frame_def,
         p_frame_def,
         s_frame_def,
@@ -2308,7 +2317,7 @@ fn parse_i_frame(
         let value = match field.encoding {
             ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
             ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -2350,7 +2359,7 @@ fn parse_s_frame(
                 field_index += 1;
             }
             ENCODING_NEG_14BIT => {
-                let value = -(sign_extend_14bit(stream.read_unsigned_vb()? as u16));
+                let value = stream.read_neg_14bit()?;
                 data.insert(field.name.clone(), value);
                 field_index += 1;
             }
@@ -2410,7 +2419,7 @@ fn parse_h_frame(
         let value = match field.encoding {
             ENCODING_SIGNED_VB => stream.read_signed_vb()?,
             ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => -(sign_extend_14bit(stream.read_unsigned_vb()? as u16)),
+            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
             ENCODING_NULL => 0,
             _ => {
                 if debug {
@@ -2810,6 +2819,7 @@ fn parse_bbl_file_streaming(
                 &gps_coords,
                 &home_coords,
                 export_options,
+                log.header.log_start_datetime.as_deref(),
             ) {
                 let filename = file_path
                     .file_name()
@@ -2860,6 +2870,7 @@ fn parse_bbl_file_streaming(
 
 // GPS/GPX export functions
 // Note: GPS conversion functions now imported from bbl_parser::conversion module
+// (generate_gpx_timestamp for GPX timestamp generation)
 
 fn export_gpx_file(
     file_path: &Path,
@@ -2868,6 +2879,7 @@ fn export_gpx_file(
     gps_coords: &[GpsCoordinate],
     _home_coords: &[GpsHomeCoordinate], // TODO: Use home coordinates for reference point
     export_options: &ExportOptions,
+    log_start_datetime: Option<&str>,
 ) -> Result<()> {
     if gps_coords.is_empty() {
         return Ok(());
@@ -2911,20 +2923,14 @@ fn export_gpx_file(
             }
         }
 
-        // Convert timestamp to ISO format
-        // Simplified timestamp calculation to approximate BBD format
-        let total_seconds = coord.timestamp_us / 1_000_000;
-        let microseconds = coord.timestamp_us % 1_000_000;
-
-        // Use March 26, 2025 as base date to match BBD format more closely
-        let hours = 5 + (total_seconds / 3600) % 24; // Start at 05:xx like BBD
-        let minutes = (total_seconds % 3600) / 60;
-        let seconds = total_seconds % 60;
+        // Generate GPX timestamp from log_start_datetime + frame timestamp
+        // Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+        let timestamp_str = generate_gpx_timestamp(log_start_datetime, coord.timestamp_us);
 
         writeln!(
             gpx_file,
-            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>2025-03-26T{:02}:{:02}:{:02}.{:06}Z</time></trkpt>"#,
-            coord.latitude, coord.longitude, coord.altitude, hours, minutes, seconds, microseconds
+            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>{}</time></trkpt>"#,
+            coord.latitude, coord.longitude, coord.altitude, timestamp_str
         )?;
     }
 
@@ -3093,6 +3099,7 @@ mod tests {
             craft_name: "TestCraft".to_string(),
             data_version: 2,
             looptime: 500,
+            log_start_datetime: None,
             i_frame_def: FrameDefinition::new(),
             p_frame_def: FrameDefinition::new(),
             s_frame_def: FrameDefinition::new(),

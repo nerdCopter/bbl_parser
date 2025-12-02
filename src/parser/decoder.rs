@@ -26,7 +26,19 @@ pub const PREDICT_LAST_MAIN_FRAME_TIME: u8 = 10;
 pub const PREDICT_MINMOTOR: u8 = 11;
 
 // Domain-specific constants for corruption detection
-// Maximum reasonable raw vbatLatest value before considering it corrupted
+//
+// MAX_REASONABLE_VBAT_RAW: Maximum reasonable raw vbatLatest value before considering it corrupted.
+//
+// Voltage Mapping (using Betaflight's default vbat_scale of 110):
+//   Voltage = (raw_value * vbat_scale) / 4095 * 3.3V * (10+1)/1  [typical voltage divider]
+//   Simplified: raw_value of 1000 ≈ 9.0V, 1420 ≈ 12.6V (fully charged 3S LiPo)
+//
+// Threshold Reasoning:
+//   1000 was chosen as a conservative corruption detection threshold at the low edge.
+//   Values outside the symmetric range (-MAX..=+MAX) are treated as corrupted data.
+//   This is intentionally strict to catch obvious corruption; operators needing to
+//   adjust the margin for operational safety may require this to be configurable
+//   in a future version.
 const MAX_REASONABLE_VBAT_RAW: i32 = 1000;
 
 /// Decode a field value using the specified encoding
@@ -171,11 +183,12 @@ pub fn apply_predictor_with_debug(
                 }
             }
             // Fallback: use hardcoded position (typically field 39 in I-frame)
+            // This is frame-definition-dependent and may not be correct for all firmware versions
             let motor0_index = 39;
             if motor0_index < current_frame.len() {
                 if debug {
                     eprintln!(
-                        "DEBUG: PREDICT_MOTOR_0 using hardcoded fallback index {}",
+                        "WARNING: PREDICT_MOTOR_0 falling back to hardcoded index {} (motor[0] not found in field_names)",
                         motor0_index
                     );
                 }
@@ -206,17 +219,18 @@ pub fn apply_predictor_with_debug(
             let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
 
             // CRITICAL FIX: Check for corrupted raw values in vbatLatest
+            // Uses symmetric range based on MAX_REASONABLE_VBAT_RAW constant
             if !field_names.is_empty()
                 && field_names
                     .get(field_index)
                     .map(|name| name == "vbatLatest")
                     .unwrap_or(false)
-                && !(-1000..=4000).contains(&raw_value)
+                && !(-MAX_REASONABLE_VBAT_RAW..=MAX_REASONABLE_VBAT_RAW).contains(&raw_value)
             {
                 if debug {
                     eprintln!(
-                        "DEBUG: Fixed corrupted vbatLatest raw_value {} replaced with 0",
-                        raw_value
+                        "DEBUG: Fixed corrupted vbatLatest raw_value {} (outside +/-{}) replaced with vbatref",
+                        raw_value, MAX_REASONABLE_VBAT_RAW
                     );
                 }
                 return vbatref;
