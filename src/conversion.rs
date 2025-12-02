@@ -202,3 +202,189 @@ pub fn format_failsafe_phase(phase: i32) -> String {
         _ => phase.to_string(),
     }
 }
+
+// ============================================================================
+// GPX Timestamp Generation (for GPS export)
+// ============================================================================
+
+/// Generate GPX timestamp from log_start_datetime header + frame timestamp.
+/// Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+/// If log_start_datetime is not available or invalid, falls back to relative time from epoch.
+pub fn generate_gpx_timestamp(log_start_datetime: Option<&str>, frame_timestamp_us: u64) -> String {
+    let total_seconds = frame_timestamp_us / 1_000_000;
+    let microseconds = frame_timestamp_us % 1_000_000;
+
+    // Try to parse the log start datetime if available
+    if let Some(datetime_str) = log_start_datetime {
+        // Check for placeholder datetime (clock not set on FC)
+        if datetime_str.starts_with("0000-01-01") {
+            // FC clock wasn't set, fall back to relative time
+            return format_relative_timestamp(total_seconds, microseconds);
+        }
+
+        // Parse ISO 8601 datetime: "2024-10-10T18:37:25.559+00:00"
+        // We only need the date and base time parts for combining with frame offset
+        if let Some(base_time) = parse_datetime_to_epoch(datetime_str) {
+            let absolute_secs = base_time + total_seconds;
+
+            // Convert back to date/time components
+            let secs_per_minute = 60u64;
+            let secs_per_hour = 3600u64;
+            let secs_per_day = 86400u64;
+
+            // Calculate time components
+            let time_of_day = absolute_secs % secs_per_day;
+            let hours = (time_of_day / secs_per_hour) % 24;
+            let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+            let seconds = time_of_day % secs_per_minute;
+
+            // Calculate date components (days since epoch 1970-01-01)
+            let days_since_epoch = absolute_secs / secs_per_day;
+            let (year, month, day) = days_to_ymd(days_since_epoch);
+
+            return format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+                year, month, day, hours, minutes, seconds, microseconds
+            );
+        }
+    }
+
+    // Fallback: use relative time from epoch
+    format_relative_timestamp(total_seconds, microseconds)
+}
+
+/// Format a relative timestamp (when no absolute datetime is available)
+fn format_relative_timestamp(total_seconds: u64, microseconds: u64) -> String {
+    // Use 1970-01-01 as base, add the relative seconds
+    let secs_per_minute = 60u64;
+    let secs_per_hour = 3600u64;
+    let secs_per_day = 86400u64;
+
+    let days = total_seconds / secs_per_day;
+    let time_of_day = total_seconds % secs_per_day;
+    let hours = time_of_day / secs_per_hour;
+    let minutes = (time_of_day % secs_per_hour) / secs_per_minute;
+    let seconds = time_of_day % secs_per_minute;
+
+    let (year, month, day) = days_to_ymd(days);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        year, month, day, hours, minutes, seconds, microseconds
+    )
+}
+
+/// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z)
+fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
+    // Format: "2024-10-10T18:37:25.559+00:00" or "2024-10-10T18:37:25.559Z"
+    // We ignore timezone and treat as UTC for simplicity
+
+    // Split into date and time parts
+    let datetime_part = datetime_str.split('+').next()?.split('Z').next()?;
+    let parts: Vec<&str> = datetime_part.split('T').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+    if date_parts.len() != 3 {
+        return None;
+    }
+
+    let time_part = parts[1].split('.').next()?; // Ignore fractional seconds
+    let time_parts: Vec<u32> = time_part
+        .split(':')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if time_parts.len() != 3 {
+        return None;
+    }
+
+    let year = date_parts[0];
+    let month = date_parts[1];
+    let day = date_parts[2];
+    let hour = time_parts[0];
+    let minute = time_parts[1];
+    let second = time_parts[2];
+
+    // Convert to days since epoch (simplified, doesn't handle all edge cases)
+    let days = ymd_to_days(year, month, day)?;
+    let secs =
+        (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
+
+    Some(secs)
+}
+
+/// Convert year/month/day to days since Unix epoch (1970-01-01)
+fn ymd_to_days(year: u32, month: u32, day: u32) -> Option<u64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    // Days in each month (non-leap year)
+    let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let mut total_days: i64 = 0;
+
+    // Add days for complete years since 1970
+    for y in 1970..year {
+        total_days += if is_leap_year(y) { 366 } else { 365 };
+    }
+
+    // Add days for complete months in current year
+    for m in 1..month {
+        total_days += days_in_month[m as usize] as i64;
+        if m == 2 && is_leap_year(year) {
+            total_days += 1;
+        }
+    }
+
+    // Add days in current month
+    total_days += (day - 1) as i64;
+
+    if total_days >= 0 {
+        Some(total_days as u64)
+    } else {
+        None
+    }
+}
+
+/// Convert days since Unix epoch to year/month/day
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    let mut remaining_days = days as i64;
+    let mut year = 1970u32;
+
+    // Find the year
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    // Days in each month (non-leap year)
+    let mut days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if is_leap_year(year) {
+        days_in_month[2] = 29;
+    }
+
+    // Find the month
+    let mut month = 1u32;
+    for (m, &days) in days_in_month.iter().enumerate().skip(1) {
+        if remaining_days < days as i64 {
+            month = m as u32;
+            break;
+        }
+        remaining_days -= days as i64;
+    }
+
+    let day = (remaining_days + 1) as u32;
+
+    (year, month, day)
+}
+
+/// Check if a year is a leap year
+fn is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
