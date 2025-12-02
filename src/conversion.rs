@@ -274,13 +274,47 @@ fn format_relative_timestamp(total_seconds: u64, microseconds: u64) -> String {
 }
 
 /// Parse ISO 8601 datetime string to seconds since Unix epoch (1970-01-01T00:00:00Z)
+/// Handles timezone offsets like "+02:00" or "-05:00" by adjusting the result to UTC.
 fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
-    // Format: "2024-10-10T18:37:25.559+00:00" or "2024-10-10T18:37:25.559Z"
-    // We ignore timezone and treat as UTC for simplicity
+    // Format: "2024-10-10T18:37:25.559+02:00" or "2024-10-10T18:37:25.559Z"
+    // Parse timezone offset if present, then convert local time to UTC
 
-    // Split into date and time parts
-    let datetime_part = datetime_str.split('+').next()?.split('Z').next()?;
-    let parts: Vec<&str> = datetime_part.split('T').collect();
+    // Extract timezone offset in seconds (positive = ahead of UTC, negative = behind)
+    let tz_offset_secs: i64 = if datetime_str.contains('Z') {
+        0 // UTC, no offset
+    } else if let Some(plus_pos) = datetime_str.rfind('+') {
+        // Positive offset like "+02:00" means local time is ahead of UTC
+        parse_tz_offset(&datetime_str[plus_pos + 1..]).unwrap_or(0)
+    } else if let Some(minus_pos) = datetime_str.rfind('-') {
+        // Check if this is a date separator or timezone offset
+        // Timezone offset format: "-HH:MM" at end of string
+        let potential_tz = &datetime_str[minus_pos + 1..];
+        if potential_tz.contains(':') && potential_tz.len() <= 6 {
+            // Negative offset like "-05:00" means local time is behind UTC
+            -parse_tz_offset(potential_tz).unwrap_or(0)
+        } else {
+            0 // Date separator, assume UTC
+        }
+    } else {
+        0 // No timezone info, assume UTC
+    };
+
+    // Strip timezone suffix to get clean datetime for parsing
+    let datetime_clean = if datetime_str.contains('Z') {
+        datetime_str.split('Z').next()?
+    } else if datetime_str.contains('+') {
+        datetime_str.split('+').next()?
+    } else {
+        // Handle negative offset: find last '-' that's part of timezone
+        let parts: Vec<&str> = datetime_str.rsplitn(2, '-').collect();
+        if parts.len() == 2 && parts[0].contains(':') && parts[0].len() <= 5 {
+            parts[1]
+        } else {
+            datetime_str
+        }
+    };
+
+    let parts: Vec<&str> = datetime_clean.split('T').collect();
     if parts.len() != 2 {
         return None;
     }
@@ -308,10 +342,29 @@ fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
 
     // Convert to days since epoch (simplified, doesn't handle all edge cases)
     let days = ymd_to_days(year, month, day)?;
-    let secs =
+    let local_secs =
         (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
 
-    Some(secs)
+    // Convert local time to UTC by subtracting the offset
+    // If offset is +02:00, local time is 2 hours ahead of UTC, so subtract 2 hours
+    let utc_secs = if tz_offset_secs >= 0 {
+        local_secs.saturating_sub(tz_offset_secs as u64)
+    } else {
+        local_secs.saturating_add((-tz_offset_secs) as u64)
+    };
+
+    Some(utc_secs)
+}
+
+/// Parse timezone offset string like "02:00" or "05:30" to seconds
+fn parse_tz_offset(tz_str: &str) -> Option<i64> {
+    let parts: Vec<&str> = tz_str.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let hours: i64 = parts[0].parse().ok()?;
+    let minutes: i64 = parts[1].parse().ok()?;
+    Some(hours * 3600 + minutes * 60)
 }
 
 /// Convert year/month/day to days since Unix epoch (1970-01-01)
