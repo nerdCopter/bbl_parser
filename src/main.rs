@@ -15,8 +15,8 @@ use bbl_parser::conversion::{
 
 // Import parser types from crate library
 use bbl_parser::parser::{
-    parse_frame_data, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL, ENCODING_SIGNED_VB,
-    ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
+    parse_frame_data, parse_h_frame, BBLDataStream, ENCODING_NEG_14BIT, ENCODING_NULL,
+    ENCODING_SIGNED_VB, ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
 };
 
 // Import types from crate library
@@ -2362,45 +2362,6 @@ fn parse_s_frame(
                 field_index += 1;
             }
         }
-    }
-
-    Ok(data)
-}
-
-fn parse_h_frame(
-    stream: &mut BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-
-    if debug {
-        println!("Parsing H frame with {} fields", frame_def.count);
-    }
-
-    // H frames contain GPS home position data
-    for (i, field) in frame_def.fields.iter().enumerate() {
-        if i >= frame_def.count {
-            break;
-        }
-
-        let value = match field.encoding {
-            ENCODING_SIGNED_VB => stream.read_signed_vb()?,
-            ENCODING_UNSIGNED_VB => stream.read_unsigned_vb()? as i32,
-            ENCODING_NEG_14BIT => stream.read_neg_14bit()?,
-            ENCODING_NULL => 0,
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported H-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                stream.read_signed_vb().unwrap_or(0)
-            }
-        };
-
-        data.insert(field.name.clone(), value);
     }
 
     Ok(data)
