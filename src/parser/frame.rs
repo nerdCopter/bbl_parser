@@ -10,11 +10,19 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 /// Parse frames from binary data
+///
+/// # Arguments
+/// * `binary_data` - Raw binary frame data
+/// * `header` - Parsed BBL header with frame definitions
+/// * `debug` - Enable debug output
+/// * `store_all_frames` - When true, stores ALL parsed frames (for CSV export).
+///   When false, stores only 10 sample frames (for memory efficiency).
 #[allow(clippy::type_complexity)]
 pub fn parse_frames(
     binary_data: &[u8],
     header: &crate::types::BBLHeader,
     debug: bool,
+    store_all_frames: bool,
 ) -> Result<(
     FrameStats,
     Vec<DecodedFrame>,
@@ -352,8 +360,13 @@ pub fn parse_frames(
                     println!("Parsed {} frames so far...", stats.total_frames);
                 }
 
-                // Store only a few sample frames for display purposes
-                if parsing_success && sample_frames.len() < 10 {
+                // Store frames based on store_all_frames flag:
+                // - store_all_frames=true: Store ALL frames (for CSV export)
+                // - store_all_frames=false: Store only 10 sample frames (memory efficient)
+                let should_store_frame =
+                    parsing_success && (store_all_frames || sample_frames.len() < 10);
+
+                if should_store_frame {
                     let decoded_frame = create_decoded_frame(frame_type, &frame_data);
                     sample_frames.push(decoded_frame.clone());
 

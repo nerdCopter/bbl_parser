@@ -24,6 +24,9 @@ use bbl_parser::types::{
     GpsCoordinate, GpsHomeCoordinate,
 };
 
+// Import ExportOptions from crate library
+use bbl_parser::ExportOptions;
+
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
@@ -249,15 +252,6 @@ struct CsvExportOptions {
     output_dir: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct ExportOptions {
-    csv: bool,
-    gpx: bool,
-    event: bool,
-    output_dir: Option<String>,
-    force_export: bool,
-}
-
 // Pre-computed CSV field mapping for performance
 #[derive(Debug)]
 struct CsvFieldMap {
@@ -398,6 +392,7 @@ fn main() -> Result<()> {
         event: export_event,
         output_dir: output_dir.clone(),
         force_export,
+        store_all_frames: true, // CLI always stores all frames for complete CSV export
     };
 
     // Keep legacy csv_options for compatibility
@@ -600,9 +595,9 @@ fn parse_bbl_file(
 
 /// Parse a single log from binary data.
 ///
-/// Note: This CLI-specific implementation differs from the crate's `parse_single_log`
-/// because CSV export requires storing ALL frames, whereas the crate only stores
-/// 10 sample frames for memory efficiency. See issue #16 Phase 5c for details.
+/// Note: This CLI implementation uses its own frame parsing loop for streaming export.
+/// The crate's `parse_bbl_file_all_logs` with `store_all_frames=true` can be used
+/// as an alternative for simpler use cases. See issue #16 Phase 5c.
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,

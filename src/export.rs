@@ -23,6 +23,10 @@ pub struct ExportOptions {
     pub event: bool,
     pub output_dir: Option<String>,
     pub force_export: bool,
+    /// Enable full frame storage for CSV export (stores all frames instead of 10 samples).
+    /// When true, parse_frames will store ALL parsed frames in sample_frames.
+    /// When false (default), only 10 sample frames are stored for memory efficiency.
+    pub store_all_frames: bool,
 }
 
 /// Pre-computed CSV field mapping for performance

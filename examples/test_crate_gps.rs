@@ -17,6 +17,7 @@ fn main() -> anyhow::Result<()> {
         event: true,
         output_dir,
         force_export: false,
+        store_all_frames: false, // No CSV export, memory efficient
     };
 
     println!("Parsing: {}", input_file);

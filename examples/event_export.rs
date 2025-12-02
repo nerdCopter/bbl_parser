@@ -27,6 +27,7 @@ fn main() -> anyhow::Result<()> {
         event: true,
         output_dir: output_dir.clone(),
         force_export: false,
+        store_all_frames: false, // No CSV export, memory efficient
     };
 
     // Parse the BBL file
