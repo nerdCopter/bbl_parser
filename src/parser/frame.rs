@@ -370,10 +370,14 @@ pub fn parse_frames(
                     let decoded_frame = create_decoded_frame(frame_type, &frame_data);
                     sample_frames.push(decoded_frame.clone());
 
-                    // Store debug frames if debug mode is enabled
-                    if let Some(ref mut debug_map) = debug_frames {
-                        let debug_frame_list = debug_map.entry(frame_type).or_insert_with(Vec::new);
-                        debug_frame_list.push(decoded_frame);
+                    // When store_all_frames=true, skip debug_frames to avoid memory duplication.
+                    // Debug diagnostics can use sample_frames directly in this case.
+                    if !store_all_frames {
+                        if let Some(ref mut debug_map) = debug_frames {
+                            let debug_frame_list =
+                                debug_map.entry(frame_type).or_insert_with(Vec::new);
+                            debug_frame_list.push(decoded_frame);
+                        }
                     }
                 } else if parsing_success {
                     // Even if we don't store in sample_frames, still store for debug if enabled

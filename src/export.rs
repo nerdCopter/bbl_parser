@@ -24,8 +24,9 @@ pub struct ExportOptions {
     pub output_dir: Option<String>,
     pub force_export: bool,
     /// Enable full frame storage for CSV export (stores all frames instead of 10 samples).
-    /// When true, parse_frames will store ALL parsed frames in sample_frames.
-    /// When false (default), only 10 sample frames are stored for memory efficiency.
+    /// When true, the parser stores all frames in `BBLLog::sample_frames` so `export_to_csv`
+    /// can operate on the complete frame sequence.
+    /// When false (default), only a small set of sample frames is kept for memory efficiency.
     pub store_all_frames: bool,
 }
 

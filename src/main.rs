@@ -386,13 +386,14 @@ fn main() -> Result<()> {
         }
     };
 
+    let csv_enabled = true; // CSV export is always enabled for the CLI binary
     let export_options = ExportOptions {
-        csv: true, // CSV export is always enabled for the CLI binary
+        csv: csv_enabled,
         gpx: export_gpx,
         event: export_event,
         output_dir: output_dir.clone(),
         force_export,
-        store_all_frames: true, // CLI always stores all frames for complete CSV export
+        store_all_frames: csv_enabled, // Only store all frames when CSV export is needed
     };
 
     // Keep legacy csv_options for compatibility
