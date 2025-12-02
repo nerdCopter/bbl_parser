@@ -15,8 +15,7 @@ use bbl_parser::conversion::{
 
 // Import parser types from crate library
 use bbl_parser::parser::{
-    parse_e_frame, parse_frame_data, parse_h_frame, BBLDataStream, ENCODING_NEG_14BIT,
-    ENCODING_NULL, ENCODING_SIGNED_VB, ENCODING_TAG2_3S32, ENCODING_UNSIGNED_VB,
+    parse_e_frame, parse_frame_data, parse_h_frame, parse_s_frame, BBLDataStream,
 };
 
 // Import types from crate library
@@ -2292,69 +2291,6 @@ fn parse_frames(
         home_coordinates,
         event_frames,
     ))
-}
-
-fn parse_s_frame(
-    stream: &mut BBLDataStream,
-    frame_def: &FrameDefinition,
-    debug: bool,
-) -> Result<HashMap<String, i32>> {
-    let mut data = HashMap::new();
-    let mut field_index = 0;
-
-    while field_index < frame_def.fields.len() {
-        let field = &frame_def.fields[field_index];
-
-        match field.encoding {
-            ENCODING_SIGNED_VB => {
-                let value = stream.read_signed_vb()?;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            ENCODING_UNSIGNED_VB => {
-                let value = stream.read_unsigned_vb()? as i32;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            ENCODING_NEG_14BIT => {
-                let value = stream.read_neg_14bit()?;
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-            ENCODING_TAG2_3S32 => {
-                // This encoding handles 3 fields at once
-                let mut values = [0i32; 8];
-                stream.read_tag2_3s32(&mut values)?;
-
-                #[allow(clippy::needless_range_loop)]
-                for j in 0..3 {
-                    if field_index + j < frame_def.fields.len() {
-                        let current_field = &frame_def.fields[field_index + j];
-                        data.insert(current_field.name.clone(), values[j]);
-                    }
-                }
-                field_index += 3;
-            }
-            ENCODING_NULL => {
-                data.insert(field.name.clone(), 0);
-                field_index += 1;
-            }
-            _ => {
-                if debug {
-                    println!(
-                        "Unsupported S-frame encoding {} for field {}",
-                        field.encoding, field.name
-                    );
-                }
-                // For unsupported encodings, try to read as signed VB
-                let value = stream.read_signed_vb().unwrap_or(0);
-                data.insert(field.name.clone(), value);
-                field_index += 1;
-            }
-        }
-    }
-
-    Ok(data)
 }
 
 // Note: parse_g_frame is no longer used - G frames now use differential encoding
