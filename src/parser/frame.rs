@@ -1,4 +1,7 @@
-use crate::parser::{decoder::*, event::parse_e_frame, gps::*, stream::BBLDataStream};
+use crate::parser::{
+    decoder::apply_predictor_with_debug, decoder::*, event::parse_e_frame, gps::*,
+    stream::BBLDataStream,
+};
 use crate::types::{
     DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
     GpsHomeCoordinate,
@@ -446,8 +449,6 @@ pub fn parse_frame_data(
     sysconfig: &HashMap<String, i32>,
     debug: bool,
 ) -> Result<()> {
-    use crate::parser::decoder::apply_predictor_with_debug;
-
     let mut i = 0;
     let mut values = [0i32; 8];
 

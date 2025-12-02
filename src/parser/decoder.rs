@@ -13,6 +13,9 @@ pub const ENCODING_TAG2_3SVARIABLE: u8 = 10;
 
 // Predictor constants - directly from JavaScript reference
 pub const PREDICT_0: u8 = 0;
+
+// Maximum reasonable raw vbatLatest value before considering it corrupted
+const MAX_REASONABLE_VBAT_RAW: i32 = 1000;
 pub const PREDICT_PREVIOUS: u8 = 1;
 pub const PREDICT_STRAIGHT_LINE: u8 = 2;
 pub const PREDICT_AVERAGE_2: u8 = 3;
@@ -109,7 +112,7 @@ pub fn apply_predictor_with_debug(
                         .unwrap_or(false)
                     {
                         // Check if previous value is corrupted (way too high for voltage)
-                        if prev[field_index] > 1000 {
+                        if prev[field_index] > MAX_REASONABLE_VBAT_RAW {
                             if debug {
                                 eprintln!("DEBUG: Fixed corrupted vbatLatest previous value {} replaced with reasonable estimate", prev[field_index]);
                             }
@@ -169,6 +172,12 @@ pub fn apply_predictor_with_debug(
             // Fallback: use hardcoded position (typically field 39 in I-frame)
             let motor0_index = 39;
             if motor0_index < current_frame.len() {
+                if debug {
+                    eprintln!(
+                        "DEBUG: PREDICT_MOTOR_0 using hardcoded fallback index {}",
+                        motor0_index
+                    );
+                }
                 current_frame[motor0_index] + raw_value
             } else {
                 raw_value
