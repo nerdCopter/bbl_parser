@@ -30,6 +30,14 @@ use bbl_parser::ExportOptions;
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
+/// Get output directory from export options, falling back to file's parent directory or ".".
+fn get_output_dir<'a>(export_options: &'a ExportOptions, file_path: &'a Path) -> &'a str {
+    export_options
+        .output_dir
+        .as_deref()
+        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."))
+}
+
 /// Expand input paths to a list of BBL files.
 /// If a path is a file, add it directly (will be filtered later for BBL/BFL/TXT extension).
 /// If a path is a directory, recursively find all BBL files within it.
@@ -386,14 +394,13 @@ fn main() -> Result<()> {
         }
     };
 
-    let csv_enabled = true; // CSV export is always enabled for the CLI binary
     let export_options = ExportOptions {
-        csv: csv_enabled,
+        csv: true, // CSV export is always enabled for the CLI binary
         gpx: export_gpx,
         event: export_event,
         output_dir: output_dir.clone(),
         force_export,
-        store_all_frames: csv_enabled, // Only store all frames when CSV export is needed
+        store_all_frames: true, // CLI always stores all frames for complete CSV export
     };
 
     // Keep legacy csv_options for compatibility
@@ -2437,10 +2444,7 @@ fn export_gpx_file(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let output_dir = export_options
-        .output_dir
-        .as_deref()
-        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."));
+    let output_dir = get_output_dir(export_options, file_path);
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
@@ -2504,10 +2508,7 @@ fn export_event_file(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let output_dir = export_options
-        .output_dir
-        .as_deref()
-        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."));
+    let output_dir = get_output_dir(export_options, file_path);
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
