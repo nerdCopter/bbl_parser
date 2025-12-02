@@ -1576,8 +1576,8 @@ fn parse_frames(
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
-    // Decide whether to store all frames based on CSV export requirement
-    let store_all_frames = export_options.csv; // Store all frames when CSV export is requested
+    // Use the dedicated store_all_frames flag for clarity and future-proofing
+    let store_all_frames = export_options.store_all_frames;
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -2440,7 +2440,7 @@ fn export_gpx_file(
     let output_dir = export_options
         .output_dir
         .as_deref()
-        .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
+        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."));
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
@@ -2507,7 +2507,7 @@ fn export_event_file(
     let output_dir = export_options
         .output_dir
         .as_deref()
-        .unwrap_or_else(|| file_path.parent().unwrap().to_str().unwrap());
+        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."));
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
