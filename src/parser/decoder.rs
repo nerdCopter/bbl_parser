@@ -218,17 +218,18 @@ pub fn apply_predictor_with_debug(
             let vbatref = sysconfig.get("vbatref").copied().unwrap_or(4095);
 
             // CRITICAL FIX: Check for corrupted raw values in vbatLatest
+            // Uses symmetric range based on MAX_REASONABLE_VBAT_RAW constant
             if !field_names.is_empty()
                 && field_names
                     .get(field_index)
                     .map(|name| name == "vbatLatest")
                     .unwrap_or(false)
-                && !(-1000..=4000).contains(&raw_value)
+                && !(-MAX_REASONABLE_VBAT_RAW..=MAX_REASONABLE_VBAT_RAW).contains(&raw_value)
             {
                 if debug {
                     eprintln!(
-                        "DEBUG: Fixed corrupted vbatLatest raw_value {} replaced with 0",
-                        raw_value
+                        "DEBUG: Fixed corrupted vbatLatest raw_value {} (outside +/-{}) replaced with vbatref",
+                        raw_value, MAX_REASONABLE_VBAT_RAW
                     );
                 }
                 return vbatref;
