@@ -124,7 +124,7 @@ pub fn parse_frames(
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
 
-                            let parse_result = parse_frame_data(
+                            if parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
@@ -135,16 +135,9 @@ pub fn parse_frames(
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,
-                            );
-
-                            if debug && stats.i_frames < 3 {
-                                eprintln!(
-                                    "[CRATE] I-frame parse_result: {:?}",
-                                    parse_result.is_ok()
-                                );
-                            }
-
-                            if parse_result.is_ok() {
+                            )
+                            .is_ok()
+                            {
                                 // Update time and loop iteration from parsed frame
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
