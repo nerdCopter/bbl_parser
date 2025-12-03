@@ -400,7 +400,6 @@ fn main() -> Result<()> {
         event: export_event,
         output_dir: output_dir.clone(),
         force_export,
-        store_all_frames: true, // CLI always stores all frames for complete CSV export
     };
 
     // Keep legacy csv_options for compatibility
@@ -603,9 +602,7 @@ fn parse_bbl_file(
 
 /// Parse a single log from binary data.
 ///
-/// Note: This CLI implementation uses its own frame parsing loop for streaming export.
-/// The crate's `parse_bbl_file_all_logs` with `store_all_frames=true` can be used
-/// as an alternative for simpler use cases. See issue #16 Phase 5c.
+/// Parses all frames and stores them in BBLLog.frames for CSV export.
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
@@ -662,7 +659,7 @@ fn parse_single_log(
             sample_duration / 1000
         );
         println!(
-            "DEBUG: Total frames: {}, Sample frames: {}",
+            "DEBUG: Total frames: {}, Stored frames: {}",
             stats.total_frames,
             frames.len()
         );
@@ -673,7 +670,7 @@ fn parse_single_log(
         total_logs,
         header,
         stats,
-        sample_frames: frames,
+        frames,
         debug_frames,
         gps_coordinates: gps_coords,
         home_coordinates: home_coords,
@@ -1223,9 +1220,9 @@ fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
         }
     }
 
-    // Fallback to sample_frames if debug_frames not available or insufficient data
+    // Fallback to frames if debug_frames not available or insufficient data
     if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
-        for frame in &log.sample_frames {
+        for frame in &log.frames {
             if let Some(gyro_x) = frame.data.get("gyroADC[0]") {
                 if let Some(gyro_y) = frame.data.get("gyroADC[1]") {
                     if let Some(gyro_z) = frame.data.get("gyroADC[2]") {
@@ -1422,31 +1419,18 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, debug: bool) -> R
         .map(|(csv_name, _)| csv_name.clone())
         .collect();
 
-    // Collect all frames in chronological order
-    let mut all_frames = Vec::new();
+    // Collect all I and P frames in chronological order
+    // S frames are merged into I/P frames during parsing, matching blackbox_decode behavior
+    let mut all_frames: Vec<(u64, char, &DecodedFrame)> = Vec::new();
 
-    if let Some(ref debug_frames) = log.debug_frames {
-        // Collect only I, P frames for CSV export (S frames are merged into I/P frames during parsing)
-        // This matches blackbox_decode behavior where S-frame data doesn't create separate CSV rows
-        for frame_type in ['I', 'P'] {
-            if let Some(frames) = debug_frames.get(&frame_type) {
-                for frame in frames {
-                    all_frames.push((frame.timestamp_us, frame_type, frame));
-                }
-            }
+    for frame in &log.frames {
+        if frame.frame_type == 'I' || frame.frame_type == 'P' {
+            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
         }
     }
 
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-
-    if all_frames.is_empty() {
-        // Write at least the sample frames if no debug frames
-        for frame in &log.sample_frames {
-            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
-        }
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-    }
 
     if all_frames.is_empty() {
         return Ok(()); // No data to export
@@ -1576,15 +1560,12 @@ fn parse_frames(
     export_options: &ExportOptions,
 ) -> ParseFramesResult {
     let mut stats = FrameStats::default();
-    let mut sample_frames = Vec::new();
+    let mut frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
     let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
     // Track the most recent S-frame data for merging (following JavaScript approach)
     let mut last_slow_data: HashMap<String, i32> = HashMap::new();
-
-    // Use the dedicated store_all_frames flag for clarity and future-proofing
-    let store_all_frames = export_options.store_all_frames;
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -1599,7 +1580,7 @@ fn parse_frames(
     if binary_data.is_empty() {
         return Ok((
             stats,
-            sample_frames,
+            frames,
             Some(debug_frames),
             Vec::new(),
             Vec::new(),
@@ -2079,9 +2060,8 @@ fn parse_frames(
                     std::io::stdout().flush().unwrap_or_default();
                 }
 
-                // Store only a few sample frames for display purposes
-                if parsing_success && sample_frames.len() < 10 {
-                    // Extract timing before moving frame_data
+                // Store ALL successfully parsed frames
+                if parsing_success {
                     let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
                     let loop_iteration =
                         frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
@@ -2098,8 +2078,7 @@ fn parse_frames(
                         timestamp_us
                     };
 
-                    if debug && (frame_type == 'I' || frame_type == 'P') && sample_frames.len() < 3
-                    {
+                    if debug && (frame_type == 'I' || frame_type == 'P') && frames.len() < 3 {
                         println!(
                             "DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}",
                             frame_type,
@@ -2120,47 +2099,13 @@ fn parse_frames(
                         loop_iteration,
                         data: frame_data.clone(),
                     };
-                    sample_frames.push(decoded_frame.clone());
+                    frames.push(decoded_frame.clone());
 
-                    // Store debug frames (always store for sample frames)
-                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    debug_frame_list.push(decoded_frame);
-                } else if parsing_success && store_all_frames {
-                    // Store ALL frames for CSV export when requested
-                    let debug_frame_list = debug_frames.entry(frame_type).or_default();
-                    // Store all frames for complete CSV export - memory usage managed by processing in chunks
-                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-                    let loop_iteration =
-                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-
-                    // Update last timestamp for main frames (I, P)
-                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
-                        last_main_frame_timestamp = timestamp_us;
+                    // Also store in debug_frames for debug purposes
+                    if debug {
+                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
+                        debug_frame_list.push(decoded_frame);
                     }
-
-                    // S frames inherit timestamp from last main frame
-                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
-                        last_main_frame_timestamp
-                    } else {
-                        timestamp_us
-                    };
-
-                    if debug && timestamp_us == 0 && debug_frame_list.len() < 5 {
-                        println!(
-                            "DEBUG: Non-sample frame {:?} has timestamp 0->{}. Fields: {:?}",
-                            frame_type,
-                            final_timestamp,
-                            frame_data.keys().collect::<Vec<_>>()
-                        );
-                    }
-
-                    let decoded_frame = DecodedFrame {
-                        frame_type,
-                        timestamp_us: final_timestamp,
-                        loop_iteration,
-                        data: frame_data.clone(),
-                    };
-                    debug_frame_list.push(decoded_frame);
                 }
 
                 // Update timing from first and last valid frames with time data
@@ -2204,7 +2149,7 @@ fn parse_frames(
 
     Ok((
         stats,
-        sample_frames,
+        frames,
         Some(debug_frames),
         gps_coordinates,
         home_coordinates,

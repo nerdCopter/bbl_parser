@@ -1,3 +1,6 @@
+use crate::conversion::{
+    convert_gps_altitude, convert_gps_coordinate, convert_gps_course, convert_gps_speed,
+};
 use crate::parser::{
     decoder::apply_predictor_with_debug, decoder::*, event::parse_e_frame, gps::*,
     stream::BBLDataStream,
@@ -6,23 +9,27 @@ use crate::types::{
     DecodedFrame, EventFrame, FrameDefinition, FrameHistory, FrameStats, GpsCoordinate,
     GpsHomeCoordinate,
 };
+use crate::ExportOptions;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::io::Write;
 
 /// Parse frames from binary data
+///
+/// Parses ALL frames from binary data and stores them for CSV export.
+/// This is the unified implementation used by both CLI and crate.
 ///
 /// # Arguments
 /// * `binary_data` - Raw binary frame data
 /// * `header` - Parsed BBL header with frame definitions
 /// * `debug` - Enable debug output
-/// * `store_all_frames` - When true, stores ALL parsed frames (for CSV export).
-///   When false, stores only 10 sample frames (for memory efficiency).
+/// * `export_options` - Export options controlling GPS/event collection
 #[allow(clippy::type_complexity)]
 pub fn parse_frames(
     binary_data: &[u8],
     header: &crate::types::BBLHeader,
     debug: bool,
-    store_all_frames: bool,
+    export_options: &ExportOptions,
 ) -> Result<(
     FrameStats,
     Vec<DecodedFrame>,
@@ -32,20 +39,12 @@ pub fn parse_frames(
     Vec<EventFrame>,
 )> {
     let mut stats = FrameStats::default();
-    let mut sample_frames = Vec::new();
-    let mut debug_frames: Option<HashMap<char, Vec<DecodedFrame>>> =
-        if debug { Some(HashMap::new()) } else { None };
+    let mut frames = Vec::new();
+    let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
+    let mut last_main_frame_timestamp = 0u64; // Track timestamp for S frames
 
-    // Collections for GPS and Event export
-    let mut gps_coordinates: Vec<GpsCoordinate> = Vec::new();
-    let mut home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
-    let mut event_frames: Vec<EventFrame> = Vec::new();
-
-    // GPS frame history for differential encoding (like P-frames)
-    let mut gps_frame_history: Vec<i32> = Vec::new();
-
-    // Track the last main frame timestamp for G/H/E frame timestamping
-    let mut last_main_frame_timestamp: u64 = 0;
+    // Track the most recent S-frame data for merging (following JavaScript approach)
+    let mut last_slow_data: HashMap<String, i32> = HashMap::new();
 
     if debug {
         println!("Binary data size: {} bytes", binary_data.len());
@@ -60,20 +59,31 @@ pub fn parse_frames(
     if binary_data.is_empty() {
         return Ok((
             stats,
-            sample_frames,
-            debug_frames,
-            gps_coordinates,
-            home_coordinates,
-            event_frames,
+            frames,
+            Some(debug_frames),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
         ));
     }
 
     // Initialize frame history for proper P-frame parsing
-    let mut frame_history = FrameHistory::new(header.i_frame_def.count);
-    let mut stream = BBLDataStream::new(binary_data);
+    let mut frame_history = FrameHistory {
+        current_frame: vec![0; header.i_frame_def.count],
+        previous_frame: vec![0; header.i_frame_def.count],
+        previous2_frame: vec![0; header.i_frame_def.count],
+        valid: false,
+    };
 
-    // Track the most recent S-frame data for merging (following JavaScript approach)
-    let mut last_slow_data: HashMap<String, i32> = HashMap::new();
+    // Collections for GPS and Event export
+    let mut gps_coordinates: Vec<GpsCoordinate> = Vec::new();
+    let mut home_coordinates: Vec<GpsHomeCoordinate> = Vec::new();
+    let mut event_frames: Vec<EventFrame> = Vec::new();
+
+    // GPS frame history for differential encoding
+    let mut gps_frame_history: Vec<i32> = Vec::new();
+
+    let mut stream = BBLDataStream::new(binary_data);
 
     // Main frame parsing loop - process frames as a stream
     while !stream.eof {
@@ -101,10 +111,7 @@ pub fn parse_frames(
                 };
 
                 if debug && stats.total_frames < 3 {
-                    println!(
-                        "Found frame type '{}' at offset {}",
-                        frame_type, frame_start_pos
-                    );
+                    println!("Found frame type '{frame_type}' at offset {frame_start_pos}");
                 }
 
                 // Parse frame using proper streaming logic
@@ -117,7 +124,7 @@ pub fn parse_frames(
                             // I-frames reset the prediction history
                             frame_history.current_frame.fill(0);
 
-                            if parse_frame_data(
+                            let parse_result = parse_frame_data(
                                 &mut stream,
                                 &header.i_frame_def,
                                 &mut frame_history.current_frame,
@@ -128,18 +135,23 @@ pub fn parse_frames(
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,
-                            )
-                            .is_ok()
-                            {
-                                // Copy parsed data to frame_data HashMap
+                            );
+
+                            if debug && stats.i_frames < 3 {
+                                eprintln!(
+                                    "[CRATE] I-frame parse_result: {:?}",
+                                    parse_result.is_ok()
+                                );
+                            }
+
+                            if parse_result.is_ok() {
+                                // Update time and loop iteration from parsed frame
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
                                 {
                                     if i < frame_history.current_frame.len() {
-                                        frame_data.insert(
-                                            field_name.clone(),
-                                            frame_history.current_frame[i],
-                                        );
+                                        let value = frame_history.current_frame[i];
+                                        frame_data.insert(field_name.clone(), value);
                                     }
                                 }
 
@@ -148,202 +160,352 @@ pub fn parse_frames(
                                     frame_data.insert(key.clone(), *value);
                                 }
 
-                                if debug && stats.i_frames <= 2 {
+                                if debug && stats.i_frames < 3 {
                                     println!("DEBUG: I-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
                                              frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
                                 }
 
                                 // Update history for future P-frames
-                                frame_history.update(frame_history.current_frame.clone());
-                                parsing_success = true;
-                                stats.i_frames += 1;
+                                frame_history
+                                    .previous_frame
+                                    .copy_from_slice(&frame_history.current_frame);
+                                frame_history
+                                    .previous2_frame
+                                    .copy_from_slice(&frame_history.current_frame);
+                                frame_history.valid = true;
 
-                                // Update last_main_frame_timestamp for G/H/E frame timestamping
-                                if let Some(&time_val) = frame_data.get("time") {
-                                    if time_val > 0 {
-                                        last_main_frame_timestamp = time_val as u64;
+                                // Validate frame before accepting
+                                let current_time =
+                                    frame_data.get("time").copied().unwrap_or(0) as u64;
+                                let current_loop =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+
+                                let is_valid_frame =
+                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
+
+                                if is_valid_frame {
+                                    parsing_success = true;
+                                    stats.i_frames += 1;
+
+                                    if debug && stats.i_frames <= 3 {
+                                        println!(
+                                            "DEBUG: Accepted I-frame - time:{}, loop:{}",
+                                            current_time, current_loop
+                                        );
                                     }
+                                } else if debug && stats.i_frames < 5 {
+                                    println!(
+                                        "DEBUG: Rejected I-frame - time:{}, loop:{} (invalid)",
+                                        current_time, current_loop
+                                    );
                                 }
                             }
                         }
                     }
                     'P' => {
                         if header.p_frame_def.count > 0 && frame_history.valid {
-                            frame_history.current_frame.fill(0);
+                            let mut p_frame_values = vec![0i32; header.p_frame_def.count];
 
                             if parse_frame_data(
                                 &mut stream,
                                 &header.p_frame_def,
-                                &mut frame_history.current_frame,
+                                &mut p_frame_values,
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
-                                0,     // TODO: Calculate skipped frames properly
-                                false, // Not raw
+                                0,
+                                false,
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,
                             )
                             .is_ok()
                             {
-                                // Copy parsed data using I-frame field names (P-frames use I-frame structure)
+                                // Copy previous frame as base, then update P-frame fields
+                                frame_history
+                                    .current_frame
+                                    .copy_from_slice(&frame_history.previous_frame);
+
+                                // Update only the fields present in P-frame
+                                for (i, field_name) in
+                                    header.p_frame_def.field_names.iter().enumerate()
+                                {
+                                    if i < p_frame_values.len() {
+                                        if let Some(i_frame_idx) = header
+                                            .i_frame_def
+                                            .field_names
+                                            .iter()
+                                            .position(|name| name == field_name)
+                                        {
+                                            if i_frame_idx < frame_history.current_frame.len() {
+                                                frame_history.current_frame[i_frame_idx] =
+                                                    p_frame_values[i];
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Copy current frame to output
                                 for (i, field_name) in
                                     header.i_frame_def.field_names.iter().enumerate()
                                 {
                                     if i < frame_history.current_frame.len() {
-                                        frame_data.insert(
-                                            field_name.clone(),
-                                            frame_history.current_frame[i],
-                                        );
+                                        let value = frame_history.current_frame[i];
+                                        frame_data.insert(field_name.clone(), value);
                                     }
                                 }
 
-                                // Merge lastSlow data into P-frame (following JavaScript approach)
+                                // Merge lastSlow data
                                 for (key, value) in &last_slow_data {
                                     frame_data.insert(key.clone(), *value);
                                 }
 
-                                if debug && stats.p_frames <= 2 {
+                                if debug && stats.p_frames < 3 {
                                     println!("DEBUG: P-frame merged lastSlow. rxSignalReceived: {:?}, rxFlightChannelsValid: {:?}", 
                                              frame_data.get("rxSignalReceived"), frame_data.get("rxFlightChannelsValid"));
                                 }
 
                                 // Update history
-                                frame_history.update(frame_history.current_frame.clone());
-                                parsing_success = true;
-                                stats.p_frames += 1;
+                                frame_history
+                                    .previous2_frame
+                                    .copy_from_slice(&frame_history.previous_frame);
+                                frame_history
+                                    .previous_frame
+                                    .copy_from_slice(&frame_history.current_frame);
 
-                                // Update last_main_frame_timestamp for G/H/E frame timestamping
-                                if let Some(&time_val) = frame_data.get("time") {
-                                    if time_val > 0 {
-                                        last_main_frame_timestamp = time_val as u64;
+                                // Validate P-frame
+                                let current_time =
+                                    frame_data.get("time").copied().unwrap_or(0) as u64;
+                                let current_loop =
+                                    frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
+
+                                let is_valid_frame =
+                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
+
+                                if is_valid_frame {
+                                    parsing_success = true;
+                                    stats.p_frames += 1;
+
+                                    if debug && stats.p_frames <= 3 {
+                                        println!(
+                                            "DEBUG: Accepted P-frame - time:{}, loop:{}",
+                                            current_time, current_loop
+                                        );
                                     }
+                                } else if debug && stats.p_frames < 5 {
+                                    println!(
+                                        "DEBUG: Rejected P-frame - time:{}, loop:{} (invalid)",
+                                        current_time, current_loop
+                                    );
                                 }
                             }
                         } else {
-                            // Skip P-frame if we don't have valid I-frame history
                             skip_frame(&mut stream, frame_type, debug)?;
                             stats.failed_frames += 1;
                         }
                     }
                     'S' => {
+                        if debug && stats.s_frames < 5 {
+                            println!(
+                                "DEBUG: Found S-frame, header.s_frame_def.count={}",
+                                header.s_frame_def.count
+                            );
+                        }
                         if header.s_frame_def.count > 0 {
                             if let Ok(data) = parse_s_frame(&mut stream, &header.s_frame_def, debug)
                             {
-                                // Following JavaScript approach: update lastSlow data
-                                if debug {
-                                    println!("DEBUG: Processing S-frame with data: {:?}", data);
+                                if debug && stats.s_frames < 3 {
+                                    println!("DEBUG: Processing S-frame with data: {data:?}");
                                 }
 
                                 for (key, value) in &data {
                                     last_slow_data.insert(key.clone(), *value);
                                 }
 
-                                if debug {
+                                if debug && stats.s_frames < 3 {
                                     println!(
-                                        "DEBUG: S-frame data updated lastSlow: {:?}",
-                                        last_slow_data
+                                        "DEBUG: S-frame data updated lastSlow: {last_slow_data:?}"
                                     );
                                 }
 
-                                frame_data = data;
-                                parsing_success = true;
                                 stats.s_frames += 1;
+
+                                if debug && stats.s_frames <= 3 {
+                                    println!("DEBUG: S-frame count incremented to {} (data merged into lastSlow)", stats.s_frames);
+                                }
+                            } else if debug && stats.s_frames < 5 {
+                                println!("DEBUG: S-frame parsing failed");
                             }
+                        } else if debug && stats.s_frames < 5 {
+                            println!("DEBUG: Skipping S-frame - header.s_frame_def.count is 0");
                         }
                     }
-                    'G' | 'H' | 'E' => {
-                        match frame_type {
-                            'H' => {
-                                // Parse H-frame (GPS home position)
-                                if header.h_frame_def.count > 0 {
-                                    if let Ok(data) =
-                                        parse_h_frame(&mut stream, &header.h_frame_def, debug)
-                                    {
-                                        frame_data = data.clone();
-                                        parsing_success = true;
-                                        stats.h_frames += 1;
+                    'H' => {
+                        if header.h_frame_def.count > 0 {
+                            if let Ok(data) = parse_h_frame(&mut stream, &header.h_frame_def, debug)
+                            {
+                                frame_data = data.clone();
+                                parsing_success = true;
+                                stats.h_frames += 1;
 
-                                        // Extract GPS home coordinates
-                                        let timestamp = last_main_frame_timestamp;
-                                        if let Some(home_coord) =
-                                            extract_home_coordinate(&frame_data, timestamp, debug)
-                                        {
-                                            home_coordinates.push(home_coord);
-                                        }
-                                    }
-                                } else {
-                                    skip_frame(&mut stream, frame_type, debug)?;
-                                    stats.h_frames += 1;
-                                    parsing_success = true;
-                                }
-                            }
-                            'G' => {
-                                // Parse G-frame (GPS position data)
-                                if header.g_frame_def.count > 0 {
-                                    if let Ok(data) = parse_g_frame(
-                                        &mut stream,
-                                        &header.g_frame_def,
-                                        &mut gps_frame_history,
-                                        header.data_version,
-                                        &header.sysconfig,
-                                        debug,
+                                // Extract GPS home coordinates for GPX export if enabled
+                                if export_options.gpx {
+                                    let timestamp = last_main_frame_timestamp;
+
+                                    if let (Some(&home_lat_raw), Some(&home_lon_raw)) = (
+                                        frame_data.get("GPS_home[0]"),
+                                        frame_data.get("GPS_home[1]"),
                                     ) {
-                                        frame_data = data.clone();
-                                        parsing_success = true;
-                                        stats.g_frames += 1;
-
-                                        // Extract GPS coordinates
-                                        let gps_time =
-                                            frame_data.get("time").copied().unwrap_or(0) as u64;
-                                        let timestamp = if gps_time > 0 {
-                                            gps_time
-                                        } else {
-                                            last_main_frame_timestamp
-                                        };
-
-                                        if let Some(coord) = extract_gps_coordinate(
-                                            &frame_data,
-                                            &home_coordinates,
-                                            timestamp,
-                                            &header.firmware_revision,
-                                            debug,
-                                        ) {
-                                            gps_coordinates.push(coord);
+                                        if debug && home_coordinates.is_empty() {
+                                            println!("DEBUG: HOME raw values - home_lat_raw: {}, home_lon_raw: {}", home_lat_raw, home_lon_raw);
+                                            println!(
+                                                "DEBUG: HOME converted - lat: {:.7}, lon: {:.7}",
+                                                convert_gps_coordinate(home_lat_raw),
+                                                convert_gps_coordinate(home_lon_raw)
+                                            );
                                         }
+
+                                        let home_coordinate = GpsHomeCoordinate {
+                                            home_latitude: convert_gps_coordinate(home_lat_raw),
+                                            home_longitude: convert_gps_coordinate(home_lon_raw),
+                                            timestamp_us: timestamp,
+                                        };
+                                        home_coordinates.push(home_coordinate);
                                     }
-                                } else {
-                                    skip_frame(&mut stream, frame_type, debug)?;
-                                    stats.g_frames += 1;
-                                    parsing_success = true;
                                 }
                             }
-                            'E' => {
-                                // Parse E-frame (Event data)
-                                if let Ok(mut event_frame) = parse_e_frame(&mut stream, debug) {
-                                    frame_data.insert(
-                                        "event_type".to_string(),
-                                        event_frame.event_type as i32,
-                                    );
-                                    parsing_success = true;
-                                    stats.e_frames += 1;
+                        } else {
+                            skip_frame(&mut stream, frame_type, debug)?;
+                            stats.h_frames += 1;
+                            parsing_success = true;
+                        }
+                    }
+                    'G' => {
+                        if header.g_frame_def.count > 0 {
+                            // Initialize GPS frame history if needed
+                            if gps_frame_history.is_empty() {
+                                gps_frame_history = vec![0i32; header.g_frame_def.count];
+                            }
 
-                                    // Set timestamp and collect event frame
-                                    event_frame.timestamp_us = last_main_frame_timestamp;
-                                    event_frames.push(event_frame);
+                            let mut g_frame_values = vec![0i32; header.g_frame_def.count];
 
-                                    if debug && stats.e_frames <= 3 {
-                                        println!(
-                                            "DEBUG: Parsed E-frame - Type: {}",
-                                            frame_data.get("event_type").unwrap_or(&0)
-                                        );
+                            if parse_frame_data(
+                                &mut stream,
+                                &header.g_frame_def,
+                                &mut g_frame_values,
+                                Some(&gps_frame_history),
+                                None,
+                                0,
+                                false,
+                                header.data_version,
+                                &header.sysconfig,
+                                debug,
+                            )
+                            .is_ok()
+                            {
+                                // Update GPS frame history
+                                gps_frame_history.copy_from_slice(&g_frame_values);
+
+                                // Copy GPS frame data to output
+                                for (i, field_name) in
+                                    header.g_frame_def.field_names.iter().enumerate()
+                                {
+                                    if i < g_frame_values.len() {
+                                        let value = g_frame_values[i];
+                                        frame_data.insert(field_name.clone(), value);
                                     }
-                                } else {
-                                    skip_frame(&mut stream, frame_type, debug)?;
-                                    stats.e_frames += 1;
-                                    parsing_success = true;
+                                }
+
+                                parsing_success = true;
+                                stats.g_frames += 1;
+
+                                // Extract GPS coordinates for GPX export if enabled
+                                if export_options.gpx {
+                                    let gps_time =
+                                        frame_data.get("time").copied().unwrap_or(0) as u64;
+                                    let timestamp = if gps_time > 0 {
+                                        gps_time
+                                    } else {
+                                        last_main_frame_timestamp
+                                    };
+
+                                    if let (Some(&lat_raw), Some(&lon_raw), Some(&alt_raw)) = (
+                                        frame_data.get("GPS_coord[0]"),
+                                        frame_data.get("GPS_coord[1]"),
+                                        frame_data.get("GPS_altitude"),
+                                    ) {
+                                        let actual_lat =
+                                            if let Some(home_coord) = home_coordinates.first() {
+                                                home_coord.home_latitude
+                                                    + convert_gps_coordinate(lat_raw)
+                                            } else {
+                                                convert_gps_coordinate(lat_raw)
+                                            };
+
+                                        let actual_lon =
+                                            if let Some(home_coord) = home_coordinates.first() {
+                                                home_coord.home_longitude
+                                                    + convert_gps_coordinate(lon_raw)
+                                            } else {
+                                                convert_gps_coordinate(lon_raw)
+                                            };
+
+                                        if debug && gps_coordinates.len() < 3 {
+                                            println!("DEBUG: GPS raw values - lat_raw: {}, lon_raw: {}, alt_raw: {}", lat_raw, lon_raw, alt_raw);
+                                            println!("DEBUG: GPS converted - lat: {:.7}, lon: {:.7}, alt: {:.2}", 
+                                                   actual_lat, actual_lon,
+                                                   convert_gps_altitude(alt_raw, &header.firmware_revision));
+                                        }
+
+                                        let coordinate = GpsCoordinate {
+                                            latitude: actual_lat,
+                                            longitude: actual_lon,
+                                            altitude: convert_gps_altitude(
+                                                alt_raw,
+                                                &header.firmware_revision,
+                                            ),
+                                            timestamp_us: timestamp,
+                                            num_sats: frame_data.get("GPS_numSat").copied(),
+                                            speed: frame_data
+                                                .get("GPS_speed")
+                                                .map(|&s| convert_gps_speed(s)),
+                                            ground_course: frame_data
+                                                .get("GPS_ground_course")
+                                                .map(|&c| convert_gps_course(c)),
+                                        };
+                                        gps_coordinates.push(coordinate);
+                                    }
                                 }
                             }
-                            _ => {}
+                        } else {
+                            skip_frame(&mut stream, frame_type, debug)?;
+                            stats.g_frames += 1;
+                            parsing_success = true;
+                        }
+                    }
+                    'E' => {
+                        if let Ok(mut event_frame) = parse_e_frame(&mut stream, debug) {
+                            frame_data
+                                .insert("event_type".to_string(), event_frame.event_type as i32);
+                            frame_data.insert("event_description".to_string(), 0);
+                            parsing_success = true;
+                            stats.e_frames += 1;
+
+                            // Collect event frames for JSON export if enabled
+                            if export_options.event {
+                                event_frame.timestamp_us = last_main_frame_timestamp;
+                                event_frames.push(event_frame);
+                            }
+
+                            if debug && stats.e_frames <= 3 {
+                                println!(
+                                    "DEBUG: Parsed E-frame - Type: {}",
+                                    frame_data.get("event_type").unwrap_or(&0)
+                                );
+                            }
+                        } else {
+                            skip_frame(&mut stream, frame_type, debug)?;
+                            stats.e_frames += 1;
+                            parsing_success = true;
                         }
                     }
                     _ => {}
@@ -356,38 +518,56 @@ pub fn parse_frames(
                 stats.total_frames += 1;
 
                 // Show progress for large files
-                if debug && stats.total_frames % 50000 == 0 || stats.total_frames % 100000 == 0 {
+                if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
+                    std::io::stdout().flush().unwrap_or_default();
                 }
 
-                // Store frames based on store_all_frames flag:
-                // - store_all_frames=true: Store ALL frames (for CSV export)
-                // - store_all_frames=false: Store only 10 sample frames (memory efficient)
-                let should_store_frame =
-                    parsing_success && (store_all_frames || sample_frames.len() < 10);
+                // Store ALL successfully parsed frames
+                if parsing_success {
+                    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
+                    let loop_iteration =
+                        frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
-                if should_store_frame {
-                    let decoded_frame = create_decoded_frame(frame_type, &frame_data);
-                    sample_frames.push(decoded_frame.clone());
+                    // Update last timestamp for main frames (I, P)
+                    if (frame_type == 'I' || frame_type == 'P') && timestamp_us > 0 {
+                        last_main_frame_timestamp = timestamp_us;
+                    }
 
-                    // When store_all_frames=true, skip debug_frames to avoid memory duplication.
-                    // Debug diagnostics can use sample_frames directly in this case.
-                    if !store_all_frames {
-                        if let Some(ref mut debug_map) = debug_frames {
-                            let debug_frame_list =
-                                debug_map.entry(frame_type).or_insert_with(Vec::new);
-                            debug_frame_list.push(decoded_frame);
+                    // S frames inherit timestamp from last main frame
+                    let final_timestamp = if frame_type == 'S' && timestamp_us == 0 {
+                        last_main_frame_timestamp
+                    } else {
+                        timestamp_us
+                    };
+
+                    if debug && (frame_type == 'I' || frame_type == 'P') && frames.len() < 3 {
+                        println!(
+                            "DEBUG: Frame {:?} has timestamp {}. Available fields: {:?}",
+                            frame_type,
+                            timestamp_us,
+                            frame_data.keys().collect::<Vec<_>>()
+                        );
+                        if let Some(time_val) = frame_data.get("time") {
+                            println!("DEBUG: 'time' field value: {time_val}");
+                        }
+                        if let Some(loop_val) = frame_data.get("loopIteration") {
+                            println!("DEBUG: 'loopIteration' field value: {loop_val}");
                         }
                     }
-                } else if parsing_success {
-                    // Even if we don't store in sample_frames, still store for debug if enabled
-                    if let Some(ref mut debug_map) = debug_frames {
-                        let debug_frame_list = debug_map.entry(frame_type).or_insert_with(Vec::new);
-                        // Store frames strategically for the display pattern (first/middle/last)
-                        if debug_frame_list.len() < 50 {
-                            let decoded_frame = create_decoded_frame(frame_type, &frame_data);
-                            debug_frame_list.push(decoded_frame);
-                        }
+
+                    let decoded_frame = DecodedFrame {
+                        frame_type,
+                        timestamp_us: final_timestamp,
+                        loop_iteration,
+                        data: frame_data.clone(),
+                    };
+                    frames.push(decoded_frame.clone());
+
+                    // Also store in debug_frames for debug purposes
+                    if debug {
+                        let debug_frame_list = debug_frames.entry(frame_type).or_default();
+                        debug_frame_list.push(decoded_frame);
                     }
                 }
 
@@ -405,7 +585,7 @@ pub fn parse_frames(
             Err(_) => break,
         }
 
-        // More aggressive safety limits to prevent hanging
+        // Safety limits to prevent hanging
         if stats.total_frames > 1000000 || stats.failed_frames > 10000 {
             if debug {
                 println!("Hit safety limit - stopping frame parsing");
@@ -432,24 +612,12 @@ pub fn parse_frames(
 
     Ok((
         stats,
-        sample_frames,
-        debug_frames,
+        frames,
+        Some(debug_frames),
         gps_coordinates,
         home_coordinates,
         event_frames,
     ))
-}
-
-fn create_decoded_frame(frame_type: char, frame_data: &HashMap<String, i32>) -> DecodedFrame {
-    let timestamp_us = frame_data.get("time").copied().unwrap_or(0) as u64;
-    let loop_iteration = frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
-
-    DecodedFrame {
-        frame_type,
-        timestamp_us,
-        loop_iteration,
-        data: frame_data.clone(),
-    }
 }
 
 /// Parse frame data using the specified frame definition

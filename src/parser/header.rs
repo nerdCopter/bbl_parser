@@ -111,6 +111,13 @@ pub fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHead
         } else if line.starts_with("H Field I predictor:") {
             parse_predictor_info(line, &mut header.i_frame_def)?;
         } else if line.starts_with("H Field P predictor:") {
+            // P frames inherit field names from I frames but have their own predictors
+            if header.p_frame_def.field_names.is_empty()
+                && !header.i_frame_def.field_names.is_empty()
+            {
+                header.p_frame_def =
+                    FrameDefinition::from_field_names(header.i_frame_def.field_names.clone());
+            }
             parse_predictor_info(line, &mut header.p_frame_def)?;
         } else if line.starts_with("H Field S predictor:") {
             parse_predictor_info(line, &mut header.s_frame_def)?;
@@ -121,6 +128,13 @@ pub fn parse_headers_from_text(header_text: &str, debug: bool) -> Result<BBLHead
         } else if line.starts_with("H Field I encoding:") {
             parse_encoding_info(line, &mut header.i_frame_def)?;
         } else if line.starts_with("H Field P encoding:") {
+            // P frames inherit field names from I frames but have their own encodings
+            if header.p_frame_def.field_names.is_empty()
+                && !header.i_frame_def.field_names.is_empty()
+            {
+                header.p_frame_def =
+                    FrameDefinition::from_field_names(header.i_frame_def.field_names.clone());
+            }
             parse_encoding_info(line, &mut header.p_frame_def)?;
         } else if line.starts_with("H Field S encoding:") {
             parse_encoding_info(line, &mut header.s_frame_def)?;

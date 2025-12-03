@@ -35,7 +35,6 @@ fn main() -> Result<()> {
         event: true,
         output_dir: output_dir.clone(),
         force_export: false,
-        store_all_frames: true, // Enable full frame storage for CSV export
     };
 
     // Parse the BBL file
