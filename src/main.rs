@@ -2048,7 +2048,9 @@ fn parse_frames(
                     _ => {}
                 };
 
-                if !parsing_success {
+                // S-frames don't set parsing_success but are processed successfully
+                // (they update lastSlow data merged into I/P frames)
+                if !parsing_success && frame_type != 'S' {
                     stats.failed_frames += 1;
                 }
 
