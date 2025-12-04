@@ -9,6 +9,10 @@ keywords = ["betaflight", "blackbox", "drone", "flight-log", "parser"]
 categories = ["parsing", "aerospace"]
 rust-version = "1.70.0"
 
+[build-dependencies]
+anyhow = "1.0"
+vergen = { version = "8", features = ["git", "gitcl"] }
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"], optional = true }

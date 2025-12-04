@@ -27,6 +27,18 @@ use bbl_parser::types::{FrameDefinition, FrameStats};
 // Import ExportOptions from crate library
 use bbl_parser::ExportOptions;
 
+// Include vergen generated environment variables
+const GIT_SHA: &str = env!("VERGEN_GIT_SHA", "unknown");
+const GIT_COMMIT_DATE: &str = env!("VERGEN_GIT_COMMIT_DATE", "unknown");
+
+// Build version string from git info
+const VERSION_STR: &str = concat!(
+    env!("VERGEN_GIT_SHA", "unknown"),
+    " (",
+    env!("VERGEN_GIT_COMMIT_DATE", "unknown"),
+    ")"
+);
+
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
@@ -326,9 +338,14 @@ impl CsvFieldMap {
 }
 
 fn build_command() -> Command {
-    Command::new("BBL Parser")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).")
+    let about_text = format!(
+        "\n\nRead and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).\n  {} {} ({})",
+        env!("CARGO_PKG_NAME"), GIT_SHA, GIT_COMMIT_DATE
+    );
+
+    Command::new(env!("CARGO_PKG_NAME"))
+        .version(VERSION_STR)
+        .about(about_text)
         .arg(
             Arg::new("files")
                 .help("BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.")

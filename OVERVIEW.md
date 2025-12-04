@@ -1,7 +1,6 @@
-# BBL Parser v0.9.0 - Project Overview
+# BBL Parser - Project Overview
 
 **Project Status:** 🚧 **WORK IN PROGRESS**  
-**Version:** 0.9.0  
 **Focus:** High-Performance BBL Processing  
 **⚠️ Not Production Ready**
 
@@ -281,9 +280,3 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 - **Performance** adequate but not optimized
 - **Error handling** basic with room for improvement
 - **API stability** documented with migration notes
-
----
-
-**Current Focus:** Core functionality development and testing  
-**Version:** 0.9.0 🚧 Work-in-Progress  
-**⚠️ Not recommended for production use**

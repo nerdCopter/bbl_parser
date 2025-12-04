@@ -1,4 +1,4 @@
-# BBL Parser (Work-in-Progress)
+# BBL Parser
 
 A fast, pure-Rust Blackbox Log parser primarily used as a command-line tool, with an optional Rust crate API.
 
