@@ -170,30 +170,18 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
         .map(|(csv_name, _)| csv_name.clone())
         .collect();
 
-    // Collect all frames in chronological order
-    let mut all_frames = Vec::new();
+    // Collect all I and P frames in chronological order
+    let mut all_frames: Vec<(u64, char, &DecodedFrame)> = Vec::new();
 
-    if let Some(ref debug_frames) = log.debug_frames {
-        // Collect only I, P frames for CSV export (S frames are merged into I/P frames during parsing)
-        for frame_type in ['I', 'P'] {
-            if let Some(frames) = debug_frames.get(&frame_type) {
-                for frame in frames {
-                    all_frames.push((frame.timestamp_us, frame_type, frame));
-                }
-            }
+    // Use log.frames which contains all parsed frames
+    for frame in &log.frames {
+        if frame.frame_type == 'I' || frame.frame_type == 'P' {
+            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
         }
     }
 
     // Sort by timestamp
     all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-
-    if all_frames.is_empty() {
-        // Write at least the sample frames if no debug frames
-        for frame in &log.sample_frames {
-            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
-        }
-        all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-    }
 
     if all_frames.is_empty() {
         return Ok(()); // No data to export

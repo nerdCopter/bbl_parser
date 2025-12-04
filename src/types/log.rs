@@ -14,7 +14,8 @@ pub struct BBLLog {
     pub total_logs: usize,
     pub header: BBLHeader,
     pub stats: FrameStats,
-    pub sample_frames: Vec<DecodedFrame>,
+    /// All parsed frames (I and P frames with decoded values)
+    pub frames: Vec<DecodedFrame>,
     pub debug_frames: Option<HashMap<char, Vec<DecodedFrame>>>,
     pub gps_coordinates: Vec<GpsCoordinate>,
     pub home_coordinates: Vec<GpsHomeCoordinate>,
@@ -28,7 +29,7 @@ impl BBLLog {
             total_logs,
             header: BBLHeader::default(),
             stats: FrameStats::default(),
-            sample_frames: Vec::new(),
+            frames: Vec::new(),
             debug_frames: None,
             gps_coordinates: Vec::new(),
             home_coordinates: Vec::new(),

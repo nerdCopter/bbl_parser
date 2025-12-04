@@ -39,7 +39,7 @@ pub fn parse_bbl_file(
 /// Parse BBL data from memory and return all logs
 pub fn parse_bbl_bytes_all_logs(
     data: &[u8],
-    _export_options: crate::ExportOptions,
+    export_options: crate::ExportOptions,
     debug: bool,
 ) -> Result<Vec<BBLLog>> {
     if debug {
@@ -86,7 +86,13 @@ pub fn parse_bbl_bytes_all_logs(
             .unwrap_or(data.len());
         let log_data = &data[start_pos..end_pos];
 
-        let log = parse_single_log(log_data, log_index + 1, log_positions.len(), debug)?;
+        let log = parse_single_log(
+            log_data,
+            log_index + 1,
+            log_positions.len(),
+            debug,
+            &export_options,
+        )?;
         logs.push(log);
     }
 
@@ -109,11 +115,19 @@ pub fn parse_bbl_bytes(
 // This is a placeholder for the systematic migration process
 
 /// Internal function to parse a single BBL log from binary data
+///
+/// # Arguments
+/// * `log_data` - Raw log data (headers + binary frames)
+/// * `log_number` - 1-based log number
+/// * `total_logs` - Total number of logs in the file
+/// * `debug` - Enable debug output
+/// * `export_options` - Export options controlling GPS/event collection
 fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
     total_logs: usize,
     debug: bool,
+    export_options: &crate::ExportOptions,
 ) -> Result<BBLLog> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
@@ -134,13 +148,13 @@ fn parse_single_log(
 
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
-    let (mut stats, sample_frames, debug_frames, gps_coordinates, home_coordinates, event_frames) =
-        crate::parser::frame::parse_frames(binary_data, &header, debug)?;
+    let (mut stats, frames, debug_frames, gps_coordinates, home_coordinates, event_frames) =
+        crate::parser::frame::parse_frames(binary_data, &header, debug, export_options)?;
 
     // Update frame stats timing from actual frame data
-    if !sample_frames.is_empty() {
-        stats.start_time_us = sample_frames.first().unwrap().timestamp_us;
-        stats.end_time_us = sample_frames.last().unwrap().timestamp_us;
+    if !frames.is_empty() {
+        stats.start_time_us = frames.first().unwrap().timestamp_us;
+        stats.end_time_us = frames.last().unwrap().timestamp_us;
     }
 
     let log = BBLLog {
@@ -148,7 +162,7 @@ fn parse_single_log(
         total_logs,
         header,
         stats,
-        sample_frames,
+        frames,
         debug_frames,
         gps_coordinates,
         home_coordinates,

@@ -12,7 +12,7 @@
 //!
 //! let export_options = ExportOptions::default();
 //! let log = parse_bbl_file(Path::new("flight.BBL"), export_options, false).unwrap();
-//! println!("Found {} frames", log.sample_frames.len());
+//! println!("Found {} frames", log.frames.len());
 //! ```
 
 // Module declarations
