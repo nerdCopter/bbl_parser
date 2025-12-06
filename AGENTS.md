@@ -11,6 +11,7 @@
 - **Build Quality:** Ensure `cargo build --release` has no errors or warnings.
 - **File Editing:** Always edit files inline; do not use `cat` to write to files.
 
+## Architecture & Code Organization
 - **Library-first design:** Core logic in `src/lib.rs` and CLI entry point in `src/main.rs`.
   - **Shared code:** Parser modules (`src/parser/`) are used by both library and CLI (`parse_frames`, `parse_headers_from_text`).
   - **Duplicated code:** Export implementations exist separately in `src/export.rs` (library) and `src/main.rs` (CLI). CLI does NOT use library export functions.
@@ -19,7 +20,7 @@
 - **Feature flags:** `csv`, `cli`, `json`, `serde` control optional dependencies; default: `csv` + `cli`.
 - **CRATE_USAGE.md reference:** See `CRATE_USAGE.md` for library API examples with feature flags.
 - **Code quality goals:** Reduce duplication by migrating CLI export logic to use library `export_to_csv()`, `export_to_gpx()`, `export_to_event()` functions.
-- **Testing:** 37 test attributes total; per-file: 11 in `src/main.rs`, 13 in `src/conversion.rs`, 6 in `src/parser/stream.rs`, 7 in `src/parser/helpers.rs`.
+- **Testing:** Comprehensive tests distributed across `src/main.rs`, `src/conversion.rs`, `src/parser/stream.rs`, and `src/parser/helpers.rs`.
 - **Public API:** `parse_bbl_file()`, `parse_bbl_bytes()`, `BBLLog`, `ExportOptions`, conversion utilities, parser helpers.
 
 ## Algorithms
