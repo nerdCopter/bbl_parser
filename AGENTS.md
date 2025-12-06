@@ -1,7 +1,8 @@
 # Copilot Instructions for RUST Project
 
 ## General
-- **Entry Point:** Maintain source as `src/main.rs`.
+- **Entry Point:** Maintain CLI source as `src/main.rs` and library core as `src/lib.rs`.
+- **Binary Structure:** CLI uses feature flag `cli` and entry point is built via default features or explicit `--features=cli`.
 - **Comments:**  
   - Do not remove or modify comments unless the related code is changed.
   - Only add comments that explain code functionality; no AI instructional comments.
@@ -10,6 +11,18 @@
 - **Build Quality:** Ensure `cargo build --release` has no errors or warnings.
 - **File Editing:** Always edit files inline; do not use `cat` to write to files.
 
+## Architecture & Code Organization
+- **Library-first design:** Core logic in `src/lib.rs` and CLI entry point in `src/main.rs`.
+  - **Shared code:** Parser modules (`src/parser/`) are used by both library and CLI (`parse_frames`, `parse_headers_from_text`).
+  - **Duplicated code:** Export implementations exist separately in `src/export.rs` (library) and `src/main.rs` (CLI). CLI does NOT use library export functions.
+  - **Current state:** **Partial unification** — parsing shared, export duplicated (~1800 lines in `src/main.rs`).
+- **Decision criteria:** "Is this needed by crate consumers?" determines placement — shared logic in library, CLI-only logic in `src/main.rs`.
+- **Feature flags:** `csv`, `cli`, `json`, `serde` control optional dependencies; default: `csv` + `cli`.
+- **CRATE_USAGE.md reference:** See `CRATE_USAGE.md` for library API examples with feature flags.
+- **Code quality goals:** Reduce duplication by migrating CLI export logic to use library `export_to_csv()`, `export_to_gpx()`, `export_to_event()` functions.
+- **Testing:** Comprehensive tests distributed across `src/main.rs`, `src/conversion.rs`, `src/parser/stream.rs`, and `src/parser/helpers.rs`.
+- **Public API:** `parse_bbl_file()`, `parse_bbl_bytes()`, `BBLLog`, `ExportOptions`, conversion utilities, parser helpers.
+
 ## Algorithms
 - **Method Selection:**  
   - When choosing math or scientific methods, compare alternatives for accuracy and efficiency.
@@ -17,7 +30,7 @@
 
 ## Documentation
 - **Readme:** Maintain a proper `README.md` file.
-- **Overview** Maintain a proper `OVERVIEW.md` file
+- **Overview:** Maintain a proper `OVERVIEW.md` file
 - **Summaries:**  
   - Output final summaries to `./INFORMATION/*.md` (not in git).
   - Use date-prefixed, uppercase filenames (e.g., `2025-06-25_SUMMARY.md`).
