@@ -288,6 +288,15 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 }
 
 /// Export GPS data to GPX format
+///
+/// # Arguments
+/// * `input_path` - Path to the input BBL file (used for output naming)
+/// * `log_index` - Index of the current log (0-based)
+/// * `total_logs` - Total number of logs in the file
+/// * `gps_coordinates` - GPS coordinate data to export
+/// * `_home_coordinates` - Home coordinates (reserved for future use)
+/// * `export_options` - Export configuration options
+/// * `log_start_datetime` - Optional log start datetime from header for accurate timestamps
 pub fn export_to_gpx(
     input_path: &Path,
     log_index: usize,
@@ -295,6 +304,7 @@ pub fn export_to_gpx(
     gps_coordinates: &[GpsCoordinate],
     _home_coordinates: &[GpsHomeCoordinate],
     export_options: &ExportOptions,
+    log_start_datetime: Option<&str>,
 ) -> Result<()> {
     if gps_coordinates.is_empty() {
         return Ok(());
@@ -339,19 +349,14 @@ pub fn export_to_gpx(
             }
         }
 
-        // Convert timestamp to ISO format
-        let total_seconds = coord.timestamp_us / 1_000_000;
-        let microseconds = coord.timestamp_us % 1_000_000;
-
-        // Use March 26, 2025 as base date
-        let hours = 5 + (total_seconds / 3600) % 24;
-        let minutes = (total_seconds % 3600) / 60;
-        let seconds = total_seconds % 60;
+        // Generate GPX timestamp from log_start_datetime + frame timestamp
+        // Following blackbox_decode approach: dateTime + (gpsFrameTime / 1000000)
+        let timestamp_str = generate_gpx_timestamp(log_start_datetime, coord.timestamp_us);
 
         writeln!(
             gpx_file,
-            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>2025-03-26T{:02}:{:02}:{:02}.{:06}Z</time></trkpt>"#,
-            coord.latitude, coord.longitude, coord.altitude, hours, minutes, seconds, microseconds
+            r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>{}</time></trkpt>"#,
+            coord.latitude, coord.longitude, coord.altitude, timestamp_str
         )?;
     }
 

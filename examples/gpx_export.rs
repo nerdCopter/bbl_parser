@@ -47,6 +47,7 @@ fn main() -> anyhow::Result<()> {
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts,
+            log.header.log_start_datetime.as_deref(),
         )?;
         println!("✓ GPX export complete");
         println!("  Exported {} GPS coordinates", log.gps_coordinates.len());
