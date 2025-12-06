@@ -19,7 +19,7 @@
 - **Feature flags:** `csv`, `cli`, `json`, `serde` control optional dependencies; default: `csv` + `cli`.
 - **CRATE_USAGE.md reference:** See `CRATE_USAGE.md` for library API examples with feature flags.
 - **Code quality goals:** Reduce duplication by migrating CLI export logic to use library `export_to_csv()`, `export_to_gpx()`, `export_to_event()` functions.
-- **Testing:** 42 test attributes total; per-file: 13 in `src/main.rs`, 14 in `src/conversion.rs`, 7 in `src/parser/stream.rs`, 8 in `src/parser/helpers.rs`.
+- **Testing:** 37 test attributes total; per-file: 11 in `src/main.rs`, 13 in `src/conversion.rs`, 6 in `src/parser/stream.rs`, 7 in `src/parser/helpers.rs`.
 - **Public API:** `parse_bbl_file()`, `parse_bbl_bytes()`, `BBLLog`, `ExportOptions`, conversion utilities, parser helpers.
 
 ## Algorithms
