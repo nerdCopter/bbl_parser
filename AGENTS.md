@@ -30,7 +30,7 @@
 
 ## Documentation
 - **Readme:** Maintain a proper `README.md` file.
-- **Overview** Maintain a proper `OVERVIEW.md` file
+- **Overview:** Maintain a proper `OVERVIEW.md` file
 - **Summaries:**  
   - Output final summaries to `./INFORMATION/*.md` (not in git).
   - Use date-prefixed, uppercase filenames (e.g., `2025-06-25_SUMMARY.md`).
