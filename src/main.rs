@@ -49,27 +49,39 @@ fn get_output_dir<'a>(export_options: &'a ExportOptions, file_path: &'a Path) ->
         .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."))
 }
 
-/// Helper to format export path and log suffix for status messages.
+/// Helper to compute export file paths and suffixes for status messages.
 /// Computes base filename, output directory, and log suffix (with .NN suffix only for multiple logs).
 /// Uses log_number (1-based) directly to match export.rs behavior.
+/// Returns (csv_path, headers_path, gpx_path, event_path) for consistency across platforms.
 fn format_export_path(
     file_path: &Path,
     export_options: &ExportOptions,
     log_number: usize,
     total_logs: usize,
-) -> (String, String, String) {
+) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let base_name = file_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("blackbox")
-        .to_string();
-    let output_dir = get_output_dir(export_options, file_path).to_string();
+        .unwrap_or("blackbox");
+
+    let output_dir = Path::new(get_output_dir(export_options, file_path));
     let log_suffix = if total_logs > 1 {
         format!(".{:02}", log_number)
     } else {
-        "".to_string()
+        String::new()
     };
-    (base_name, output_dir, log_suffix)
+
+    let csv_filename = format!("{}{}.csv", base_name, log_suffix);
+    let headers_filename = format!("{}{}.headers.csv", base_name, log_suffix);
+    let gpx_filename = format!("{}{}.gps.gpx", base_name, log_suffix);
+    let event_filename = format!("{}{}.event", base_name, log_suffix);
+
+    (
+        output_dir.join(&csv_filename),
+        output_dir.join(&headers_filename),
+        output_dir.join(&gpx_filename),
+        output_dir.join(&event_filename),
+    )
 }
 
 /// Expand input paths to a list of BBL files.
@@ -1104,20 +1116,14 @@ fn parse_bbl_file_streaming(
         if export_options.csv {
             match export_to_csv(&log, file_path, export_options) {
                 Ok(()) => {
-                    let (base_name, output_dir, log_suffix) = format_export_path(
+                    let (csv_path, headers_path, _, _) = format_export_path(
                         file_path,
                         export_options,
                         log.log_number,
                         log_positions.len(),
                     );
-                    println!(
-                        "Exported headers to: {}/{}{}.headers.csv",
-                        output_dir, base_name, log_suffix
-                    );
-                    println!(
-                        "Exported flight data to: {}/{}{}.csv",
-                        output_dir, base_name, log_suffix
-                    );
+                    println!("Exported headers to: {}", headers_path.display());
+                    println!("Exported flight data to: {}", csv_path.display());
                 }
                 Err(e) => {
                     let filename = file_path
@@ -1144,16 +1150,13 @@ fn parse_bbl_file_streaming(
                 log.header.log_start_datetime.as_deref(),
             ) {
                 Ok(()) => {
-                    let (base_name, output_dir, log_suffix) = format_export_path(
+                    let (_, _, gpx_path, _) = format_export_path(
                         file_path,
                         export_options,
                         log.log_number,
                         log_positions.len(),
                     );
-                    println!(
-                        "Exported GPS data to: {}/{}{}.gps.gpx",
-                        output_dir, base_name, log_suffix
-                    );
+                    println!("Exported GPS data to: {}", gpx_path.display());
                 }
                 Err(e) => {
                     let filename = file_path
@@ -1178,16 +1181,13 @@ fn parse_bbl_file_streaming(
                 export_options,
             ) {
                 Ok(()) => {
-                    let (base_name, output_dir, log_suffix) = format_export_path(
+                    let (_, _, _, event_path) = format_export_path(
                         file_path,
                         export_options,
                         log.log_number,
                         log_positions.len(),
                     );
-                    println!(
-                        "Exported event data to: {}/{}{}.event",
-                        output_dir, base_name, log_suffix
-                    );
+                    println!("Exported event data to: {}", event_path.display());
                 }
                 Err(e) => {
                     let filename = file_path
