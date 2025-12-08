@@ -25,6 +25,53 @@ pub struct ExportOptions {
     pub force_export: bool,
 }
 
+/// Helper to compute export file paths with consistent naming across all export types.
+/// Ensures CLI status messages match actual filenames written by export functions.
+///
+/// # Arguments
+/// * `input_path` - Path to the input BBL file (used to extract base filename)
+/// * `export_options` - Export configuration with optional output directory
+/// * `log_number` - 1-based log number (for .NN suffix when multiple logs)
+/// * `total_logs` - Total number of logs in the file
+///
+/// # Returns
+/// Tuple of (csv_path, headers_path, gpx_path, event_path) using consistent naming
+pub fn compute_export_paths(
+    input_path: &Path,
+    export_options: &ExportOptions,
+    log_number: usize,
+    total_logs: usize,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let base_name = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("blackbox");
+
+    let output_dir = if let Some(ref dir) = export_options.output_dir {
+        std::path::Path::new(dir)
+    } else {
+        input_path.parent().unwrap_or(std::path::Path::new("."))
+    };
+
+    let log_suffix = if total_logs > 1 {
+        format!(".{:02}", log_number)
+    } else {
+        String::new()
+    };
+
+    let csv_path = output_dir.join(format!("{}{}.csv", base_name, log_suffix));
+    let headers_path = output_dir.join(format!("{}{}.headers.csv", base_name, log_suffix));
+    let gpx_path = output_dir.join(format!("{}{}.gps.gpx", base_name, log_suffix));
+    let event_path = output_dir.join(format!("{}{}.event", base_name, log_suffix));
+
+    (csv_path, headers_path, gpx_path, event_path)
+}
+
 /// Pre-computed CSV field mapping for performance
 #[derive(Debug)]
 struct CsvFieldMap {
@@ -312,6 +359,25 @@ pub fn export_to_gpx(
     log_start_datetime: Option<&str>,
 ) -> Result<()> {
     if gps_coordinates.is_empty() {
+        // Compute path for consistency even though we're not writing anything
+        // (allows CLI to log a consistent message)
+        let base_name = input_path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("blackbox");
+
+        let output_dir = export_options
+            .output_dir
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
+
+        let log_suffix = if total_logs > 1 {
+            format!(".{:02}", log_index + 1)
+        } else {
+            String::new()
+        };
+        let _gpx_path = output_dir.join(format!("{}{}.gps.gpx", base_name, log_suffix));
         return Ok(());
     }
 

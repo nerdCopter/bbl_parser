@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Import export functions from crate library
-use bbl_parser::export::{export_to_csv, export_to_event, export_to_gpx};
+use bbl_parser::export::{compute_export_paths, export_to_csv, export_to_event, export_to_gpx};
 
 // Import parser types from crate library - using crate's unified implementations
 use bbl_parser::parser::{parse_frames, parse_headers_from_text};
@@ -40,49 +40,6 @@ const VERSION_STR: &str = concat!(
 
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
-
-/// Get output directory from export options, falling back to file's parent directory or ".".
-fn get_output_dir<'a>(export_options: &'a ExportOptions, file_path: &'a Path) -> &'a str {
-    export_options
-        .output_dir
-        .as_deref()
-        .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."))
-}
-
-/// Helper to compute export file paths and suffixes for status messages.
-/// Computes base filename, output directory, and log suffix (with .NN suffix only for multiple logs).
-/// Uses log_number (1-based) directly to match export.rs behavior.
-/// Returns (csv_path, headers_path, gpx_path, event_path) for consistency across platforms.
-fn format_export_path(
-    file_path: &Path,
-    export_options: &ExportOptions,
-    log_number: usize,
-    total_logs: usize,
-) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-    let base_name = file_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("blackbox");
-
-    let output_dir = Path::new(get_output_dir(export_options, file_path));
-    let log_suffix = if total_logs > 1 {
-        format!(".{:02}", log_number)
-    } else {
-        String::new()
-    };
-
-    let csv_filename = format!("{}{}.csv", base_name, log_suffix);
-    let headers_filename = format!("{}{}.headers.csv", base_name, log_suffix);
-    let gpx_filename = format!("{}{}.gps.gpx", base_name, log_suffix);
-    let event_filename = format!("{}{}.event", base_name, log_suffix);
-
-    (
-        output_dir.join(&csv_filename),
-        output_dir.join(&headers_filename),
-        output_dir.join(&gpx_filename),
-        output_dir.join(&event_filename),
-    )
-}
 
 /// Expand input paths to a list of BBL files.
 /// If a path is a file, add it directly (will be filtered later for BBL/BFL/TXT extension).
@@ -1116,7 +1073,7 @@ fn parse_bbl_file_streaming(
         if export_options.csv {
             match export_to_csv(&log, file_path, export_options) {
                 Ok(()) => {
-                    let (csv_path, headers_path, _, _) = format_export_path(
+                    let (csv_path, headers_path, _, _) = compute_export_paths(
                         file_path,
                         export_options,
                         log.log_number,
@@ -1149,8 +1106,8 @@ fn parse_bbl_file_streaming(
                 export_options,
                 log.header.log_start_datetime.as_deref(),
             ) {
-                Ok(()) => {
-                    let (_, _, gpx_path, _) = format_export_path(
+                Ok(_) => {
+                    let (_, _, gpx_path, _) = compute_export_paths(
                         file_path,
                         export_options,
                         log.log_number,
@@ -1181,7 +1138,7 @@ fn parse_bbl_file_streaming(
                 export_options,
             ) {
                 Ok(()) => {
-                    let (_, _, _, event_path) = format_export_path(
+                    let (_, _, _, event_path) = compute_export_paths(
                         file_path,
                         export_options,
                         log.log_number,
