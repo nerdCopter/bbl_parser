@@ -51,10 +51,11 @@ fn get_output_dir<'a>(export_options: &'a ExportOptions, file_path: &'a Path) ->
 
 /// Helper to format export path and log suffix for status messages.
 /// Computes base filename, output directory, and log suffix (with .NN suffix only for multiple logs).
+/// Uses log_number (1-based) directly to match export.rs behavior.
 fn format_export_path(
     file_path: &Path,
     export_options: &ExportOptions,
-    log_index: usize,
+    log_number: usize,
     total_logs: usize,
 ) -> (String, String, String) {
     let base_name = file_path
@@ -64,7 +65,7 @@ fn format_export_path(
         .to_string();
     let output_dir = get_output_dir(export_options, file_path).to_string();
     let log_suffix = if total_logs > 1 {
-        format!(".{:02}", log_index + 1)
+        format!(".{:02}", log_number)
     } else {
         "".to_string()
     };
@@ -1106,7 +1107,7 @@ fn parse_bbl_file_streaming(
                     let (base_name, output_dir, log_suffix) = format_export_path(
                         file_path,
                         export_options,
-                        log_index,
+                        log.log_number,
                         log_positions.len(),
                     );
                     println!(
@@ -1146,7 +1147,7 @@ fn parse_bbl_file_streaming(
                     let (base_name, output_dir, log_suffix) = format_export_path(
                         file_path,
                         export_options,
-                        log_index,
+                        log.log_number,
                         log_positions.len(),
                     );
                     println!(
@@ -1180,7 +1181,7 @@ fn parse_bbl_file_streaming(
                     let (base_name, output_dir, log_suffix) = format_export_path(
                         file_path,
                         export_options,
-                        log_index,
+                        log.log_number,
                         log_positions.len(),
                     );
                     println!(
