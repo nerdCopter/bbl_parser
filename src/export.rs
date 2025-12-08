@@ -359,25 +359,6 @@ pub fn export_to_gpx(
     log_start_datetime: Option<&str>,
 ) -> Result<()> {
     if gps_coordinates.is_empty() {
-        // Compute path for consistency even though we're not writing anything
-        // (allows CLI to log a consistent message)
-        let base_name = input_path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("blackbox");
-
-        let output_dir = export_options
-            .output_dir
-            .as_deref()
-            .map(Path::new)
-            .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
-
-        let log_suffix = if total_logs > 1 {
-            format!(".{:02}", log_index + 1)
-        } else {
-            String::new()
-        };
-        let _gpx_path = output_dir.join(format!("{}{}.gps.gpx", base_name, log_suffix));
         return Ok(());
     }
 
