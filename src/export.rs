@@ -25,6 +25,19 @@ pub struct ExportOptions {
     pub force_export: bool,
 }
 
+/// Extract the base filename from an input path with consistent fallback.
+/// Used by all export functions and path computation helpers to ensure
+/// consistent naming across CSV, GPX, and event exports.
+///
+/// Always returns "blackbox" as fallback for missing or non-UTF-8 filenames,
+/// ensuring compute_export_paths() predictions match actual export filenames.
+fn extract_base_name(input_path: &Path) -> &str {
+    input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("blackbox")
+}
+
 /// Helper to compute export file paths with consistent naming across all export types.
 /// Ensures CLI status messages match actual filenames written by export functions.
 ///
@@ -47,10 +60,7 @@ pub fn compute_export_paths(
     std::path::PathBuf,
     std::path::PathBuf,
 ) {
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("blackbox");
+    let base_name = extract_base_name(input_path);
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         std::path::Path::new(dir)
@@ -134,10 +144,7 @@ pub fn export_to_csv(
     input_path: &Path,
     export_options: &ExportOptions,
 ) -> Result<()> {
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("blackbox");
+    let base_name = extract_base_name(input_path);
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         Path::new(dir)
@@ -362,10 +369,7 @@ pub fn export_to_gpx(
         return Ok(());
     }
 
-    let base_name = input_path
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
+    let base_name = extract_base_name(input_path);
 
     let output_dir = export_options
         .output_dir
@@ -430,10 +434,7 @@ pub fn export_to_event(
         return Ok(());
     }
 
-    let base_name = input_path
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
+    let base_name = extract_base_name(input_path);
 
     let output_dir = export_options
         .output_dir
