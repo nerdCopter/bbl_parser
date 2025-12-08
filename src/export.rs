@@ -297,6 +297,11 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 /// * `_home_coordinates` - Home coordinates (reserved for future use)
 /// * `export_options` - Export configuration options
 /// * `log_start_datetime` - Optional log start datetime from header for accurate timestamps
+///
+/// # Performance Notes
+/// For very large GPS traces, the `log_start_datetime` is parsed via `generate_gpx_timestamp()`
+/// on each trackpoint. Future optimization: consider caching the parsed base epoch once per log
+/// to avoid repeated parsing overhead when exporting thousands of GPS points.
 pub fn export_to_gpx(
     input_path: &Path,
     log_index: usize,

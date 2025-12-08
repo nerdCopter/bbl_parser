@@ -49,6 +49,28 @@ fn get_output_dir<'a>(export_options: &'a ExportOptions, file_path: &'a Path) ->
         .unwrap_or_else(|| file_path.parent().and_then(|p| p.to_str()).unwrap_or("."))
 }
 
+/// Helper to format export path and log suffix for status messages.
+/// Computes base filename, output directory, and log suffix (with .NN suffix only for multiple logs).
+fn format_export_path(
+    file_path: &Path,
+    export_options: &ExportOptions,
+    log_index: usize,
+    total_logs: usize,
+) -> (String, String, String) {
+    let base_name = file_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("blackbox")
+        .to_string();
+    let output_dir = get_output_dir(export_options, file_path).to_string();
+    let log_suffix = if total_logs > 1 {
+        format!(".{:02}", log_index + 1)
+    } else {
+        "".to_string()
+    };
+    (base_name, output_dir, log_suffix)
+}
+
 /// Expand input paths to a list of BBL files.
 /// If a path is a file, add it directly (will be filtered later for BBL/BFL/TXT extension).
 /// If a path is a directory, recursively find all BBL files within it.
@@ -1081,16 +1103,12 @@ fn parse_bbl_file_streaming(
         if export_options.csv {
             match export_to_csv(&log, file_path, export_options) {
                 Ok(()) => {
-                    let base_name = file_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("blackbox");
-                    let output_dir = get_output_dir(export_options, file_path);
-                    let log_suffix = if log_positions.len() > 1 {
-                        format!(".{:02}", log.log_number)
-                    } else {
-                        "".to_string()
-                    };
+                    let (base_name, output_dir, log_suffix) = format_export_path(
+                        file_path,
+                        export_options,
+                        log_index,
+                        log_positions.len(),
+                    );
                     println!(
                         "Exported headers to: {}/{}{}.headers.csv",
                         output_dir, base_name, log_suffix
@@ -1125,16 +1143,12 @@ fn parse_bbl_file_streaming(
                 log.header.log_start_datetime.as_deref(),
             ) {
                 Ok(()) => {
-                    let base_name = file_path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-                    let output_dir = get_output_dir(export_options, file_path);
-                    let log_suffix = if log_positions.len() > 1 {
-                        format!(".{:02}", log_index + 1)
-                    } else {
-                        "".to_string()
-                    };
+                    let (base_name, output_dir, log_suffix) = format_export_path(
+                        file_path,
+                        export_options,
+                        log_index,
+                        log_positions.len(),
+                    );
                     println!(
                         "Exported GPS data to: {}/{}{}.gps.gpx",
                         output_dir, base_name, log_suffix
@@ -1163,16 +1177,12 @@ fn parse_bbl_file_streaming(
                 export_options,
             ) {
                 Ok(()) => {
-                    let base_name = file_path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-                    let output_dir = get_output_dir(export_options, file_path);
-                    let log_suffix = if log_positions.len() > 1 {
-                        format!(".{:02}", log_index + 1)
-                    } else {
-                        "".to_string()
-                    };
+                    let (base_name, output_dir, log_suffix) = format_export_path(
+                        file_path,
+                        export_options,
+                        log_index,
+                        log_positions.len(),
+                    );
                     println!(
                         "Exported event data to: {}/{}{}.event",
                         output_dir, base_name, log_suffix
@@ -1278,9 +1288,16 @@ mod tests {
         assert_eq!(options.output_dir.as_ref().unwrap(), "/tmp");
         assert!(options.csv);
         assert!(!options.gpx);
+        assert!(!options.event);
+        assert!(!options.force_export);
 
+        // Test default configuration (all false except output_dir which is None)
         let options = ExportOptions::default();
         assert!(options.output_dir.is_none());
+        assert!(!options.csv);
+        assert!(!options.gpx);
+        assert!(!options.event);
+        assert!(!options.force_export);
     }
 
     #[test]
