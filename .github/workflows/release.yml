@@ -97,41 +97,38 @@ jobs:
 
   determine-version:
     name: Extract Version Information
-    needs: build-release-assets
     runs-on: ubuntu-latest
     outputs:
       build_info: ${{ steps.extract.outputs.build_info }}
     steps:
-      - name: Download Linux binary artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bbl_parser-linux-x64
-          path: ./bin
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Extract version from binary
+      - name: Extract version from Cargo.toml and git
         id: extract
         run: |
           set -e
           
-          # Ensure execute permissions
-          chmod +x ./bin/bbl_parser
+          # Extract semver from Cargo.toml
+          SEMVER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
           
-          # Run version command and capture output/exit code
-          if BUILD_INFO=$(./bin/bbl_parser -V 2>&1); then
-            echo "Build version extracted: $BUILD_INFO"
-          else
-            echo "ERROR: Failed to extract version from binary (exit code: $?)" >&2
-            exit 1
-          fi
+          # Get git info from GitHub context
+          GIT_SHA="${{ github.sha }}"
+          GIT_SHA_SHORT="${GIT_SHA:0:7}"
           
-          # Write output with proper quoting to preserve special characters
+          # Format version string
+          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${{ github.event.release.created_at }})"
+          
+          echo "Extracted version: $BUILD_INFO"
+          
+          # Write output with proper quoting
           echo "build_info<<EOF" >> $GITHUB_OUTPUT
           echo "$BUILD_INFO" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
-    needs: [build-release-assets, determine-version]
+    needs: determine-version
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
