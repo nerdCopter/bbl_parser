@@ -125,21 +125,14 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Create release notes
-        id: release_notes
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           BUILD_INFO="${{ needs.determine-version.outputs.build_info }}"
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "**Build Information**: $BUILD_INFO" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "Binary downloads for this release:" >> $GITHUB_OUTPUT
-          echo "- Linux x64: \`bbl_parser-linux-x64\`" >> $GITHUB_OUTPUT
-          echo "- Windows x64: \`bbl_parser-windows-x64.exe\`" >> $GITHUB_OUTPUT
-          echo "- macOS x64: \`bbl_parser-macos-x64\`" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2.5.0
-        with:
-          files: release-artifacts/*/*
-          body: ${{ steps.release_notes.outputs.notes }}
+          
+          # Upload all artifacts for this release
+          gh release upload "${{ github.ref_name }}" release-artifacts/*/* \
+            --repo "$GH_REPO" \
+            --clobber

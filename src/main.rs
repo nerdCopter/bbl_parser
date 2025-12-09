@@ -310,9 +310,6 @@ fn build_command() -> Command {
 }
 
 fn main() -> Result<()> {
-    // Print version first - appears before any clap output (-V, --help, etc.)
-    println!("{} {}", env!("CARGO_PKG_NAME"), VERSION_STR);
-
     let matches = build_command().get_matches();
 
     let debug = matches.get_flag("debug");
