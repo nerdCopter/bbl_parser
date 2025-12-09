@@ -30,6 +30,9 @@ jobs:
             artifact_name: bbl_parser-macos-x64
             binary_path: target/release/bbl_parser
             asset_name: bbl_parser-macos-x64
+    
+    outputs:
+      build_info: ${{ steps.extract_build_info.outputs.build_info }}
 
     steps:
       - name: Checkout repository
@@ -58,10 +61,11 @@ jobs:
         run: cargo build --release
 
       - name: Extract build info from binary (Ubuntu only)
+        id: extract_build_info
         if: runner.os == 'Linux'
         run: |
           BUILD_INFO=$(${{ matrix.binary_path }} -V)
-          echo "BUILD_INFO=$BUILD_INFO" >> $GITHUB_ENV
+          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
           echo "Release: $BUILD_INFO"
 
       - name: Strip binary (Linux/macOS)
@@ -89,13 +93,51 @@ jobs:
         with:
           path: release-artifacts
 
+      - name: Build release binary for tag extraction
+        run: cargo build --release
+
+      - name: Extract build info and create tag
+        id: release_info
+        run: |
+          BUILD_INFO=$(./target/release/bbl_parser -V)
+          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
+          
+          # Extract short SHA and date from build info (format: "bbl_parser <sha> (<date>)")
+          TAG_NAME=$(echo "$BUILD_INFO" | awk '{print $2"-"$3}' | tr -d '()')
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+          echo "Release tag: $TAG_NAME"
+          echo "Build info: $BUILD_INFO"
+
+      - name: Create and push git tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag "${{ steps.release_info.outputs.tag_name }}" || true
+          git push origin "${{ steps.release_info.outputs.tag_name }}" 2>/dev/null || true
+
+      - name: Determine release name
+        id: release_name
+        run: |
+          if [ -z "${{ inputs.release_name }}" ]; then
+            RELEASE_NAME="Release ${{ steps.release_info.outputs.build_info }}"
+          else
+            RELEASE_NAME="${{ inputs.release_name }}"
+          fi
+          echo "name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "Release name: $RELEASE_NAME"
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2.5.0
         with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_name.outputs.name }}
           draft: false
           prerelease: false
           generate_release_notes: true
           files: release-artifacts/*/*
           body: |
+            **Version**: ${{ steps.release_info.outputs.build_info }}
+            
             Automated release created from build artifacts.
             Version information embedded at build time via vergen.
