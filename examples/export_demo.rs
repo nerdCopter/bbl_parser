@@ -108,6 +108,7 @@ fn main() -> Result<()> {
             &log.gps_coordinates,
             &log.home_coordinates,
             &export_opts,
+            log.header.log_start_datetime.as_deref(),
         )?;
         println!("✓ GPX export complete");
     } else {
