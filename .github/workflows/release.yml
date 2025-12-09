@@ -111,9 +111,23 @@ jobs:
       - name: Extract version from binary
         id: extract
         run: |
-          BUILD_INFO=$(./bin/bbl_parser -V)
-          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
-          echo "Build version: $BUILD_INFO"
+          set -e
+          
+          # Ensure execute permissions
+          chmod +x ./bin/bbl_parser
+          
+          # Run version command and capture output/exit code
+          if BUILD_INFO=$(./bin/bbl_parser -V 2>&1); then
+            echo "Build version extracted: $BUILD_INFO"
+          else
+            echo "ERROR: Failed to extract version from binary (exit code: $?)" >&2
+            exit 1
+          fi
+          
+          # Write output with proper quoting to preserve special characters
+          echo "build_info<<EOF" >> $GITHUB_OUTPUT
+          echo "$BUILD_INFO" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
