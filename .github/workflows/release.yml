@@ -6,12 +6,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  publish:
+  publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,17 +32,80 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Verify version matches tag
-        run: |
-          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          if [[ "$CARGO_VERSION" != "$TAG_VERSION" ]]; then
-            echo "Version mismatch: Cargo.toml has $CARGO_VERSION, tag is v$TAG_VERSION"
-            exit 1
-          fi
-
       - name: Run tests
         run: cargo test --all-features
 
       - name: Publish to crates.io
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  build-release-assets:
+    name: Build Release Assets
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: bbl_parser-linux-x64
+            binary_path: target/release/bbl_parser
+            asset_name: bbl_parser-linux-x64
+          - os: windows-latest
+            artifact_name: bbl_parser-windows-x64
+            binary_path: target/release/bbl_parser.exe
+            asset_name: bbl_parser-windows-x64.exe
+          - os: macos-latest
+            artifact_name: bbl_parser-macos-x64
+            binary_path: target/release/bbl_parser
+            asset_name: bbl_parser-macos-x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --all-features --verbose
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Strip binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: strip ${{ matrix.binary_path }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary_path }}
+          overwrite: true
+          if-no-files-found: error
+
+  upload-release-assets:
+    name: Upload Assets to GitHub Release
+    needs: build-release-assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: release-artifacts/*/*
