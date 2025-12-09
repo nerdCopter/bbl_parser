@@ -12,7 +12,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  build-and-release:
+  build:
     name: Build Release Binaries
     runs-on: ${{ matrix.os }}
     strategy:
@@ -82,7 +82,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: build-and-release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -93,17 +93,20 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Build release binary for tag extraction
-        run: cargo build --release
-
-      - name: Extract build info and create tag
+      - name: Extract build info and compute tag
         id: release_info
         run: |
-          BUILD_INFO=$(./target/release/bbl_parser -V)
+          BUILD_INFO="${{ needs.build.outputs.build_info }}"
           echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
           
-          # Extract short SHA and date from build info (format: "bbl_parser <sha> (<date>)")
-          TAG_NAME=$(echo "$BUILD_INFO" | awk '{print $2"-"$3}' | tr -d '()')
+          # Extract short SHA and date from build info
+          # Format: "bbl_parser <sha> (<date>)"
+          # Example: "bbl_parser 14be1ee (2025-12-04)"
+          SHORT_SHA=$(echo "$BUILD_INFO" | awk '{print $2}')
+          DATE=$(echo "$BUILD_INFO" | awk '{print $3}' | tr -d '()')
+          
+          # Tag format: date-shortsha for chronological sorting
+          TAG_NAME="$DATE-$SHORT_SHA"
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
           echo "Release tag: $TAG_NAME"
