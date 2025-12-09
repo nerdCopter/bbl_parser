@@ -97,9 +97,8 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Extract version from binary (Ubuntu only)
+      - name: Extract version from binary
         id: extract_version
-        if: runner.os == 'Linux'
         run: |
           BUILD_INFO=$(${{ matrix.binary_path }} -V)
           echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
