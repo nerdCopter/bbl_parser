@@ -99,9 +99,15 @@ jobs:
           BUILD_INFO="${{ needs.build.outputs.build_info }}"
           echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
           
-          # Extract short SHA and date from build info
-          # Format: "bbl_parser <sha> (<date>)"
+          # Validate BUILD_INFO format before parsing
+          # Expected format: "bbl_parser <sha> (<date>)"
           # Example: "bbl_parser 14be1ee (2025-12-04)"
+          if ! echo "$BUILD_INFO" | grep -qE '^bbl_parser [a-f0-9]+ \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$'; then
+            echo "ERROR: Unexpected BUILD_INFO format: $BUILD_INFO"
+            exit 1
+          fi
+          
+          # Extract short SHA and date from build info
           SHORT_SHA=$(echo "$BUILD_INFO" | awk '{print $2}')
           DATE=$(echo "$BUILD_INFO" | awk '{print $3}' | tr -d '()')
           
@@ -116,8 +122,19 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git tag "${{ steps.release_info.outputs.tag_name }}" || true
-          git push origin "${{ steps.release_info.outputs.tag_name }}" 2>/dev/null || true
+          TAG_NAME="${{ steps.release_info.outputs.tag_name }}"
+          
+          if git tag "$TAG_NAME"; then
+            echo "✅ Tag created: $TAG_NAME"
+          else
+            echo "ℹ️ Tag already exists: $TAG_NAME"
+          fi
+          
+          if git push origin "$TAG_NAME" 2>&1; then
+            echo "✅ Tag pushed successfully"
+          else
+            echo "⚠️ Tag push failed (may already exist in remote)"
+          fi
 
       - name: Determine release name
         id: release_name
