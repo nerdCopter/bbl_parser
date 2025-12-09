@@ -56,9 +56,6 @@ jobs:
             artifact_name: bbl_parser-macos-x64
             binary_path: target/release/bbl_parser
             asset_name: bbl_parser-macos-x64
-    
-    outputs:
-      build_info: ${{ steps.extract_version.outputs.build_info }}
 
     steps:
       - name: Checkout repository
@@ -86,13 +83,6 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Extract version from binary
-        id: extract_version
-        run: |
-          BUILD_INFO=$(${{ matrix.binary_path }} -V)
-          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
-          echo "Build version: $BUILD_INFO"
-
       - name: Strip binary (Linux/macOS)
         if: runner.os != 'Windows'
         run: strip ${{ matrix.binary_path }}
@@ -105,9 +95,29 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
+  determine-version:
+    name: Extract Version Information
+    needs: build-release-assets
+    runs-on: ubuntu-latest
+    outputs:
+      build_info: ${{ steps.extract.outputs.build_info }}
+    steps:
+      - name: Download Linux binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bbl_parser-linux-x64
+          path: ./bin
+
+      - name: Extract version from binary
+        id: extract
+        run: |
+          BUILD_INFO=$(./bin/bbl_parser -V)
+          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
+          echo "Build version: $BUILD_INFO"
+
   upload-release-assets:
     name: Upload Assets to GitHub Release
-    needs: build-release-assets
+    needs: [build-release-assets, determine-version]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -118,7 +128,7 @@ jobs:
       - name: Create release notes
         id: release_notes
         run: |
-          BUILD_INFO="${{ needs.build-release-assets.outputs.build_info }}"
+          BUILD_INFO="${{ needs.determine-version.outputs.build_info }}"
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "**Build Information**: $BUILD_INFO" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
