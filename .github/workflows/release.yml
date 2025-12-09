@@ -150,3 +150,8 @@ jobs:
           gh release upload "${{ github.ref_name }}" release-artifacts/*/* \
             --repo "$GH_REPO" \
             --clobber
+          
+          # Update release notes with build information
+          gh release edit "${{ github.ref_name }}" \
+            --notes "**Build Information:** $BUILD_INFO" \
+            --repo "$GH_REPO"
