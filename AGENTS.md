@@ -49,6 +49,24 @@
 ## Data Validation
 - **REQUIRED:**  The CSV output must precisely match the format and header order of blackbox_decode CSV files.
 
+## GitHub Actions & Workflow Design
+- **Native Tooling First:** Prefer native GitHub Actions features, `git` CLI, and `gh` (GitHub CLI) over third-party actions or custom scripting.
+  - Use `gh run list`, `gh run download`, `gh release upload`, `gh release edit` for automation
+  - Leverage GitHub Actions built-in context (`github.sha`, `github.ref_name`, `github.token`) instead of external tooling
+  - Built-in authentication via `GITHUB_TOKEN` eliminates need for additional secrets
+- **Artifact Reuse:** Design workflows to reuse artifacts across jobs:
+  - Build once in ci.yml (triggered on push/tags)
+  - Download and reuse in release.yml or other downstream workflows
+  - Reduces CI costs and accelerates release cycles (~8-10x faster)
+- **Error Handling:** Workflows should validate dependencies before proceeding:
+  - Verify upstream jobs succeeded (e.g., ci.yml completed before release.yml downloads)
+  - Provide clear error messages if expected artifacts unavailable
+  - Use `set -e` in shell scripts to fail fast on errors
+- **Dependency Management:** Use explicit `needs:` clauses for job ordering:
+  - Clear workflow visualization in GitHub Actions UI
+  - Prevents race conditions and dependency issues
+  - Makes workflow intent unambiguous
+
 ## Committing Rules
 - **Commit Conditions:** Only commit if:
   - `cargo clippy --all-targets --all-features -- -D warnings` passes.
