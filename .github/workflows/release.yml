@@ -21,96 +21,61 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run tests
-        run: |
-          cargo test --all-features
-          echo "✅ All tests passed"
-
       - name: Publish to crates.io
         run: |
           cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
           echo "✅ Successfully published to crates.io"
 
-  build-release-assets:
-    name: Build Release Assets
-    runs-on: ${{ matrix.os }}
+  download-ci-artifacts:
+    name: Download CI Build Artifacts
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: bbl_parser-linux-x64
-            binary_path: target/release/bbl_parser
-            asset_name: bbl_parser-linux-x64
-          - os: windows-latest
-            artifact_name: bbl_parser-windows-x64
-            binary_path: target/release/bbl_parser.exe
-            asset_name: bbl_parser-windows-x64.exe
-          - os: macos-latest
-            artifact_name: bbl_parser-macos-x64
-            binary_path: target/release/bbl_parser
-            asset_name: bbl_parser-macos-x64
-
+        artifact_name:
+          - bbl_parser-linux-x64
+          - bbl_parser-windows-x64
+          - bbl_parser-macos-x64
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run tests
+      - name: Download artifact from CI workflow using GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          cargo test --all-features --verbose
-          echo "✅ Tests passed on ${{ matrix.os }}"
+          # Find the most recent successful ci.yml run for this commit
+          RUN_ID=$(gh run list \
+            --workflow=ci.yml \
+            --commit=${{ github.sha }} \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          
+          if [ -z "$RUN_ID" ]; then
+            echo "❌ No successful ci.yml run found for commit ${{ github.sha }}"
+            echo "Make sure ci.yml completed successfully before publishing release"
+            exit 1
+          fi
+          
+          echo "📦 Downloading ${{ matrix.artifact_name }} from run ID: $RUN_ID"
+          
+          # Download the artifact
+          gh run download "$RUN_ID" \
+            --name "${{ matrix.artifact_name }}" \
+            --dir ./artifacts/${{ matrix.artifact_name }}
+          
+          echo "✅ Successfully downloaded ${{ matrix.artifact_name }}"
 
-      - name: Build release binary
-        run: |
-          cargo build --release
-          echo "✅ Built ${{ matrix.asset_name }}"
-
-      - name: Strip binary (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          strip ${{ matrix.binary_path }}
-          echo "✅ Binary stripped"
-
-      - name: Upload binary artifact
+      - name: Re-upload artifact for release workflow
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_path }}
+          path: ./artifacts/${{ matrix.artifact_name }}/*
           overwrite: true
           if-no-files-found: error
 
-      - name: Confirm artifact uploaded
-        run: echo "✅ ${{ matrix.asset_name }} artifact uploaded"
-
   determine-version:
     name: Extract Version Information
-    needs: build-release-assets
+    needs: download-ci-artifacts
     runs-on: ubuntu-latest
     outputs:
       build_info: ${{ steps.extract.outputs.build_info }}
@@ -168,7 +133,7 @@ jobs:
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
-    needs: [build-release-assets, determine-version]
+    needs: [download-ci-artifacts, determine-version]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

@@ -3,6 +3,8 @@ name: Build and Test
 on:
   push:
     branches: [main, master]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, master]
 
@@ -88,13 +90,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: bbl_parser-linux
+            artifact_name: bbl_parser-linux-x64
             binary_path: target/release/bbl_parser
           - os: windows-latest
-            artifact_name: bbl_parser-windows
+            artifact_name: bbl_parser-windows-x64
             binary_path: target/release/bbl_parser.exe
           - os: macos-latest
-            artifact_name: bbl_parser-macos
+            artifact_name: bbl_parser-macos-x64
             binary_path: target/release/bbl_parser
 
     steps:
