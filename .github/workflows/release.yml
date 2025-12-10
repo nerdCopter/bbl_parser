@@ -33,10 +33,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --all-features
+        run: |
+          cargo test --all-features
+          echo "✅ All tests passed"
 
       - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          echo "✅ Successfully published to crates.io"
 
   build-release-assets:
     name: Build Release Assets
@@ -78,14 +82,20 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --all-features --verbose
+        run: |
+          cargo test --all-features --verbose
+          echo "✅ Tests passed on ${{ matrix.os }}"
 
       - name: Build release binary
-        run: cargo build --release
+        run: |
+          cargo build --release
+          echo "✅ Built ${{ matrix.asset_name }}"
 
       - name: Strip binary (Linux/macOS)
         if: runner.os != 'Windows'
-        run: strip ${{ matrix.binary_path }}
+        run: |
+          strip ${{ matrix.binary_path }}
+          echo "✅ Binary stripped"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -94,6 +104,9 @@ jobs:
           path: ${{ matrix.binary_path }}
           overwrite: true
           if-no-files-found: error
+
+      - name: Confirm artifact uploaded
+        run: echo "✅ ${{ matrix.asset_name }} artifact uploaded"
 
   determine-version:
     name: Extract Version Information
@@ -122,12 +135,47 @@ jobs:
           # Format version string to match binary output
           BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${GIT_COMMIT_DATE})"
           
-          echo "Extracted version: $BUILD_INFO"
+          echo "✅ Extracted version: $BUILD_INFO"
           
           # Write output with proper quoting
           echo "build_info<<EOF" >> $GITHUB_OUTPUT
           echo "$BUILD_INFO" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build binary for version validation
+        run: cargo build --release
+
+      - name: Verify version consistency
+        env:
+          EXPECTED: ${{ steps.extract.outputs.build_info }}
+        run: |
+          set -e
+          
+          BINARY_VERSION=$(./target/release/bbl_parser -V)
+          if [ "$BINARY_VERSION" = "$EXPECTED" ]; then
+            echo "✅ Version match confirmed: binary='$BINARY_VERSION'"
+          else
+            echo "❌ Version mismatch detected:"
+            echo "   Binary output:  '$BINARY_VERSION'"
+            echo "   Expected:       '$EXPECTED'"
+            exit 1
+          fi
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
@@ -155,3 +203,6 @@ jobs:
           gh release edit "${{ github.ref_name }}" \
             --notes "**Build Information:** $BUILD_INFO" \
             --repo "$GH_REPO"
+          echo "✅ Release notes updated with build information"
+          echo ""
+          echo "🎉 Release complete! Version $BUILD_INFO is now live."
