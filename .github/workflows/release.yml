@@ -116,8 +116,11 @@ jobs:
           GIT_SHA="${{ github.sha }}"
           GIT_SHA_SHORT="${GIT_SHA:0:7}"
           
-          # Format version string
-          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${{ github.event.release.created_at }})"
+          # Get git commit date from repository (matches VERGEN_GIT_COMMIT_DATE in binary)
+          GIT_COMMIT_DATE=$(git log -1 --format=%ci "${{ github.sha }}" | cut -d' ' -f1)
+          
+          # Format version string to match binary output
+          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${GIT_COMMIT_DATE})"
           
           echo "Extracted version: $BUILD_INFO"
           
@@ -128,7 +131,7 @@ jobs:
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
-    needs: determine-version
+    needs: [build-release-assets, determine-version]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
