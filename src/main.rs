@@ -329,6 +329,9 @@ fn main() -> Result<()> {
         }
     };
 
+    // Print version at start of normal execution (only when processing files)
+    println!("{} {}", env!("CARGO_PKG_NAME"), VERSION_STR);
+
     let export_options = ExportOptions {
         csv: true, // CSV export is always enabled for the CLI binary
         gpx: export_gpx,
