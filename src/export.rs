@@ -348,9 +348,13 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 /// * `log_index` - Index of the current log (0-based)
 /// * `total_logs` - Total number of logs in the file
 /// * `gps_coordinates` - GPS coordinate data to export
-/// * `_home_coordinates` - Home coordinates (reserved for future use)
+/// * `home_coordinates` - Home coordinates from H frames (used for home waypoint marker)
 /// * `export_options` - Export configuration options
 /// * `log_start_datetime` - Optional log start datetime from header for accurate timestamps
+///
+/// # Features
+/// When home coordinates are available, adds a home position waypoint to the GPX file.
+/// This provides a visual reference point in GPS mapping tools.
 ///
 /// # Performance Notes
 /// For very large GPS traces, the `log_start_datetime` is parsed via `generate_gpx_timestamp()`
@@ -361,7 +365,7 @@ pub fn export_to_gpx(
     log_index: usize,
     total_logs: usize,
     gps_coordinates: &[GpsCoordinate],
-    _home_coordinates: &[GpsHomeCoordinate],
+    home_coordinates: &[GpsHomeCoordinate],
     export_options: &ExportOptions,
     log_start_datetime: Option<&str>,
 ) -> Result<()> {
@@ -390,6 +394,20 @@ pub fn export_to_gpx(
         gpx_file,
         "<metadata><name>Blackbox flight log</name></metadata>"
     )?;
+
+    // Add home position waypoint if available
+    if let Some(home) = home_coordinates.first() {
+        writeln!(
+            gpx_file,
+            r#"  <wpt lat="{:.7}" lon="{:.7}""#,
+            home.home_latitude, home.home_longitude
+        )?;
+        writeln!(gpx_file, r#"    <name>Home</name>"#)?;
+        writeln!(gpx_file, r#"    <sym>Flag</sym>"#)?;
+        writeln!(gpx_file, r#"    <desc>Home Position</desc>"#)?;
+        writeln!(gpx_file, r#"  </wpt>"#)?;
+    }
+
     writeln!(gpx_file, "<trk><name>Blackbox flight log</name><trkseg>")?;
 
     for coord in gps_coordinates {
