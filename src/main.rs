@@ -262,8 +262,15 @@ fn build_command() -> Command {
         "Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).";
 
     Command::new(env!("CARGO_PKG_NAME"))
-        .version(VERSION_STR)
         .about(about_text)
+        .arg(
+            Arg::new("version")
+                .short('V')
+                .long("version")
+                .help("Print version")
+                .action(clap::ArgAction::SetTrue)
+                .exclusive(true),
+        )
         .arg(
             Arg::new("files")
                 .help("BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.")
@@ -310,7 +317,16 @@ fn build_command() -> Command {
 }
 
 fn main() -> Result<()> {
+    // Print version at start of every execution context
+    println!("{} {}", env!("CARGO_PKG_NAME"), VERSION_STR);
+    println!();
+
     let matches = build_command().get_matches();
+
+    // Exit if only --version/-V requested
+    if matches.get_flag("version") {
+        return Ok(());
+    }
 
     let debug = matches.get_flag("debug");
     let export_gpx = matches.get_flag("gpx") || matches.get_flag("gps");
