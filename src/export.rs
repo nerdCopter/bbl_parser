@@ -399,7 +399,7 @@ pub fn export_to_gpx(
     if let Some(home) = home_coordinates.first() {
         writeln!(
             gpx_file,
-            r#"  <wpt lat="{:.7}" lon="{:.7}""#,
+            r#"  <wpt lat="{:.7}" lon="{:.7}">"#,
             home.home_latitude, home.home_longitude
         )?;
         writeln!(gpx_file, r#"    <name>Home</name>"#)?;
