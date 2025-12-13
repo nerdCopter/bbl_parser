@@ -6,12 +6,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  publish:
+  publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,28 +21,142 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Verify version matches tag
+      - name: Publish to crates.io
         run: |
-          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          if [[ "$CARGO_VERSION" != "$TAG_VERSION" ]]; then
-            echo "Version mismatch: Cargo.toml has $CARGO_VERSION, tag is v$TAG_VERSION"
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          echo "✅ Successfully published to crates.io"
+
+  download-ci-artifacts:
+    name: Download CI Build Artifacts
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        artifact_name:
+          - bbl_parser-linux-x64
+          - bbl_parser-windows-x64
+          - bbl_parser-macos-x64
+    steps:
+      - name: Download artifact from CI workflow using GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Find the most recent successful ci.yml run for this commit
+          RUN_ID=$(gh run list \
+            --workflow=ci.yml \
+            --commit=${{ github.sha }} \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          
+          if [ -z "$RUN_ID" ]; then
+            echo "❌ No successful ci.yml run found for commit ${{ github.sha }}"
+            echo "Make sure ci.yml completed successfully before publishing release"
+            exit 1
+          fi
+          
+          echo "📦 Downloading ${{ matrix.artifact_name }} from run ID: $RUN_ID"
+          
+          # Download the artifact
+          gh run download "$RUN_ID" \
+            --name "${{ matrix.artifact_name }}" \
+            --dir ./artifacts/${{ matrix.artifact_name }}
+          
+          echo "✅ Successfully downloaded ${{ matrix.artifact_name }}"
+
+      - name: Re-upload artifact for release workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ./artifacts/${{ matrix.artifact_name }}/*
+          overwrite: true
+          if-no-files-found: error
+
+  determine-version:
+    name: Extract Version Information
+    needs: download-ci-artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      build_info: ${{ steps.extract.outputs.build_info }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from Cargo.toml and git
+        id: extract
+        run: |
+          set -e
+          
+          # Extract semver from Cargo.toml
+          SEMVER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          
+          # Get git info from GitHub context
+          GIT_SHA="${{ github.sha }}"
+          GIT_SHA_SHORT="${GIT_SHA:0:7}"
+          
+          # Get git commit date from repository (matches VERGEN_GIT_COMMIT_DATE in binary)
+          GIT_COMMIT_DATE=$(git log -1 --format=%ci "${{ github.sha }}" | cut -d' ' -f1)
+          
+          # Format version string to match binary output
+          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${GIT_COMMIT_DATE})"
+          
+          echo "✅ Extracted version: $BUILD_INFO"
+          
+          # Write output with proper quoting
+          echo "build_info<<EOF" >> $GITHUB_OUTPUT
+          echo "$BUILD_INFO" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download Linux binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bbl_parser-linux-x64
+          path: ./binary-check
+
+      - name: Verify version consistency
+        env:
+          EXPECTED: ${{ steps.extract.outputs.build_info }}
+        run: |
+          set -e
+          
+          chmod +x ./binary-check/bbl_parser
+          BINARY_VERSION=$(./binary-check/bbl_parser -V)
+          if [ "$BINARY_VERSION" = "$EXPECTED" ]; then
+            echo "✅ Version match confirmed: binary='$BINARY_VERSION'"
+          else
+            echo "❌ Version mismatch detected:"
+            echo "   Binary output:  '$BINARY_VERSION'"
+            echo "   Expected:       '$EXPECTED'"
             exit 1
           fi
 
-      - name: Run tests
-        run: cargo test --all-features
+  upload-release-assets:
+    name: Upload Assets to GitHub Release
+    needs: [download-ci-artifacts, determine-version]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
 
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          BUILD_INFO="${{ needs.determine-version.outputs.build_info }}"
+          
+          # Upload all artifacts for this release
+          gh release upload "${{ github.ref_name }}" release-artifacts/*/* \
+            --repo "$GH_REPO" \
+            --clobber
+          
+          # Update release notes with build information
+          gh release edit "${{ github.ref_name }}" \
+            --notes "**Build Information:** $BUILD_INFO" \
+            --repo "$GH_REPO"
+          echo "✅ Release notes updated with build information"
+          echo ""
+          echo "🎉 Release complete! Version $BUILD_INFO is now live."

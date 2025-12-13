@@ -49,6 +49,12 @@
 ## Data Validation
 - **REQUIRED:**  The CSV output must precisely match the format and header order of blackbox_decode CSV files.
 
+## GitHub Actions & Workflow Design
+- **Prefer native tooling:** Use GitHub Actions features, `git` CLI, `gh` CLI (not third-party actions).
+- **Reuse artifacts:** Build once (ci.yml), download in downstream jobs (release.yml) — ~8-10x faster, lower costs.
+- **Explicit dependencies:** Use `needs:` clauses for job ordering; validate upstream success before proceeding.
+- **Error handling:** Validate artifacts exist; use `set -e` in scripts; provide clear error messages.
+
 ## Committing Rules
 - **Commit Conditions:** Only commit if:
   - `cargo clippy --all-targets --all-features -- -D warnings` passes.

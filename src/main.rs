@@ -26,12 +26,11 @@ use bbl_parser::types::{BBLHeader, DecodedFrame, FrameDefinition, FrameStats};
 // Import ExportOptions from crate library
 use bbl_parser::ExportOptions;
 
-// Include vergen generated environment variables
-const GIT_SHA: &str = env!("VERGEN_GIT_SHA", "unknown");
-const GIT_COMMIT_DATE: &str = env!("VERGEN_GIT_COMMIT_DATE", "unknown");
-
-// Build version string from git info
+// Build version string with semver + git info
+// Format: "0.9.0 14be1ee (2025-12-04)"
 const VERSION_STR: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " ",
     env!("VERGEN_GIT_SHA", "unknown"),
     " (",
     env!("VERGEN_GIT_COMMIT_DATE", "unknown"),
@@ -259,10 +258,8 @@ fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool
 }
 
 fn build_command() -> Command {
-    let about_text = format!(
-        "\n\nRead and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).\n  {} {} ({})",
-        env!("CARGO_PKG_NAME"), GIT_SHA, GIT_COMMIT_DATE
-    );
+    let about_text =
+        "Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).";
 
     Command::new(env!("CARGO_PKG_NAME"))
         .version(VERSION_STR)
