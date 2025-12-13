@@ -472,3 +472,379 @@ pub fn export_to_event(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use tempfile::TempDir;
+
+    /// Test helper to create a minimal GPX export and read back the content
+    fn export_gpx_and_read(
+        gps_coords: &[GpsCoordinate],
+        home_coords: &[GpsHomeCoordinate],
+    ) -> Result<String> {
+        let temp_dir = TempDir::new()?;
+        let temp_input_path = temp_dir.path().join("test_input.bbl");
+
+        let export_opts = ExportOptions {
+            csv: false,
+            gpx: true,
+            event: false,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            force_export: false,
+        };
+
+        export_to_gpx(
+            &temp_input_path,
+            0,
+            1,
+            gps_coords,
+            home_coords,
+            &export_opts,
+            None,
+        )?;
+
+        // Read back the generated GPX file
+        let gpx_path = temp_dir.path().join("test_input.gps.gpx");
+        let mut gpx_content = String::new();
+        let mut gpx_file = File::open(&gpx_path)?;
+        gpx_file.read_to_string(&mut gpx_content)?;
+
+        Ok(gpx_content)
+    }
+
+    #[test]
+    fn test_gpx_home_waypoint_with_coordinates() -> Result<()> {
+        let home_coords = vec![GpsHomeCoordinate {
+            home_latitude: 40.7128,
+            home_longitude: -74.0060,
+            timestamp_us: 0,
+        }];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: 40.7129,
+            longitude: -74.0061,
+            altitude: 100.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(10),
+            speed: Some(5.0),
+            ground_course: Some(180.0),
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify home waypoint element exists
+        assert!(
+            content.contains(r#"<wpt lat="40.7128000" lon="-74.0060000">"#),
+            "Home waypoint coordinates should be formatted to 7 decimal places"
+        );
+
+        // Verify home waypoint has correct structure
+        assert!(
+            content.contains("<name>Home</name>"),
+            "Home waypoint should have <name>Home</name>"
+        );
+        assert!(
+            content.contains("<sym>Flag</sym>"),
+            "Home waypoint should have <sym>Flag</sym>"
+        );
+        assert!(
+            content.contains("<desc>Home Position</desc>"),
+            "Home waypoint should have <desc>Home Position</desc>"
+        );
+
+        // Verify closing tag
+        assert!(
+            content.contains("</wpt>"),
+            "Home waypoint should have closing tag"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_home_waypoint_precision() -> Result<()> {
+        let home_coords = vec![GpsHomeCoordinate {
+            home_latitude: 51.5074123456789,
+            home_longitude: -0.1278123456789,
+            timestamp_us: 0,
+        }];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: 51.5075,
+            longitude: -0.1280,
+            altitude: 50.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(5),
+            speed: None,
+            ground_course: None,
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify coordinates are truncated/rounded to 7 decimal places
+        assert!(
+            content.contains(r#"lat="51.5074123""#),
+            "Latitude should be formatted to 7 decimal places (truncated)"
+        );
+        assert!(
+            content.contains(r#"lon="-0.1278123""#),
+            "Longitude should be formatted to 7 decimal places (truncated)"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_no_home_waypoint_when_empty() -> Result<()> {
+        let home_coords = vec![];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: 40.7129,
+            longitude: -74.0061,
+            altitude: 100.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(10),
+            speed: Some(5.0),
+            ground_course: Some(180.0),
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify no home waypoint appears when home_coordinates is empty
+        assert!(
+            !content.contains("<name>Home</name>"),
+            "No home waypoint should be present when home_coordinates is empty"
+        );
+        assert!(
+            !content.contains("<wpt"),
+            "No waypoint element should be present when home_coordinates is empty"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_home_waypoint_xml_structure() -> Result<()> {
+        let home_coords = vec![GpsHomeCoordinate {
+            home_latitude: 35.6762,
+            home_longitude: 139.6503,
+            timestamp_us: 0,
+        }];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: 35.6763,
+            longitude: 139.6504,
+            altitude: 25.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(8),
+            speed: Some(2.0),
+            ground_course: Some(45.0),
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify basic GPX structure
+        assert!(
+            content.contains(r#"<?xml version="1.0" encoding="UTF-8"?>"#),
+            "XML declaration should be present"
+        );
+        assert!(
+            content.contains("version=\"1.1\""),
+            "GPX version should be 1.1"
+        );
+        assert!(
+            content.contains("xmlns=\"http://www.topografix.com/GPX/1/1\""),
+            "GPX namespace should be present"
+        );
+
+        // Verify home waypoint appears before track element
+        let wpt_index = content.find("<wpt").expect("Should have <wpt element");
+        let trk_index = content.find("<trk").expect("Should have <trk element");
+        assert!(
+            wpt_index < trk_index,
+            "Home waypoint should appear before track element in GPX file"
+        );
+
+        // Verify proper nesting and indentation
+        assert!(
+            content.contains("  <wpt"),
+            "Home waypoint should be properly indented"
+        );
+        assert!(
+            content.contains("    <name>Home</name>"),
+            "Home waypoint child elements should be properly indented"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_home_waypoint_with_negative_coordinates() -> Result<()> {
+        let home_coords = vec![GpsHomeCoordinate {
+            home_latitude: -33.8688,
+            home_longitude: 151.2093,
+            timestamp_us: 0,
+        }];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: -33.8689,
+            longitude: 151.2094,
+            altitude: 150.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(12),
+            speed: Some(10.0),
+            ground_course: Some(270.0),
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify negative coordinates are correctly formatted
+        assert!(
+            content.contains(r#"lat="-33.8688000""#),
+            "Negative latitude should be correctly formatted"
+        );
+        assert!(
+            content.contains(r#"lon="151.2093000""#),
+            "Positive longitude should be correctly formatted"
+        );
+
+        // Verify structure is still correct with negative values
+        assert!(
+            content.contains("<name>Home</name>"),
+            "Structure should be correct"
+        );
+        assert!(content.contains("</wpt>"), "Closing tag should be present");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_only_first_home_coordinate_used() -> Result<()> {
+        let home_coords = vec![
+            GpsHomeCoordinate {
+                home_latitude: 40.7128,
+                home_longitude: -74.0060,
+                timestamp_us: 0,
+            },
+            GpsHomeCoordinate {
+                home_latitude: 51.5074,
+                home_longitude: -0.1278,
+                timestamp_us: 1_000_000,
+            },
+        ];
+
+        let gps_coords = vec![GpsCoordinate {
+            latitude: 40.7129,
+            longitude: -74.0061,
+            altitude: 100.0,
+            timestamp_us: 1_000_000,
+            num_sats: Some(10),
+            speed: Some(5.0),
+            ground_course: Some(180.0),
+        }];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify only first coordinate is used
+        assert!(
+            content.contains(r#"lat="40.7128000""#),
+            "First home coordinate should be used"
+        );
+        // Count occurrences of <wpt to ensure only one home waypoint
+        let wpt_count = content.matches("<wpt").count();
+        assert_eq!(
+            wpt_count, 1,
+            "Only one home waypoint should be present when multiple home_coordinates exist"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_empty_gps_coordinates_returns_ok() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let temp_input_path = temp_dir.path().join("test_input.bbl");
+
+        let export_opts = ExportOptions {
+            csv: false,
+            gpx: true,
+            event: false,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            force_export: false,
+        };
+
+        let home_coords = vec![GpsHomeCoordinate {
+            home_latitude: 40.7128,
+            home_longitude: -74.0060,
+            timestamp_us: 0,
+        }];
+
+        // Should return Ok even with empty GPS coordinates
+        let result = export_to_gpx(
+            &temp_input_path,
+            0,
+            1,
+            &[],
+            &home_coords,
+            &export_opts,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "Export should succeed with empty GPS coordinates"
+        );
+
+        // Verify no GPX file is created when GPS coordinates are empty
+        let gpx_path = temp_dir.path().join("test_input.gps.gpx");
+        assert!(
+            !gpx_path.exists(),
+            "No GPX file should be created when GPS coordinates are empty"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gpx_trackpoints_skip_low_satellite_count() -> Result<()> {
+        let home_coords = vec![];
+
+        let gps_coords = vec![
+            GpsCoordinate {
+                latitude: 40.7129,
+                longitude: -74.0061,
+                altitude: 100.0,
+                timestamp_us: 1_000_000,
+                num_sats: Some(3), // Below minimum of 5
+                speed: Some(5.0),
+                ground_course: Some(180.0),
+            },
+            GpsCoordinate {
+                latitude: 40.7130,
+                longitude: -74.0062,
+                altitude: 105.0,
+                timestamp_us: 2_000_000,
+                num_sats: Some(10), // Valid
+                speed: Some(5.0),
+                ground_course: Some(180.0),
+            },
+        ];
+
+        let content = export_gpx_and_read(&gps_coords, &home_coords)?;
+
+        // Verify that the trackpoint with low satellite count is not in output
+        assert!(
+            !content.contains("40.7129"),
+            "Trackpoint with low satellite count should be excluded"
+        );
+
+        // Verify that the valid trackpoint is in output
+        assert!(
+            content.contains("40.7130"),
+            "Trackpoint with sufficient satellites should be included"
+        );
+
+        Ok(())
+    }
+}
