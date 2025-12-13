@@ -369,23 +369,18 @@ pub fn export_to_gpx(
         return Ok(());
     }
 
-    let base_name = extract_base_name(input_path);
+    // Use compute_export_paths to ensure consistent naming with CSV exports
+    let (_, _, gpx_path, _) =
+        compute_export_paths(input_path, export_options, log_index + 1, total_logs);
 
-    let output_dir = export_options
-        .output_dir
-        .as_deref()
-        .map(Path::new)
-        .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
+    // Create output directory if it doesn't exist (match export_to_csv behavior)
+    if let Some(parent) = gpx_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
 
-    // Use consistent naming: only add suffix for multiple logs
-    let log_suffix = if total_logs > 1 {
-        format!(".{:02}", log_index + 1)
-    } else {
-        "".to_string()
-    };
-    let gpx_filename = output_dir.join(format!("{}{}.gps.gpx", base_name, log_suffix));
-
-    let mut gpx_file = File::create(&gpx_filename)?;
+    let mut gpx_file = File::create(&gpx_path)?;
     writeln!(gpx_file, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
     writeln!(
         gpx_file,
@@ -434,23 +429,18 @@ pub fn export_to_event(
         return Ok(());
     }
 
-    let base_name = extract_base_name(input_path);
+    // Use compute_export_paths to ensure consistent naming with CSV exports
+    let (_, _, _, event_path) =
+        compute_export_paths(input_path, export_options, log_index + 1, total_logs);
 
-    let output_dir = export_options
-        .output_dir
-        .as_deref()
-        .map(Path::new)
-        .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
+    // Create output directory if it doesn't exist (match export_to_csv behavior)
+    if let Some(parent) = event_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
 
-    // Use consistent naming: only add suffix for multiple logs
-    let log_suffix = if total_logs > 1 {
-        format!(".{:02}", log_index + 1)
-    } else {
-        "".to_string()
-    };
-    let event_filename = output_dir.join(format!("{}{}.event", base_name, log_suffix));
-
-    let mut event_file = File::create(&event_filename)?;
+    let mut event_file = File::create(&event_path)?;
 
     // Export as JSONL format (individual JSON objects per line) to match blackbox_decode
     for event in event_frames.iter() {
