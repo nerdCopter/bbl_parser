@@ -377,6 +377,11 @@ pub fn export_to_gpx(
         .map(Path::new)
         .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
 
+    // Create output directory if it doesn't exist (match export_to_csv behavior)
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir)?;
+    }
+
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
         format!(".{:02}", log_index + 1)
@@ -441,6 +446,11 @@ pub fn export_to_event(
         .as_deref()
         .map(Path::new)
         .unwrap_or_else(|| input_path.parent().unwrap_or(Path::new(".")));
+
+    // Create output directory if it doesn't exist (match export_to_csv behavior)
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir)?;
+    }
 
     // Use consistent naming: only add suffix for multiple logs
     let log_suffix = if total_logs > 1 {
