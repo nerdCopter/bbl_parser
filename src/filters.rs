@@ -33,11 +33,8 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
     const FALLBACK_MIN_FRAMES: u32 = 7_500; // ~5 seconds at 1500 fps (fallback when no duration)
 
     // Check if we have duration information
-    if log.stats.start_time_us > 0 && log.stats.end_time_us > log.stats.start_time_us {
-        let duration_us = log
-            .stats
-            .end_time_us
-            .saturating_sub(log.stats.start_time_us);
+    let duration_us = log.duration_us();
+    if duration_us > 0 {
         // Use floating-point duration to avoid precision loss and division by zero
         let duration_s = duration_us as f64 / 1_000_000.0;
 
@@ -168,7 +165,8 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Use the maximum variance across all axes
     let max_variance = variance_x.max(variance_y).max(variance_z);
 
-    // Very conservative: only skip if ALL axes show extremely low variance
+    // Very conservative: only skip if the highest variance across all axes is extremely low
+    // This means the aircraft was essentially stationary (ground test)
     let is_minimal = max_variance < VERY_LOW_GYRO_VARIANCE_THRESHOLD;
 
     (is_minimal, max_variance)
@@ -190,4 +188,117 @@ pub fn calculate_variance(values: &[f64]) -> f64 {
     let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
 
     variance
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{BBLLog, FrameStats};
+
+    fn create_test_log(start_time_us: u64, end_time_us: u64, total_frames: u32) -> BBLLog {
+        BBLLog {
+            log_number: 1,
+            total_logs: 1,
+            header: Default::default(),
+            stats: FrameStats {
+                start_time_us,
+                end_time_us,
+                total_frames,
+                ..Default::default()
+            },
+            frames: vec![],
+            debug_frames: None,
+            gps_coordinates: vec![],
+            home_coordinates: vec![],
+            event_frames: vec![],
+        }
+    }
+
+    #[test]
+    fn test_should_skip_very_short_flight() {
+        // Less than 5 seconds should always skip
+        let log = create_test_log(0, 3_000_000, 4500); // 3 seconds at 1500fps
+        let (should_skip, reason) = should_skip_export(&log, false);
+        assert!(should_skip, "Expected to skip flight shorter than 5s");
+        assert!(reason.contains("too short"), "Expected 'too short' reason");
+    }
+
+    #[test]
+    fn test_should_keep_five_seconds_with_good_density() {
+        // 5 seconds at 1500fps should keep
+        let log = create_test_log(0, 5_000_000, 7500); // 5 seconds at 1500fps
+        let (should_skip, _) = should_skip_export(&log, false);
+        assert!(
+            !should_skip,
+            "Expected to keep 5s flight with 1500fps density"
+        );
+    }
+
+    #[test]
+    fn test_should_skip_short_flight_low_density() {
+        // 10 seconds but only 1000fps should skip
+        let log = create_test_log(0, 10_000_000, 10_000); // 10 seconds at 1000fps
+        let (should_skip, reason) = should_skip_export(&log, false);
+        assert!(
+            should_skip,
+            "Expected to skip 10s flight with only 1000fps density"
+        );
+        assert!(
+            reason.contains("insufficient data density"),
+            "Expected 'insufficient data density' reason"
+        );
+    }
+
+    #[test]
+    fn test_force_export_overrides_skip() {
+        // Even very short flight should not skip if force_export is true
+        let log = create_test_log(0, 2_000_000, 3000); // 2 seconds
+        let (should_skip, _) = should_skip_export(&log, true);
+        assert!(!should_skip, "Expected force_export to prevent skip");
+    }
+
+    #[test]
+    fn test_fallback_to_frame_count() {
+        // No duration info, but sufficient frame count should keep
+        let log = create_test_log(0, 0, 8000); // 8000 frames, no duration
+        let (should_skip, _) = should_skip_export(&log, false);
+        assert!(
+            !should_skip,
+            "Expected to keep log with sufficient frame count"
+        );
+    }
+
+    #[test]
+    fn test_fallback_to_frame_count_too_low() {
+        // No duration info, insufficient frame count should skip
+        let log = create_test_log(0, 0, 5000); // 5000 frames, no duration (below 7500 threshold)
+        let (should_skip, reason) = should_skip_export(&log, false);
+        assert!(should_skip, "Expected to skip log with too few frames");
+        assert!(
+            reason.contains("too few frames"),
+            "Expected 'too few frames' reason"
+        );
+    }
+
+    #[test]
+    fn test_calculate_variance() {
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let variance = calculate_variance(&values);
+        // Expected variance: mean=3, variance=2.0
+        assert!((variance - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_calculate_variance_single_value() {
+        let values = vec![5.0];
+        let variance = calculate_variance(&values);
+        assert_eq!(variance, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_variance_empty() {
+        let values: Vec<f64> = vec![];
+        let variance = calculate_variance(&values);
+        assert_eq!(variance, 0.0);
+    }
 }
