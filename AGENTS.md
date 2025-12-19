@@ -15,7 +15,7 @@
 - **Library-first design:** Core logic in `src/lib.rs` and CLI entry point in `src/main.rs`.
   - **Shared code:** Parser modules (`src/parser/`) and export functions (`src/export.rs`) are shared by both library and CLI.
   - **CLI as thin wrapper:** The CLI (`src/main.rs`) uses library export functions (`export_to_csv`, `export_to_gpx`, `export_to_event`) with CLI-specific status messages.
-  - **Current state:** **Full unification complete** — parsing and export layers unified, CLI reduced from ~1800 to ~1400 lines.
+  - **Current state:** **Full unification complete** — parsing and export layers unified, CLI is thin wrapper with zero public functions.
 - **Decision criteria:** "Is this needed by crate consumers?" determines placement — shared logic in library, CLI-only logic in `src/main.rs`.
 - **Feature flags:** `csv`, `cli`, `json`, `serde` control optional dependencies; default: `csv` + `cli`.
 - **CRATE_USAGE.md reference:** See `CRATE_USAGE.md` for library API examples with feature flags.
