@@ -43,7 +43,7 @@ A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsin
 | **Crate Documentation** | ✅ Functional | Comprehensive API documentation and examples |
 | **Error Handling** | 🚧 Basic | Needs comprehensive testing |
 | **Performance** | 🚧 Basic | Optimization in progress |
-| **Testing** | ✅ Comprehensive | 51+ unit tests covering filters, conversions, parsing, exports |
+| **Testing** | ✅ Comprehensive | 62 unit tests covering filters, conversions, parsing, exports |
 
 ---
 

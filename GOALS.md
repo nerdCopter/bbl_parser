@@ -26,7 +26,7 @@
 - **Configurable export filtering:** Heuristics moved to library, accessible via `should_skip_export()` and `has_minimal_gyro_activity()`
 - **ExportReport type:** Structured path tracking for all export operations
 - **Public API audit:** Zero public functions in CLI, thin wrapper architecture
-- **Comprehensive test coverage:** 54 unit tests for parsing, filtering, conversions, and exports
+- **Comprehensive test coverage:** 62 unit tests for parsing, filtering, conversions, and exports
 
 🔧 **REMAINING WORK:** Feature Enhancements
 - **Error handling refinement:** Some unwrap() calls remain in test/example code; critical paths use proper Result handling
