@@ -266,16 +266,32 @@ done
 
 ## API Integration
 
-All export functions are accessible via the crate:
+All export functions are accessible via the crate. These examples show the API in use:
 
+### CSV Export
 ```rust
-use bbl_parser::{
-    parse_bbl_file, 
-    export_to_csv, 
-    export_to_gpx, 
-    export_to_event,
-    ExportOptions
-};
+use bbl_parser::{parse_bbl_file, export_to_csv, ExportOptions};
+use std::path::Path;
+
+let opts = ExportOptions { csv: true, gpx: false, event: false, output_dir: None, force_export: false };
+let log = parse_bbl_file(Path::new("flight.BBL"), opts.clone(), false)?;
+export_to_csv(&log, Path::new("flight.BBL"), &opts)?;
+// Creates: flight.csv + flight.headers.csv
 ```
 
-See `CRATE_USAGE.md` in the root directory for comprehensive integration examples.
+### GPX + Event Export
+```rust
+use bbl_parser::{export_to_gpx, export_to_event, ExportOptions};
+
+let opts = ExportOptions { csv: false, gpx: true, event: true, output_dir: Some("out".into()), force_export: false };
+
+if !log.gps_coordinates.is_empty() {
+    export_to_gpx(Path::new("flight.BBL"), 0, 1, &log.gps_coordinates, &log.home_coordinates, &opts)?;
+}
+
+if !log.event_frames.is_empty() {
+    export_to_event(Path::new("flight.BBL"), 0, 1, &log.event_frames, &opts)?;
+}
+```
+
+See `CRATE_USAGE.md` for basic setup and API reference.

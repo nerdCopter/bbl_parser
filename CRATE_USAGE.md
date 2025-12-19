@@ -216,6 +216,8 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
+For runnable examples with complete code and output, see [examples/README.md](./examples/README.md).
+
 ## Examples
 
 Run the crate example that demonstrates multi-firmware support and PID extraction:
