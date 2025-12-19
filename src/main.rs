@@ -6,10 +6,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Import export functions from crate library
-use bbl_parser::export::{compute_export_paths, export_to_csv, export_to_event, export_to_gpx};
+use bbl_parser::export::{export_to_csv, export_to_event, export_to_gpx};
 
-// Import parser types from crate library - using crate's unified implementations
-use bbl_parser::parser::{parse_frames, parse_headers_from_text};
+// Import parser functions from crate library - using crate's unified implementations
+use bbl_parser::parser::parse_single_log;
+
+// Import filtering functions from crate library for export heuristics
+use bbl_parser::filters::should_skip_export;
 
 // Import types from crate library
 use bbl_parser::types::BBLLog;
@@ -478,157 +481,6 @@ fn main() -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn parse_bbl_file(
-    file_path: &Path,
-    debug: bool,
-    export_options: &ExportOptions,
-) -> Result<Vec<BBLLog>> {
-    if debug {
-        println!("=== PARSING BBL FILE ===");
-        let metadata = std::fs::metadata(file_path)?;
-        println!(
-            "File size: {} bytes ({:.2} MB)",
-            metadata.len(),
-            metadata.len() as f64 / 1024.0 / 1024.0
-        );
-    }
-
-    let file_data = std::fs::read(file_path)?;
-
-    // Look for multiple logs by searching for log start markers
-    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
-    let mut log_positions = Vec::new();
-
-    // Find all log start positions
-    for i in 0..file_data.len() {
-        if i + log_start_marker.len() <= file_data.len()
-            && &file_data[i..i + log_start_marker.len()] == log_start_marker
-        {
-            log_positions.push(i);
-        }
-    }
-
-    if log_positions.is_empty() {
-        return Err(anyhow::anyhow!("No blackbox log headers found in file"));
-    }
-
-    if debug {
-        println!("Found {} log(s) in file", log_positions.len());
-    }
-
-    let mut logs = Vec::new();
-
-    for (log_index, &start_pos) in log_positions.iter().enumerate() {
-        if debug {
-            println!(
-                "Parsing log {} starting at position {}",
-                log_index + 1,
-                start_pos
-            );
-        }
-
-        // Determine end position (start of next log or end of file)
-        let end_pos = log_positions
-            .get(log_index + 1)
-            .copied()
-            .unwrap_or(file_data.len());
-        let log_data = &file_data[start_pos..end_pos];
-
-        // Parse this individual log
-        let log = parse_single_log(
-            log_data,
-            log_index + 1,
-            log_positions.len(),
-            debug,
-            export_options,
-        )?;
-        logs.push(log);
-    }
-
-    Ok(logs)
-}
-
-/// Parse a single log from binary data.
-///
-/// Parses all frames and stores them in BBLLog.frames for CSV export.
-fn parse_single_log(
-    log_data: &[u8],
-    log_number: usize,
-    total_logs: usize,
-    debug: bool,
-    export_options: &ExportOptions,
-) -> Result<BBLLog> {
-    // Find where headers end and binary data begins
-    let mut header_end = 0;
-    for i in 1..log_data.len() {
-        if log_data[i - 1] == b'\n' && log_data[i] != b'H' {
-            header_end = i;
-            break;
-        }
-    }
-
-    if header_end == 0 {
-        header_end = log_data.len();
-    }
-
-    // Parse headers from the text section
-    let header_text = std::str::from_utf8(&log_data[0..header_end])?;
-    let header = parse_headers_from_text(header_text, debug)?;
-
-    // Parse binary frame data
-    let binary_data = &log_data[header_end..];
-    let (stats, frames, debug_frames, gps_coords, home_coords, events) =
-        parse_frames(binary_data, &header, debug, export_options)?;
-
-    // Keep the timing from parser which processes ALL frames
-    // Don't override with sample frames timing as that only contains a subset
-    // The parser already correctly sets stats.start_time_us and stats.end_time_us
-
-    if debug && !frames.is_empty() {
-        // Store original timing from parser
-        let parser_start = stats.start_time_us;
-        let parser_end = stats.end_time_us;
-        let parser_duration = parser_end.saturating_sub(parser_start);
-
-        let sample_start = frames.first().unwrap().timestamp_us;
-        let sample_end = frames.last().unwrap().timestamp_us;
-        let sample_duration = sample_end.saturating_sub(sample_start);
-
-        println!(
-            "DEBUG: Parser timing (ALL frames) - start: {} us, end: {} us, duration: {} ms",
-            parser_start,
-            parser_end,
-            parser_duration / 1000
-        );
-        println!(
-            "DEBUG: Sample timing (subset) - start: {} us, end: {} us, duration: {} ms",
-            sample_start,
-            sample_end,
-            sample_duration / 1000
-        );
-        println!(
-            "DEBUG: Total frames: {}, Stored frames: {}",
-            stats.total_frames,
-            frames.len()
-        );
-    }
-
-    let log = BBLLog {
-        log_number,
-        total_logs,
-        header,
-        stats,
-        frames,
-        debug_frames,
-        gps_coordinates: gps_coords,
-        home_coordinates: home_coords,
-        event_frames: events,
-    };
-
-    Ok(log)
-}
-
-#[allow(dead_code)]
 fn display_frame_data(logs: &[BBLLog]) {
     for log in logs {
         if let Some(ref debug_frames) = log.debug_frames {
@@ -849,158 +701,6 @@ fn display_log_info(log: &BBLLog) {
     }
 }
 
-/// Determines if a log should be skipped for export based on duration and frame count
-/// Uses smart filtering: <5s always skip, 5-15s keep if good data density (>1500fps), >15s always keep
-fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
-    if force_export {
-        return (false, String::new()); // Never skip when forced
-    }
-
-    const VERY_SHORT_DURATION_MS: u64 = 5_000; // 5 seconds - always skip
-    const SHORT_DURATION_MS: u64 = 15_000; // 15 seconds - threshold for normal logs
-    const MIN_DATA_DENSITY_FPS: f64 = 1500.0; // Minimum fps for short logs
-    const FALLBACK_MIN_FRAMES: u32 = 7_500; // ~5 seconds at 1500 fps (fallback when no duration)
-
-    // Check if we have duration information
-    if log.stats.start_time_us > 0 && log.stats.end_time_us > log.stats.start_time_us {
-        let duration_us = log
-            .stats
-            .end_time_us
-            .saturating_sub(log.stats.start_time_us);
-        let duration_ms = duration_us / 1000;
-        let duration_s = duration_ms as f64 / 1000.0;
-        let fps = log.stats.total_frames as f64 / duration_s;
-
-        // Very short logs: < 5 seconds → Always skip
-        if duration_ms < VERY_SHORT_DURATION_MS {
-            return (true, format!("too short ({:.1}s < 5.0s)", duration_s));
-        }
-
-        // Short logs: 5-15 seconds → Keep if sufficient data density (>1500 fps)
-        if duration_ms < SHORT_DURATION_MS {
-            if fps < MIN_DATA_DENSITY_FPS {
-                return (
-                    true,
-                    format!(
-                        "insufficient data density ({:.0}fps < {:.0}fps for {:.1}s log)",
-                        fps, MIN_DATA_DENSITY_FPS, duration_s
-                    ),
-                );
-            }
-            // Good data density, keep it
-            return (false, String::new());
-        }
-
-        // Normal logs: > 15 seconds → Check for minimal gyro activity (ground tests)
-        if duration_ms >= SHORT_DURATION_MS {
-            let (is_minimal_movement, max_variance) = has_minimal_gyro_activity(log);
-            if is_minimal_movement {
-                return (
-                    true,
-                    format!(
-                        "minimal gyro activity ({:.1} variance) - likely ground test",
-                        max_variance
-                    ),
-                );
-            }
-        }
-
-        return (false, String::new());
-    }
-
-    // No duration information available, fall back to frame count
-    // Skip if very low frame count (equivalent to <5s at minimum viable fps)
-    if log.stats.total_frames < FALLBACK_MIN_FRAMES {
-        return (
-            true,
-            format!(
-                "too few frames ({} < {}) and no duration info",
-                log.stats.total_frames, FALLBACK_MIN_FRAMES
-            ),
-        );
-    }
-
-    // Sufficient frames without duration info, keep it
-    (false, String::new())
-}
-
-/// Analyzes gyro variance to detect ground tests vs actual flight
-/// Returns true if the log appears to be a static ground test (minimal movement)
-fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
-    // Conservative thresholds to avoid false-skips
-    const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
-    const VERY_LOW_GYRO_VARIANCE_THRESHOLD: f64 = 0.3; // More aggressive threshold for ground test detection
-
-    let mut gyro_x_values = Vec::new();
-    let mut gyro_y_values = Vec::new();
-    let mut gyro_z_values = Vec::new();
-
-    // First try to use debug_frames if available (contains more comprehensive data)
-    if let Some(debug_frames) = &log.debug_frames {
-        // Collect gyro data from I and P frames in debug_frames
-        for (frame_type, frames) in debug_frames {
-            if *frame_type == 'I' || *frame_type == 'P' {
-                for frame in frames {
-                    if let Some(gyro_x) = frame.data.get("gyroADC[0]") {
-                        if let Some(gyro_y) = frame.data.get("gyroADC[1]") {
-                            if let Some(gyro_z) = frame.data.get("gyroADC[2]") {
-                                gyro_x_values.push(*gyro_x as f64);
-                                gyro_y_values.push(*gyro_y as f64);
-                                gyro_z_values.push(*gyro_z as f64);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback to frames if debug_frames not available or insufficient data
-    if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
-        for frame in &log.frames {
-            if let Some(gyro_x) = frame.data.get("gyroADC[0]") {
-                if let Some(gyro_y) = frame.data.get("gyroADC[1]") {
-                    if let Some(gyro_z) = frame.data.get("gyroADC[2]") {
-                        gyro_x_values.push(*gyro_x as f64);
-                        gyro_y_values.push(*gyro_y as f64);
-                        gyro_z_values.push(*gyro_z as f64);
-                    }
-                }
-            }
-        }
-    }
-
-    // Need sufficient data points for reliable analysis
-    if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
-        return (false, 0.0); // Not enough data, don't skip (conservative approach)
-    }
-
-    // Calculate variance for each axis
-    let variance_x = calculate_variance(&gyro_x_values);
-    let variance_y = calculate_variance(&gyro_y_values);
-    let variance_z = calculate_variance(&gyro_z_values);
-
-    // Use the maximum variance across all axes
-    let max_variance = variance_x.max(variance_y).max(variance_z);
-
-    // Very conservative: only skip if ALL axes show extremely low variance
-    let is_minimal = max_variance < VERY_LOW_GYRO_VARIANCE_THRESHOLD;
-
-    (is_minimal, max_variance)
-}
-
-/// Calculate variance of a dataset
-fn calculate_variance(values: &[f64]) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
-
-    variance
-}
-
 fn parse_bbl_file_streaming(
     file_path: &Path,
     debug: bool,
@@ -1085,15 +785,13 @@ fn parse_bbl_file_streaming(
         // Export CSV immediately while data is hot in cache
         if export_options.csv {
             match export_to_csv(&log, file_path, export_options) {
-                Ok(()) => {
-                    let (csv_path, headers_path, _, _) = compute_export_paths(
-                        file_path,
-                        export_options,
-                        log.log_number,
-                        log_positions.len(),
-                    );
-                    println!("Exported headers to: {}", headers_path.display());
-                    println!("Exported flight data to: {}", csv_path.display());
+                Ok(report) => {
+                    if let Some(headers_path) = report.headers_path {
+                        println!("Exported headers to: {}", headers_path.display());
+                    }
+                    if let Some(csv_path) = report.csv_path {
+                        println!("Exported flight data to: {}", csv_path.display());
+                    }
                 }
                 Err(e) => {
                     let filename = file_path
@@ -1119,14 +817,10 @@ fn parse_bbl_file_streaming(
                 export_options,
                 log.header.log_start_datetime.as_deref(),
             ) {
-                Ok(_) => {
-                    let (_, _, gpx_path, _) = compute_export_paths(
-                        file_path,
-                        export_options,
-                        log.log_number,
-                        log_positions.len(),
-                    );
-                    println!("Exported GPS data to: {}", gpx_path.display());
+                Ok(report) => {
+                    if let Some(gpx_path) = report.gpx_path {
+                        println!("Exported GPS data to: {}", gpx_path.display());
+                    }
                 }
                 Err(e) => {
                     let filename = file_path
@@ -1150,14 +844,10 @@ fn parse_bbl_file_streaming(
                 &log.event_frames,
                 export_options,
             ) {
-                Ok(()) => {
-                    let (_, _, _, event_path) = compute_export_paths(
-                        file_path,
-                        export_options,
-                        log.log_number,
-                        log_positions.len(),
-                    );
-                    println!("Exported event data to: {}", event_path.display());
+                Ok(report) => {
+                    if let Some(event_path) = report.event_path {
+                        println!("Exported event data to: {}", event_path.display());
+                    }
                 }
                 Err(e) => {
                     let filename = file_path

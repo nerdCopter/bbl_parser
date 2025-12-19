@@ -15,14 +15,59 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 /// Export options for various output formats
+///
+/// Controls which export formats are generated and where files are written.
+///
+/// # Fields
+/// - `csv`: Export flight data to CSV format (requires `csv` feature)
+/// - `gpx`: Export GPS coordinates to GPX format for mapping
+/// - `event`: Export events to JSON format
+/// - `output_dir`: Optional custom output directory (defaults to input file's parent directory)
+/// - `force_export`: Skip all filtering heuristics and always export
+///
+/// # Examples
+/// ```rust
+/// use bbl_parser::ExportOptions;
+///
+/// // Export everything to CSV with default location
+/// let opts = ExportOptions {
+///     csv: true,
+///     gpx: false,
+///     event: false,
+///     output_dir: None,
+///     force_export: false,
+/// };
+/// ```
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ExportOptions {
+    /// Enable CSV export of flight data
     pub csv: bool,
+    /// Enable GPX export of GPS coordinates
     pub gpx: bool,
+    /// Enable JSON export of flight events
     pub event: bool,
+    /// Optional custom output directory (defaults to input file parent)
     pub output_dir: Option<String>,
+    /// If true, export all logs without applying filtering heuristics
     pub force_export: bool,
+}
+
+/// Result of an export operation, containing paths of all files that were created.
+///
+/// Any path that is `None` indicates that export format was not requested or
+/// no data was available for export (e.g., empty GPS coordinates for GPX export).
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ExportReport {
+    /// Path to the main CSV data file (None if CSV export was not performed)
+    pub csv_path: Option<std::path::PathBuf>,
+    /// Path to the CSV headers file (None if CSV export was not performed)
+    pub headers_path: Option<std::path::PathBuf>,
+    /// Path to the GPX file (None if GPX export was not performed or GPS data was empty)
+    pub gpx_path: Option<std::path::PathBuf>,
+    /// Path to the event JSON file (None if event export was not performed or no events were found)
+    pub event_path: Option<std::path::PathBuf>,
 }
 
 /// Extract the base filename from an input path with consistent fallback.
@@ -139,11 +184,15 @@ impl CsvFieldMap {
 }
 
 /// Export BBL log to CSV format
+///
+/// # Returns
+/// An `ExportReport` containing paths to the CSV and headers files that were created,
+/// or an error if the export failed.
 pub fn export_to_csv(
     log: &BBLLog,
     input_path: &Path,
     export_options: &ExportOptions,
-) -> Result<()> {
+) -> Result<ExportReport> {
     let base_name = extract_base_name(input_path);
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
@@ -171,7 +220,12 @@ pub fn export_to_csv(
     let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
     export_flight_data_to_csv(log, &flight_csv_path)?;
 
-    Ok(())
+    Ok(ExportReport {
+        csv_path: Some(flight_csv_path),
+        headers_path: Some(header_csv_path),
+        gpx_path: None,
+        event_path: None,
+    })
 }
 
 /// Export headers to CSV file
@@ -368,9 +422,9 @@ pub fn export_to_gpx(
     home_coordinates: &[GpsHomeCoordinate],
     export_options: &ExportOptions,
     log_start_datetime: Option<&str>,
-) -> Result<()> {
+) -> Result<ExportReport> {
     if gps_coordinates.is_empty() {
-        return Ok(());
+        return Ok(ExportReport::default());
     }
 
     // Use compute_export_paths to ensure consistent naming with CSV exports
@@ -432,19 +486,28 @@ pub fn export_to_gpx(
     writeln!(gpx_file, "</trkseg></trk>")?;
     writeln!(gpx_file, "</gpx>")?;
 
-    Ok(())
+    Ok(ExportReport {
+        csv_path: None,
+        headers_path: None,
+        gpx_path: Some(gpx_path),
+        event_path: None,
+    })
 }
 
 /// Export event data to file
+///
+/// # Returns
+/// An `ExportReport` containing the path to the event file that was created,
+/// or an error if the export failed. Returns `None` for `event_path` if no events were exported.
 pub fn export_to_event(
     input_path: &Path,
     log_index: usize,
     total_logs: usize,
     event_frames: &[EventFrame],
     export_options: &ExportOptions,
-) -> Result<()> {
+) -> Result<ExportReport> {
     if event_frames.is_empty() {
-        return Ok(());
+        return Ok(ExportReport::default());
     }
 
     // Use compute_export_paths to ensure consistent naming with CSV exports
@@ -470,7 +533,12 @@ pub fn export_to_event(
         )?;
     }
 
-    Ok(())
+    Ok(ExportReport {
+        csv_path: None,
+        headers_path: None,
+        gpx_path: None,
+        event_path: Some(event_path),
+    })
 }
 
 #[cfg(test)]

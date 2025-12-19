@@ -114,7 +114,11 @@ pub fn parse_bbl_bytes(
 // Note: The rest of the parsing functions will be migrated from src/main.rs
 // This is a placeholder for the systematic migration process
 
-/// Internal function to parse a single BBL log from binary data
+/// Parse a single BBL log from binary data.
+///
+/// This is a lower-level API primarily intended for CLI streaming export scenarios.
+/// Most library consumers should use `parse_bbl_file()`, `parse_bbl_bytes()`,
+/// `parse_bbl_file_all_logs()`, or `parse_bbl_bytes_all_logs()` instead.
 ///
 /// # Arguments
 /// * `log_data` - Raw log data (headers + binary frames)
@@ -122,7 +126,7 @@ pub fn parse_bbl_bytes(
 /// * `total_logs` - Total number of logs in the file
 /// * `debug` - Enable debug output
 /// * `export_options` - Export options controlling GPS/event collection
-fn parse_single_log(
+pub fn parse_single_log(
     log_data: &[u8],
     log_number: usize,
     total_logs: usize,
