@@ -1,10 +1,10 @@
-## Current Implementation Status (July 12 2025)
+## Current Implementation Status (December 19 2025)
 
 ✅ **COMPLETED GOALS:**
 - Full BBL binary format parsing using JavaScript blackbox-log-viewer and C blackbox-tools references
 - Complete I, P, S, H, G, E frame parsing with proper predictor implementation
 - Header parsing and field definition extraction with firmware metadata
-- CSV export with blackbox_decode compatible field ordering and formatting
+- CSV export with field structure following blackbox_decode conventions (exact ordering compatibility not comprehensively validated)
 - Headers CSV export with complete configuration and frame definitions
 - Proper field encoding/decoding (SIGNED_VB, UNSIGNED_VB, NEG_14BIT, TAG8_8SVB, TAG2_3S32, TAG8_4S16)
 - Motor value prediction with accurate P-frame decoding
@@ -14,7 +14,7 @@
 - Energy calculation (energyCumulative field) integration
 - Time-sorted CSV output with proper chronological ordering
 - Debug mode with comprehensive frame-by-frame analysis and sampling
-- Large file streaming support (500K+ frames) with memory efficiency
+- Large file streaming support (tested: 375K+ frames single log in 6.7 seconds; multi-log files with 400K+ combined frames) with memory efficiency
 - **G-frame (GPS) parsing and GPX file export** with coordinate conversion
 - **E-frame (event) parsing and JSONL event export** with Betaflight FlightLogEvent enum
 - **Betaflight firmware-accurate flag formatting** (flightModeFlags, stateFlags, failsafePhase)
@@ -22,21 +22,24 @@
 - **Extensive Betaflight/EmuFlight testing** with high compatibility across firmware versions
 - **Full RUST CRATE for library reusability and modularity** with complete API access
 - **API documentation and library integration** with comprehensive usage examples
+- **Library/CLI separation:** Parsing duplication removed, `parse_single_log` exposed in library
+- **Configurable export filtering:** Heuristics moved to library, accessible via `should_skip_export()` and `has_minimal_gyro_activity()`
+- **ExportReport type:** Structured path tracking for all export operations
+- **Public API audit:** Zero public functions in CLI, thin wrapper architecture
+- **Comprehensive test coverage:** 62 unit tests for parsing, filtering, conversions, and exports
 
-🔧 **REMAINING WORK:**
-- Code refinement: Replace unwrap() calls with proper error handling
-- Enhanced error handling and comprehensive edge case testing
-- Performance optimization for extremely large files (>1M frames)
-- Comprehensive GPS and Event frame testing across more log types
-- Complete crate migration (resolve internal structure inconsistencies)
-- Unit conversion options (time, voltage, current, height, speed, rotation, acceleration)
-- IMU simulation (roll/pitch/yaw angle computation from gyro/accel/mag)
-- Current meter simulation and energy integration
-- GPS merge option (integrate GPS data into main CSV)
-- Raw mode output (unprocessed sensor values)
-- Enhanced statistics output (frame counts, timing, loop statistics)
-- Extended firmware compatibility testing (older/newer versions)
-- Advanced filtering and data processing options
+🔧 **REMAINING WORK:** Feature Enhancements
+- **Error handling refinement:** Some unwrap() calls remain in test/example code; critical paths use proper Result handling
+- **Performance validation:** Streaming architecture proven effective; tested up to 375K frames in single log (~6.7 seconds for 21MB file)
+- **GPS & Event testing:** Both formats working and validated (833+ G frames, 5+ E frames; valid GPX and JSON outputs)
+- **Unit conversions expansion:** Voltage and current conversions complete and tested; missing: time scaling, altitude conversion, speed units, rotation rates, acceleration scaling
+- **IMU simulation:** Roll/pitch/yaw angle computation from gyro/accel/mag data — not started
+- **Current meter simulation:** Energy integration improvements — not started
+- **GPS data merge:** Integrate GPS data into main CSV (currently separate .gps.gpx file) — not started
+- **Raw mode output:** Export unprocessed sensor values without scaling — not started
+- **Enhanced statistics:** Loop timing statistics, frame distribution analysis — not started
+- **Extended firmware testing:** Currently validates Betaflight 4.5+, EmuFlight, INAV; additional versions not comprehensively tested
+- **Advanced filtering options:** Current implementation: duration + gyro variance heuristics; advanced options not implemented
 
 ---
 

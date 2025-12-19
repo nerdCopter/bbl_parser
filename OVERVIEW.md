@@ -1,8 +1,8 @@
 # BBL Parser - Project Overview
 
-**Project Status:** 🚧 **WORK IN PROGRESS**  
-**Focus:** High-Performance BBL Processing  
-**⚠️ Not Production Ready**
+**Project Status:** ✅ **ARCHITECTURE COMPLETE** | 🚧 **FEATURE DEVELOPMENT** | 🚧 **WORK IN PROGRESS**  
+**Focus:** High-Performance BBL Processing with Production-Ready Core  
+**Status:** Core parsing, export, and library/CLI separation (Phase 6) complete; remaining work is feature enhancements
 
 ---
 
@@ -43,7 +43,7 @@ A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsin
 | **Crate Documentation** | ✅ Functional | Comprehensive API documentation and examples |
 | **Error Handling** | 🚧 Basic | Needs comprehensive testing |
 | **Performance** | 🚧 Basic | Optimization in progress |
-| **Testing** | ⚠️ Limited | Needs extensive validation |
+| **Testing** | ✅ Comprehensive | 62 unit tests covering filters, conversions, parsing, exports |
 
 ---
 
@@ -115,7 +115,12 @@ src/
 - **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
 - **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
-- **Smart Export Filtering:** Automatically skips short test flights (<5s) while preserving high-quality short logs
+
+### **Smart Export Filtering**
+- **Duration-based:** < 5s skipped, 5–15s exported only if data density > 1500 fps, > 15s exported
+- **Gyro activity detection:** Minimal gyro variance indicates ground test vs. actual flight
+- **Configurable:** Available via library API `should_skip_export()` and `has_minimal_gyro_activity()` for programmatic control
+- **Override:** `--force-export` flag or `force_export` option bypasses filtering heuristics
 
 ### **Library API**
 - **Complete Data Access:** Programmatic access to all BBL data structures
