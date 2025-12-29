@@ -113,7 +113,7 @@ src/
 
 ### **File Processing**
 - **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
-- **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
+- **Firmware Compatibility:** Betaflight, EmuFlight support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
 
 ### **Smart Export Filtering**
@@ -271,7 +271,7 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 
 ### **Functional Capabilities**
 - **Basic BBL parsing** with support for major frame types
-- **Multi-firmware support** across Betaflight, EmuFlight, INAV
+- **Multi-firmware support** across Betaflight and EmuFlight
 - **Multi-log processing** for complex flight session files
 - **Export functionality** for CSV, GPX, and event data formats
 - **Memory-efficient streaming** architecture for large files
