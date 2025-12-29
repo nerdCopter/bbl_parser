@@ -26,7 +26,7 @@ A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsin
 
 ### **File Processing Capabilities**
 - **Formats:** .BBL, .BFL, .TXT (case-insensitive)
-- **Firmware:** Betaflight, EmuFlight, INAV
+- **Firmware:** Betaflight, EmuFlight
 - **File Sizes:** Handles large files via streaming architecture (tested up to 240K+ rows)
 - **Multi-Log Support:** Automatic detection and processing of multiple flights
 
