@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Compatibility
 - **Input formats:** .BBL, .BFL, .TXT (case-insensitive)
-- **Firmware versions:** Betaflight 4.5+, EmuFlight, INAV
+- **Firmware versions:** Betaflight 4.0+, EmuFlight, INAV
 - **Output formats:** CSV, GPX, JSONL event logs
 - **Binary compatibility:** Output matches blackbox_decode reference implementation
 
