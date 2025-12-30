@@ -283,7 +283,7 @@ Demonstrates comprehensive export of all available formats with detailed statist
 cargo run --example multi_export --release -- flight.BBL ./output
 ```
 
-**Status:** ✅ Fully functional for CSV, ⏳ GPS/Event pending parser enhancement
+**Status:** ✅ Fully functional - Exports all available formats (CSV, GPS, and events)
 
 ## Testing All Examples
 
