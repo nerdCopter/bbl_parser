@@ -39,7 +39,7 @@ cargo run --example csv_export -- flight.BBL ./output
 - **Flight Numbering:** Automatic 2-digit zero-padded suffix based on log count
 
 **Example Output:**
-```
+```text
 Flight 1/3:
   Frames: 1,787
   ✓ Exported as .01.csv
@@ -173,7 +173,7 @@ cargo run --example export_demo -- flight.BBL ./output
 
 ### Example Output
 
-```
+```text
 === BBL Parser Export Demo ===
 Input file: flight.BBL
 Output directory: ./output
