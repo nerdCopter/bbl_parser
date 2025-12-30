@@ -1,7 +1,13 @@
 //! CSV Export Example
 //!
-//! Demonstrates how to export parsed BBL data to CSV format using the bbl_parser crate.
+//! Demonstrates how to export the FIRST flight/log from a BBL file to CSV format.
 //! This is the primary export format compatible with blackbox_decode.
+//!
+//! **Important:** BBL files can contain multiple flights/logs (separated by LOG_END events).
+//! This example exports only the first one using `parse_bbl_file()`.
+//!
+//! For multi-flight files, use `parse_bbl_file_all_logs()` instead.
+//! See `multi_flight_export.rs` example for handling multiple flights.
 
 use bbl_parser::{export_to_csv, parse_bbl_file, ExportOptions};
 use std::path::Path;
@@ -11,6 +17,8 @@ fn main() -> anyhow::Result<()> {
     let input_file = std::env::args().nth(1).unwrap_or_else(|| {
         println!("Usage: csv_export <input.BBL> [output_dir]");
         println!("Example: csv_export flight.BBL ./output");
+        println!("\nNote: This exports only the FIRST flight from the BBL file.");
+        println!("For files with multiple flights, see multi_flight_export example.");
         std::process::exit(1);
     });
 

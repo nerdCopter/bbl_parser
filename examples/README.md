@@ -2,86 +2,147 @@
 
 This directory contains example programs demonstrating how to use the `bbl_parser` crate.
 
+## Quick Start
+
+### Single Flight Export (First Flight Only)
+```bash
+cargo run --example csv_export -- flight.BBL ./output
+```
+
+### Multiple Flights Export (All Flights with Numbering)
+```bash
+cargo run --example multi_flight_export -- flight.BBL ./output
+```
+
 ## Available Examples
 
-### 1. bbl_crate_test
-Basic parsing and data access demonstration.
+### 1. csv_export.rs ⭐ **START HERE**
+**Purpose:** Export the first flight/log from a BBL file to CSV format.
 
-### 2. export_demo
-Complete export functionality demonstration (CSV, GPX, Event).
+- **Use this for:** Single-flight files or when you only need the first flight
+- **API:** `parse_bbl_file()` - Returns only the first log
+- **Output:** Single `.csv` file (no suffix)
+- **Time:** Fast, processes only one flight
 
-## bbl_crate_test Example
+**Important Note:** If your BBL file contains multiple flight sessions (separated by LOG_END events), this example will only export the first one. See `multi_flight_export.rs` for handling multiple flights.
 
-## Features
+```bash
+cargo run --example csv_export -- flight.BBL ./output
+```
+
+### 2. multi_flight_export.rs ⭐ **Use for Multi-Session Files**
+**Purpose:** Export ALL flights/logs from a BBL file to CSV with proper numbering.
+
+- **Use this for:** BBL files with multiple flight sessions
+- **API:** `parse_bbl_file_all_logs()` - Returns all logs
+- **Output:** Multiple files with suffixes: `.01.csv`, `.02.csv`, `.03.csv`, etc.
+- **Flight Numbering:** Automatic 2-digit zero-padded suffix based on log count
+
+**Example Output:**
+```
+Flight 1/3:
+  Frames: 1,787
+  ✓ Exported as .01.csv
+
+Flight 2/3:
+  Frames: 61,714
+  ✓ Exported as .02.csv
+
+Flight 3/3:
+  Frames: 181,554
+  ✓ Exported as .03.csv
+```
+
+```bash
+cargo run --example multi_flight_export -- flight.BBL ./output
+```
+
+### 3. bbl_crate_test
+**Purpose:** Comprehensive parsing and data access demonstration with multi-log support.
+
+- **Features:** File pattern matching, debug output, PID settings display
+- **Use this for:** Understanding full crate API and data structures
+- **Multi-Log Support:** Handles files containing multiple flight logs
+
+```bash
+cargo run --example bbl_crate_test -- flight.BBL
+cargo run --example bbl_crate_test -- *.BBL  # Process multiple files
+```
+
+### 4. export_demo
+**Purpose:** Complete export demonstration for CSV, GPX, and Event formats.
+
+- **Features:** Multi-format export, GPS conversion, event logging
+- **Use this for:** Advanced export requirements beyond CSV
+
+## Understanding Flight Numbers
+
+A single BBL file can contain **multiple flight sessions**, separated by `LOG_END` events. When this happens:
+
+| Scenario | Function | Output |
+|----------|----------|--------|
+| Single flight | `parse_bbl_file()` | `flight.csv` (no suffix) |
+| Single flight via all_logs | `parse_bbl_file_all_logs()` | `flight.csv` (no suffix) |
+| Multiple flights | `parse_bbl_file()` | Only exports 1st: `flight.csv` |
+| Multiple flights | `parse_bbl_file_all_logs()` | All flights: `flight.01.csv`, `flight.02.csv`, etc. |
+
+## API Pattern: Which Function to Use?
+
+### For Crate Users (Library Integration)
+
+```rust
+use bbl_parser::{parse_bbl_file, parse_bbl_file_all_logs, export_to_csv, ExportOptions};
+
+// If you only care about the first flight:
+let log = parse_bbl_file(path, options, false)?;
+export_to_csv(&log, path, &options)?;
+
+// If you need to handle all flights:
+let logs = parse_bbl_file_all_logs(path, options, false)?;
+for log in logs {
+    export_to_csv(&log, path, &options)?;
+    // Library automatically handles .01, .02, .03 suffixes
+}
+```
+
+### For CLI Applications
+
+Use `parse_bbl_file_all_logs()` to ensure all flight data is processed, not just the first one.
+
+## Key Features
 
 - **File Input Support**: Accepts BBL, BFL, and TXT files (case-insensitive)
 - **Glob Pattern Support**: Process multiple files with wildcards
 - **Flight Information Display**: Shows firmware, version, duration, and frame statistics  
-- **PID Settings**: Displays PID controller settings from log headers (always shown)
-- **Multi-Log Support**: Handles files containing multiple flight logs
+- **Multi-Log Support**: Handles files containing multiple flight logs with automatic suffixing
 - **Clean Output**: Focused, essential information only
-
-## Usage
-
-### Basic Usage
-```bash
-# Build the example
-cargo build --example bbl_crate_test
-
-# Process single file
-cargo run --example bbl_crate_test -- flight.BBL
-
-# Process multiple files
-cargo run --example bbl_crate_test -- file1.BBL file2.BFL file3.TXT
-
-# Use glob patterns (case-insensitive)
-cargo run --example bbl_crate_test -- *.BBL *.bbl
-cargo run --example bbl_crate_test -- logs/*.{BBL,BFL,TXT}
-```
-
-### Command Line Options
-```bash
-# Enable debug output from parser
-cargo run --example bbl_crate_test -- --debug flight.BBL
-
-# Process multiple files
-cargo run --example bbl_crate_test -- logs/*.BBL
-```
-
-## Example Output
-
-```
-Processing: flight_log.BBL
-  Firmware: EmuFlight 0.4.3 (b5690ecef) FOXEERF722V4
-  Craft: My Racing Quad
-  Flight Duration: 67.5 seconds
-  PID Settings:
-    Roll: P=100, I=80, D=100
-    Pitch: P=100, I=80, D=100
-    Yaw: P=100, I=70, D=100
-```
 
 ## Implementation Notes
 
-This test program demonstrates:
+These examples demonstrate:
 
-1. **Crate Usage**: Shows how to import and use the `bbl_parser` crate
+1. **Crate Usage**: How to import and use the `bbl_parser` crate
 2. **File Handling**: Case-insensitive file extension matching and glob pattern support
-3. **Data Access**: Accessing all major data structures (headers, frames, GPS, events)
+3. **Data Access**: Accessing headers, frames, GPS, and events
 4. **Error Handling**: Proper error handling with the `anyhow` crate
-5. **CLI Interface**: Command-line argument parsing with `clap`
+5. **Multi-Log Processing**: Correctly handling BBL files with multiple flight sessions
+6. **Export API**: CSV, GPX, and event export functionality
+7. **Flight Numbering**: Automatic suffix generation for multi-flight files
 
-## Crate API Demonstration
+## Common Mistakes to Avoid
 
-The program showcases these key crate features:
+❌ **WRONG:** Use `parse_bbl_file()` for multi-flight files expecting all flights
+```rust
+let log = parse_bbl_file(path, options, false)?;  // Only gets first flight!
+```
 
-- `parse_bbl_file_all_logs()` - Parse multiple logs from a single file
-- `BBLLog` structure access - Header, frames, GPS, events
-- `ExportOptions::default()` - Memory-only parsing without file exports
-- Header configuration access - PID settings and system parameters
-- Frame statistics and timing calculations
-
-This serves as both a functional tool and a reference implementation for using the `bbl_parser` crate in other projects.
+✅ **CORRECT:** Use `parse_bbl_file_all_logs()` to get all flights
+```rust
+let logs = parse_bbl_file_all_logs(path, options, false)?;
+for log in logs {
+    export_to_csv(&log, path, &options)?;
+}
+```
 
 ---
 
