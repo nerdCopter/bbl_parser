@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Streaming architecture** for memory-efficient processing of large files (tested: 375K+ frames)
 - **Comprehensive CLI** with configurable output options and batch processing
 - **Feature flags** (`csv`, `json`, `cli`, `serde`) for flexible dependency management
-- **Firmware compatibility** for Betaflight (4.5+) and EmuFlight
+- **Firmware compatibility** for Betaflight (4.5+), EmuFlight, and INAV
 - **Unit conversions** for voltage (raw to volts) and current (raw to amps)
 - **Energy calculation** with cumulative amperage integration
 - **Betaflight-accurate flag formatting** for flight mode, state, and failsafe phases
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Compatibility
 - **Input formats:** .BBL, .BFL, .TXT (case-insensitive)
-- **Firmware versions:** Betaflight 4.5+, EmuFlight
+- **Firmware versions:** Betaflight 4.5+, EmuFlight, INAV
 - **Output formats:** CSV, GPX, JSONL event logs
 - **Binary compatibility:** Output matches blackbox_decode reference implementation
 

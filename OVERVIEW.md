@@ -26,7 +26,7 @@ A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsin
 
 ### **File Processing Capabilities**
 - **Formats:** .BBL, .BFL, .TXT (case-insensitive)
-- **Firmware:** Betaflight, EmuFlight
+- **Firmware:** Betaflight, EmuFlight, INAV
 - **File Sizes:** Handles large files via streaming architecture (tested up to 240K+ rows)
 - **Multi-Log Support:** Automatic detection and processing of multiple flights
 
@@ -113,7 +113,7 @@ src/
 
 ### **File Processing**
 - **Universal Format Support:** `.BBL`, `.BFL`, `.TXT` with case-insensitive matching
-- **Firmware Compatibility:** Betaflight, EmuFlight support
+- **Firmware Compatibility:** Betaflight, EmuFlight, INAV support
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
 
 ### **Smart Export Filtering**
@@ -271,7 +271,7 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 
 ### **Functional Capabilities**
 - **Basic BBL parsing** with support for major frame types
-- **Multi-firmware support** across Betaflight and EmuFlight
+- **Multi-firmware support** across Betaflight, EmuFlight, INAV
 - **Multi-log processing** for complex flight session files
 - **Export functionality** for CSV, GPX, and event data formats
 - **Memory-efficient streaming** architecture for large files
