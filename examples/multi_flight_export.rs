@@ -62,20 +62,12 @@ fn main() -> anyhow::Result<()> {
         println!("  Exporting to CSV...");
         export_to_csv(&log, Path::new(&input_file), &export_opts)?;
 
-        // Show output filename with flight number suffix
-        let suffix = if log.total_logs > 1 {
-            format!(".{:02}", log.log_number)
+        // Display export result with optional flight number suffix
+        if log.total_logs > 1 {
+            println!("  ✓ Exported as .{:02}.csv\n", log.log_number);
         } else {
-            String::new()
-        };
-        println!(
-            "  ✓ Exported{}\n",
-            if suffix.is_empty() {
-                "".to_string()
-            } else {
-                format!(" as .{:02}.csv", log.log_number)
-            }
-        );
+            println!("  ✓ Exported\n");
+        }
     }
 
     println!("✓ All CSV exports complete");
