@@ -70,10 +70,8 @@ cargo run --example bbl_crate_test -- *.BBL  # Process multiple files
 ```
 
 ### 4. export_demo
-**Purpose:** Complete export demonstration for CSV, GPX, and Event formats.
 
-- **Features:** Multi-format export, GPS conversion, event logging
-- **Use this for:** Advanced export requirements beyond CSV
+See [export_demo Example](#export_demo-example) section below for comprehensive details on CSV, GPX, and Event export functionality.
 
 ## Understanding Flight Numbers
 
