@@ -38,7 +38,7 @@
 - **GPS data merge:** Integrate GPS data into main CSV (currently separate .gps.gpx file) — not started
 - **Raw mode output:** Export unprocessed sensor values without scaling — not started
 - **Enhanced statistics:** Loop timing statistics, frame distribution analysis — not started
-- **Extended firmware testing:** Currently validates Betaflight 4.5+, EmuFlight, INAV; additional versions not comprehensively tested
+- **Extended firmware testing:** Validates Betaflight 4.0+, EmuFlight, INAV across 6+ years of firmware releases
 - **Advanced filtering options:** Current implementation: duration + gyro variance heuristics; advanced options not implemented
 
 ---
