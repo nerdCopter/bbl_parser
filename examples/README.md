@@ -244,18 +244,7 @@ Four more specialized examples provide focused demonstrations of individual expo
 
 ### csv_export - CSV Export Only
 
-**File:** `examples/csv_export.rs`
-
-Demonstrates basic CSV export functionality. Creates two CSV files for every flight:
-- Flight data CSV with all sensor readings
-- Headers CSV with complete configuration
-
-**Usage:**
-```bash
-cargo run --example csv_export --release -- flight.BBL ./output
-```
-
-**Status:** ✅ Fully functional
+See [1. csv_export.rs](#1-csv_exportrs--start-here) under [Available Examples](#available-examples) for full documentation.
 
 ### gpx_export - GPS Data Export
 
