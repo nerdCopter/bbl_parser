@@ -257,7 +257,7 @@ Demonstrates GPS export to GPX format for mapping applications.
 cargo run --example gpx_export --release -- flight.BBL ./output
 ```
 
-**Status:** ⏳ Partially implemented - GPX export function is ready, but GPS data collection in parser module requires enhancement. Use CLI: `bbl_parser --gps flight.BBL`
+**Status:** ⏳ Partially implemented - GPX export function is ready, but GPS data collection in parser module requires enhancement.
 
 ### event_export - Flight Event Export
 
@@ -270,7 +270,7 @@ Demonstrates flight event export in JSONL format.
 cargo run --example event_export --release -- flight.BBL ./output
 ```
 
-**Status:** ⏳ Partially implemented - Event export function is ready, but event data collection in parser module requires enhancement. Use CLI: `bbl_parser --event flight.BBL`
+**Status:** ⏳ Partially implemented - Event export function is ready, but event data collection in parser module requires enhancement.
 
 ### multi_export - All Formats
 
@@ -311,6 +311,39 @@ done
 | export_demo | ✅ | ⏳* | ⏳* | Partially Ready |
 
 *GPS/Event functions implemented and working, but require parser module enhancement to collect data during parsing.
+
+## CLI Tool vs Library Examples
+
+The `bbl_parser` crate includes a **CLI binary** (`src/main.rs`) in addition to these library examples:
+
+### When to Use the CLI
+
+Build and run the CLI with:
+```bash
+cargo run --bin bbl_parser --release -- flight.BBL ./output
+cargo install --path .    # Install to system PATH
+bbl_parser flight.BBL ./output
+```
+
+**Use the CLI when:**
+- Processing BBL files from the command line
+- Batch processing multiple files
+- Want a single executable without writing Rust code
+- Using glob patterns to process directories
+
+### When to Use Library Examples & API
+
+**Use the library examples when:**
+- Building Rust applications that parse BBL files
+- Integrating into other projects via the crate dependency
+- Need programmatic access to parsed data
+- Creating custom export formats or analysis tools
+
+### Relationship
+
+- **Library API** (`parse_bbl_file`, `export_to_csv`, etc.): Complete, production-ready
+- **Examples**: Demonstrate library usage patterns
+- **CLI Binary**: Convenience tool built on top of the library API
 
 ## API Integration
 
