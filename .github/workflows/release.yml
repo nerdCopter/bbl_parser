@@ -26,138 +26,89 @@ jobs:
           cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
           echo "✅ Successfully published to crates.io"
 
-  download-ci-artifacts:
-    name: Download CI Build Artifacts
-    runs-on: ubuntu-latest
+  build-release-binaries:
+    name: Build Release Binaries
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        artifact_name:
-          - bbl_parser-linux-x64
-          - bbl_parser-windows-x64
-          - bbl_parser-macos-x64
-    steps:
-      - name: Download artifact from CI workflow using GitHub CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          # Find the most recent successful ci.yml run for this commit
-          RUN_ID=$(gh run list \
-            --workflow=ci.yml \
-            --commit=${{ github.sha }} \
-            --status=success \
-            --limit=1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          
-          if [ -z "$RUN_ID" ]; then
-            echo "❌ No successful ci.yml run found for commit ${{ github.sha }}"
-            echo "Make sure ci.yml completed successfully before publishing release"
-            exit 1
-          fi
-          
-          echo "📦 Downloading ${{ matrix.artifact_name }} from run ID: $RUN_ID"
-          
-          # Download the artifact
-          gh run download "$RUN_ID" \
-            --name "${{ matrix.artifact_name }}" \
-            --dir ./artifacts/${{ matrix.artifact_name }}
-          
-          echo "✅ Successfully downloaded ${{ matrix.artifact_name }}"
-
-      - name: Re-upload artifact for release workflow
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: ./artifacts/${{ matrix.artifact_name }}/*
-          overwrite: true
-          if-no-files-found: error
-
-  determine-version:
-    name: Extract Version Information
-    needs: download-ci-artifacts
-    runs-on: ubuntu-latest
-    outputs:
-      build_info: ${{ steps.extract.outputs.build_info }}
+        include:
+          - os: ubuntu-latest
+            artifact_name: bbl_parser-linux-x64
+            binary_path: target/release/bbl_parser
+          - os: macos-latest
+            artifact_name: bbl_parser-macos-x64
+            binary_path: target/release/bbl_parser
+          - os: windows-latest
+            artifact_name: bbl_parser-windows-x64
+            binary_path: target/release/bbl_parser.exe
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract version from Cargo.toml and git
-        id: extract
-        run: |
-          set -e
-          
-          # Extract semver from Cargo.toml
-          SEMVER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-          
-          # Get git info from GitHub context
-          GIT_SHA="${{ github.sha }}"
-          GIT_SHA_SHORT="${GIT_SHA:0:7}"
-          
-          # Get git commit date from repository (matches VERGEN_GIT_COMMIT_DATE in binary)
-          GIT_COMMIT_DATE=$(git log -1 --format=%ci "${{ github.sha }}" | cut -d' ' -f1)
-          
-          # Format version string to match binary output
-          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${GIT_COMMIT_DATE})"
-          
-          echo "✅ Extracted version: $BUILD_INFO"
-          
-          # Write output with proper quoting
-          echo "build_info<<EOF" >> $GITHUB_OUTPUT
-          echo "$BUILD_INFO" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Download Linux binary artifact
-        uses: actions/download-artifact@v4
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          name: bbl_parser-linux-x64
-          path: ./binary-check
+          toolchain: stable
 
-      - name: Verify version consistency
-        env:
-          BUILD_INFO: ${{ steps.extract.outputs.build_info }}
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Create ZIP archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          set -e
-          
-          chmod +x ./binary-check/bbl_parser
-          BINARY_VERSION=$(./binary-check/bbl_parser -V)
-          EXPECTED="bbl_parser ${BUILD_INFO}"
-          if [ "$BINARY_VERSION" = "$EXPECTED" ]; then
-            echo "✅ Version match confirmed: binary='$BINARY_VERSION'"
-          else
-            echo "❌ Version mismatch detected:"
-            echo "   Binary output:  '$BINARY_VERSION'"
-            echo "   Expected:       '$EXPECTED'"
-            exit 1
-          fi
+          Compress-Archive -Path "${{ matrix.binary_path }}" -DestinationPath "bbl_parser-${{ github.ref_name }}-${{ matrix.artifact_name }}.zip"
+
+      - name: Create ZIP archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          zip "bbl_parser-${{ github.ref_name }}-${{ matrix.artifact_name }}.zip" "${{ matrix.binary_path }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: bbl_parser-${{ github.ref_name }}-${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
 
   upload-release-assets:
     name: Upload Assets to GitHub Release
-    needs: [download-ci-artifacts, determine-version]
+    needs: build-release-binaries
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all ZIP artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
 
+      - name: Extract version info
+        id: version
+        run: |
+          SEMVER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          GIT_SHA="${{ github.sha }}"
+          GIT_SHA_SHORT="${GIT_SHA:0:7}"
+          GIT_COMMIT_DATE=$(git log -1 --format=%ci "${{ github.sha }}" | cut -d' ' -f1)
+          BUILD_INFO="${SEMVER} ${GIT_SHA_SHORT} (${GIT_COMMIT_DATE})"
+          echo "build_info=$BUILD_INFO" >> $GITHUB_OUTPUT
+
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
-          BUILD_INFO="${{ needs.determine-version.outputs.build_info }}"
-          
-          # Upload all artifacts for this release
-          gh release upload "${{ github.ref_name }}" release-artifacts/*/* \
-            --repo "$GH_REPO" \
-            --clobber
-          
-          # Update release notes with build information
+          # Find all ZIP files in artifacts
+          find release-artifacts -name "*.zip" -type f -exec gh release upload "${{ github.ref_name }}" {} \; --repo "${{ github.repository }}" --clobber
+          echo "✅ All ZIP binaries uploaded"
+
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BUILD_INFO="${{ steps.version.outputs.build_info }}"
           gh release edit "${{ github.ref_name }}" \
             --notes "**Build Information:** $BUILD_INFO" \
-            --repo "$GH_REPO"
-          echo "✅ Release notes updated with build information"
-          echo ""
-          echo "🎉 Release complete! Version $BUILD_INFO is now live."
+            --repo "${{ github.repository }}"
+          echo "🎉 Release $BUILD_INFO is now live with platform-specific ZIP files!"

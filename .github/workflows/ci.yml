@@ -122,10 +122,22 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Create binary ZIP archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "${{ matrix.binary_path }}" -DestinationPath "bbl_parser-${{ matrix.artifact_name }}.zip"
+
+      - name: Create binary ZIP archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          zip "bbl_parser-${{ matrix.artifact_name }}.zip" "${{ matrix.binary_path }}"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_path }}
+          path: bbl_parser-${{ matrix.artifact_name }}.zip
           overwrite: true
           if-no-files-found: error
