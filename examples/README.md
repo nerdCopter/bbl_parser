@@ -257,7 +257,7 @@ Demonstrates GPS export to GPX format for mapping applications.
 cargo run --example gpx_export --release -- flight.BBL ./output
 ```
 
-**Status:** ⏳ Partially implemented - GPX export function is ready, but GPS data collection in parser module requires enhancement.
+**Status:** ✅ Fully functional - Exports GPS track with home position, elevation, and timestamps.
 
 ### event_export - Flight Event Export
 
@@ -270,7 +270,7 @@ Demonstrates flight event export in JSONL format.
 cargo run --example event_export --release -- flight.BBL ./output
 ```
 
-**Status:** ⏳ Partially implemented - Event export function is ready, but event data collection in parser module requires enhancement.
+**Status:** ✅ Fully functional - Exports all flight events (disarm, arm, mode changes, etc.) with timestamps.
 
 ### multi_export - All Formats
 
@@ -305,12 +305,10 @@ done
 | Example | CSV | GPX | Event | Status |
 |---------|-----|-----|-------|--------|
 | csv_export | ✅ | — | — | Production Ready |
-| gpx_export | — | ⏳* | — | API Ready* |
-| event_export | — | — | ⏳* | API Ready* |
-| multi_export | ✅ | ⏳* | ⏳* | Partially Ready |
-| export_demo | ✅ | ⏳* | ⏳* | Partially Ready |
-
-*GPS/Event functions implemented and working, but require parser module enhancement to collect data during parsing.
+| gpx_export | — | ✅ | — | Production Ready |
+| event_export | — | — | ✅ | Production Ready |
+| multi_export | ✅ | ✅ | ✅ | Production Ready |
+| export_demo | ✅ | ✅ | ✅ | Production Ready |
 
 ## CLI Tool vs Library Examples
 
