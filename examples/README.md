@@ -169,6 +169,8 @@ cargo run --example export_demo -- flight.BBL
 cargo run --example export_demo -- flight.BBL ./output
 ```
 
+**Status:** ✅ Fully functional - Exports all formats (CSV, GPX, events) with comprehensive logging
+
 ### Example Output
 
 ```
