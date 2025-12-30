@@ -116,12 +116,13 @@ jobs:
 
       - name: Verify version consistency
         env:
-          EXPECTED: ${{ steps.extract.outputs.build_info }}
+          BUILD_INFO: ${{ steps.extract.outputs.build_info }}
         run: |
           set -e
           
           chmod +x ./binary-check/bbl_parser
           BINARY_VERSION=$(./binary-check/bbl_parser -V)
+          EXPECTED="bbl_parser ${BUILD_INFO}"
           if [ "$BINARY_VERSION" = "$EXPECTED" ]; then
             echo "✅ Version match confirmed: binary='$BINARY_VERSION'"
           else
