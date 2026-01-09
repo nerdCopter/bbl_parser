@@ -314,7 +314,7 @@ fn build_command() -> Command {
         .arg(
             Arg::new("force-export")
                 .long("force-export")
-                .help("Force export of all logs, including short flights (bypasses smart filtering: <5s skip, 5-15s needs >1500fps, >15s keep)")
+                .help("Force export of all logs, bypassing smart filtering (<5s skip, 5-15s needs >1500fps, >15s or no-duration checks gyro variance)")
                 .action(clap::ArgAction::SetTrue),
         )
 }

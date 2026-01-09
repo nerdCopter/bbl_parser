@@ -30,7 +30,7 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
     const VERY_SHORT_DURATION_MS: u64 = 5_000; // 5 seconds - always skip
     const SHORT_DURATION_MS: u64 = 15_000; // 15 seconds - threshold for normal logs
     const MIN_DATA_DENSITY_FPS: f64 = 1500.0; // Minimum fps for short logs
-    const FALLBACK_MIN_FRAMES: u32 = 7_500; // ~5 seconds at 1500 fps (fallback when no duration)
+    const FALLBACK_MIN_FRAMES: u32 = 15_000; // ~10 seconds at 1500 fps (increased from 7500 to reduce false positives)
 
     // Check if we have duration information
     let duration_us = log.duration_us();
@@ -68,13 +68,13 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 
         // Normal logs: > 15 seconds → Check for minimal gyro activity (ground tests)
         if duration_ms >= SHORT_DURATION_MS {
-            let (is_minimal_movement, max_variance) = has_minimal_gyro_activity(log);
+            let (is_minimal_movement, max_range) = has_minimal_gyro_activity(log);
             if is_minimal_movement {
                 return (
                     true,
                     format!(
-                        "minimal gyro activity ({:.1} variance) - likely ground test",
-                        max_variance
+                        "minimal gyro activity ({:.1} range) - likely ground test",
+                        max_range
                     ),
                 );
             }
@@ -83,8 +83,8 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
         return (false, String::new());
     }
 
-    // No duration information available, fall back to frame count
-    // Skip if very low frame count (equivalent to <5s at minimum viable fps)
+    // No duration information available, fall back to frame count and gyro variance
+    // Skip if very low frame count (equivalent to <10s at minimum viable fps)
     if log.stats.total_frames < FALLBACK_MIN_FRAMES {
         return (
             true,
@@ -95,11 +95,27 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
         );
     }
 
-    // Sufficient frames without duration info, keep it
+    // For logs without duration but sufficient frames, apply gyro range check
+    // This catches INAV logs and older Betaflight logs that lack duration info
+    let (is_minimal_movement, max_range) = has_minimal_gyro_activity(log);
+    if is_minimal_movement {
+        return (
+            true,
+            format!(
+                "minimal gyro activity ({:.1} range) - likely ground test (no duration info)",
+                max_range
+            ),
+        );
+    }
+
+    // Sufficient frames and meaningful gyro activity, keep it
     (false, String::new())
 }
 
 /// Analyzes gyro variance to detect ground tests vs actual flight
+///
+/// Uses range-normalized standard deviation to be scale-independent.
+/// This works better than coefficient of variation when values cross zero.
 ///
 /// Returns true if the log appears to be a static ground test (minimal movement)
 ///
@@ -107,11 +123,11 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 /// * `log` - The BBL log to analyze
 ///
 /// # Returns
-/// Tuple of (is_minimal_movement, max_variance_value)
+/// Tuple of (is_minimal_movement, max_metric_value)
 pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Conservative thresholds to avoid false-skips
     const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
-    const VERY_LOW_GYRO_VARIANCE_THRESHOLD: f64 = 0.3; // More aggressive threshold for ground test detection
+    const MIN_GYRO_RANGE: f64 = 1500.0; // Minimum range to consider as actual flight activity (increased from 100)
 
     let mut gyro_x_values = Vec::new();
     let mut gyro_y_values = Vec::new();
@@ -157,19 +173,38 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
         return (false, 0.0); // Not enough data, don't skip (conservative approach)
     }
 
-    // Calculate variance for each axis
-    let variance_x = calculate_variance(&gyro_x_values);
-    let variance_y = calculate_variance(&gyro_y_values);
-    let variance_z = calculate_variance(&gyro_z_values);
+    // Calculate range (max - min) for each axis
+    // A ground test will have very small range regardless of gyro scale
+    let range_x = calculate_range(&gyro_x_values);
+    let range_y = calculate_range(&gyro_y_values);
+    let range_z = calculate_range(&gyro_z_values);
 
-    // Use the maximum variance across all axes
-    let max_variance = variance_x.max(variance_y).max(variance_z);
+    // Use the maximum range across all axes
+    let max_range = range_x.max(range_y).max(range_z);
 
-    // Very conservative: only skip if the highest variance across all axes is extremely low
-    // This means the aircraft was essentially stationary (ground test)
-    let is_minimal = max_variance < VERY_LOW_GYRO_VARIANCE_THRESHOLD;
+    // If all axes have minimal range, it's a ground test
+    // Threshold of 100 is conservative - actual flights have ranges in thousands
+    let is_minimal = max_range < MIN_GYRO_RANGE;
 
-    (is_minimal, max_variance)
+    (is_minimal, max_range)
+}
+
+/// Calculate range (max - min) of a dataset
+///
+/// # Arguments
+/// * `values` - Slice of f64 values to compute range for
+///
+/// # Returns
+/// The range of the dataset
+pub fn calculate_range(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    max - min
 }
 
 /// Calculate variance of a dataset
@@ -259,8 +294,8 @@ mod tests {
 
     #[test]
     fn test_fallback_to_frame_count() {
-        // No duration info, but sufficient frame count should keep
-        let log = create_test_log(0, 0, 8000); // 8000 frames, no duration
+        // No duration info, but sufficient frame count should keep (above 15,000 threshold)
+        let log = create_test_log(0, 0, 16000); // 16000 frames, no duration
         let (should_skip, _) = should_skip_export(&log, false);
         assert!(
             !should_skip,
@@ -271,7 +306,7 @@ mod tests {
     #[test]
     fn test_fallback_to_frame_count_too_low() {
         // No duration info, insufficient frame count should skip
-        let log = create_test_log(0, 0, 5000); // 5000 frames, no duration (below 7500 threshold)
+        let log = create_test_log(0, 0, 10000); // 10000 frames, no duration (below 15000 threshold)
         let (should_skip, reason) = should_skip_export(&log, false);
         assert!(should_skip, "Expected to skip log with too few frames");
         assert!(
