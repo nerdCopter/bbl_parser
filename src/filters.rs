@@ -183,7 +183,7 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     let max_range = range_x.max(range_y).max(range_z);
 
     // If all axes have minimal range, it's a ground test
-    // Threshold of 100 is conservative - actual flights have ranges in thousands
+    // Threshold of MIN_GYRO_RANGE (1500.0) provides clear separation - actual flights have ranges in thousands
     let is_minimal = max_range < MIN_GYRO_RANGE;
 
     (is_minimal, max_range)
