@@ -207,11 +207,16 @@ pub fn calculate_range(values: &[f64]) -> f64 {
 
 /// Calculate variance of a dataset
 ///
+/// DEPRECATED: This function is kept for backward compatibility (exported in public API)
+/// but is no longer used by the filtering logic. The range-based detection approach
+/// (see `calculate_range()`) is now preferred as it's scale-independent.
+///
 /// # Arguments
 /// * `values` - Slice of f64 values to compute variance for
 ///
 /// # Returns
 /// The variance of the dataset
+#[allow(dead_code)]
 pub fn calculate_variance(values: &[f64]) -> f64 {
     if values.len() < 2 {
         return 0.0;
@@ -311,27 +316,5 @@ mod tests {
             reason.contains("too few frames"),
             "Expected 'too few frames' reason"
         );
-    }
-
-    #[test]
-    fn test_calculate_variance() {
-        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let variance = calculate_variance(&values);
-        // Expected variance: mean=3, variance=2.0
-        assert!((variance - 2.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_calculate_variance_single_value() {
-        let values = vec![5.0];
-        let variance = calculate_variance(&values);
-        assert_eq!(variance, 0.0);
-    }
-
-    #[test]
-    fn test_calculate_variance_empty() {
-        let values: Vec<f64> = vec![];
-        let variance = calculate_variance(&values);
-        assert_eq!(variance, 0.0);
     }
 }

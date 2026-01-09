@@ -67,7 +67,8 @@
 //! ## Filtering Functions
 //! - [`should_skip_export`] - Determine if log should be skipped based on heuristics
 //! - [`has_minimal_gyro_activity`] - Detect ground tests vs actual flights
-//! - [`calculate_variance`] - Statistical helper for gyro analysis
+//! - [`calculate_range`] - Calculate gyro axis range (max - min) for scale-independent analysis
+//! - [`calculate_variance`] - DEPRECATED: Statistical helper (no longer used; kept for backward compatibility)
 //!
 //! ## Conversion Utilities
 //! - [`convert_amperage_to_amps`] - Convert raw amperage to amps
