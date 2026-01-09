@@ -67,17 +67,15 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
         }
 
         // Normal logs: > 15 seconds → Check for minimal gyro activity (ground tests)
-        if duration_ms >= SHORT_DURATION_MS {
-            let (is_minimal_movement, max_range) = has_minimal_gyro_activity(log);
-            if is_minimal_movement {
-                return (
-                    true,
-                    format!(
-                        "minimal gyro activity ({:.1} range) - likely ground test",
-                        max_range
-                    ),
-                );
-            }
+        let (is_minimal_movement, max_range) = has_minimal_gyro_activity(log);
+        if is_minimal_movement {
+            return (
+                true,
+                format!(
+                    "minimal gyro activity ({:.1} range) - likely ground test",
+                    max_range
+                ),
+            );
         }
 
         return (false, String::new());
