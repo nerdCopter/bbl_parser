@@ -110,10 +110,12 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
     (false, String::new())
 }
 
-/// Analyzes gyro variance to detect ground tests vs actual flight
+/// Analyzes gyro activity to detect ground tests vs actual flight
 ///
-/// Uses range-normalized standard deviation to be scale-independent.
-/// This works better than coefficient of variation when values cross zero.
+/// Uses the maximum axis range (max - min) across all three gyro axes to detect minimal movement.
+/// This approach is less scale-sensitive than variance-based methods, though results still depend
+/// on gyro sensor units and firmware scaling. Real flights typically show gyro ranges in the thousands,
+/// while ground tests show minimal variation (sensor noise only).
 ///
 /// Returns true if the log appears to be a static ground test (minimal movement)
 ///
@@ -121,7 +123,7 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 /// * `log` - The BBL log to analyze
 ///
 /// # Returns
-/// Tuple of (is_minimal_movement, max_metric_value)
+/// Tuple of (is_minimal_movement, max_gyro_range)
 pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Conservative thresholds to avoid false-skips
     const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
@@ -172,16 +174,17 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     }
 
     // Calculate range (max - min) for each axis
-    // A ground test will have very small range regardless of gyro scale
+    // Ground tests show minimal range due to sensor noise only, while flights show large excursions.
+    // Note: Results depend on gyro sensor units (varies by firmware version and sensor type)
     let range_x = calculate_range(&gyro_x_values);
     let range_y = calculate_range(&gyro_y_values);
     let range_z = calculate_range(&gyro_z_values);
 
-    // Use the maximum range across all axes
+    // Use the maximum range across all axes as the detection metric
     let max_range = range_x.max(range_y).max(range_z);
 
-    // If all axes have minimal range, it's a ground test
-    // Threshold of MIN_GYRO_RANGE (1500.0) provides clear separation - actual flights have ranges in thousands
+    // If maximum axis range is below threshold, classify as ground test
+    // Threshold of MIN_GYRO_RANGE (1500.0) provides separation - flights typically >5000, ground tests <1500
     let is_minimal = max_range < MIN_GYRO_RANGE;
 
     (is_minimal, max_range)
@@ -189,11 +192,14 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
 
 /// Calculate range (max - min) of a dataset
 ///
+/// Returns 0.0 for empty datasets. If input contains NaN or infinite values,
+/// the result will be NaN (conservative: won't trigger skip logic).
+///
 /// # Arguments
 /// * `values` - Slice of f64 values to compute range for
 ///
 /// # Returns
-/// The range of the dataset
+/// The range of the dataset (max - min), or 0.0 if empty
 pub fn calculate_range(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -207,15 +213,19 @@ pub fn calculate_range(values: &[f64]) -> f64 {
 
 /// Calculate variance of a dataset
 ///
-/// DEPRECATED: This function is kept for backward compatibility (exported in public API)
-/// but is no longer used by the filtering logic. The range-based detection approach
-/// (see `calculate_range()`) is now preferred as it's scale-independent.
+/// # Deprecation Notice
+/// This function is no longer used by the filtering logic. The range-based detection approach
+/// (see [`calculate_range()`]) is now preferred as it reduces sensitivity to scale differences.
 ///
 /// # Arguments
 /// * `values` - Slice of f64 values to compute variance for
 ///
 /// # Returns
 /// The variance of the dataset
+#[deprecated(
+    since = "1.0.0",
+    note = "Use calculate_range() instead. This function is kept for backward compatibility only."
+)]
 #[allow(dead_code)]
 pub fn calculate_variance(values: &[f64]) -> f64 {
     if values.len() < 2 {
@@ -315,6 +325,74 @@ mod tests {
         assert!(
             reason.contains("too few frames"),
             "Expected 'too few frames' reason"
+        );
+    }
+
+    #[test]
+    fn test_no_duration_with_minimal_gyro_activity() {
+        // No duration info, sufficient frames, but minimal gyro range (ground test)
+        use crate::types::DecodedFrame;
+        use std::collections::HashMap;
+
+        let mut log = create_test_log(0, 0, 16000); // 16000 frames, no duration
+
+        // Create frames with minimal gyro variation (ground test pattern)
+        // Gyro range will be < 1500 (just sensor noise)
+        for i in 0..100 {
+            let mut data = HashMap::new();
+            data.insert("gyroADC[0]".to_string(), 10 + (i % 5) as i32); // Range: 5
+            data.insert("gyroADC[1]".to_string(), -15 + (i % 7) as i32); // Range: 7
+            data.insert("gyroADC[2]".to_string(), 20 + (i % 10) as i32); // Range: 10
+
+            log.frames.push(DecodedFrame {
+                frame_type: 'P',
+                timestamp_us: i as u64 * 1000,
+                loop_iteration: i,
+                data,
+            });
+        }
+
+        let (should_skip, reason) = should_skip_export(&log, false);
+        assert!(
+            should_skip,
+            "Expected to skip ground test with minimal gyro activity"
+        );
+        assert!(
+            reason.contains("minimal gyro activity"),
+            "Expected 'minimal gyro activity' reason, got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn test_no_duration_with_flight_gyro_activity() {
+        // No duration info, sufficient frames, high gyro range (actual flight)
+        use crate::types::DecodedFrame;
+        use std::collections::HashMap;
+
+        let mut log = create_test_log(0, 0, 16000); // 16000 frames, no duration
+
+        // Create frames with flight-typical gyro variation (large excursions)
+        // Gyro range will be > 1500 (actual flight movement)
+        for i in 0..100 {
+            let mut data = HashMap::new();
+            // Simulate flight with gyro values ranging -3000 to +3000
+            data.insert("gyroADC[0]".to_string(), -3000 + (i * 60) as i32); // Large range
+            data.insert("gyroADC[1]".to_string(), -2500 + (i * 50) as i32); // Large range
+            data.insert("gyroADC[2]".to_string(), -2000 + (i * 40) as i32); // Large range
+
+            log.frames.push(DecodedFrame {
+                frame_type: 'P',
+                timestamp_us: i as u64 * 1000,
+                loop_iteration: i,
+                data,
+            });
+        }
+
+        let (should_skip, _) = should_skip_export(&log, false);
+        assert!(
+            !should_skip,
+            "Expected to keep flight with significant gyro activity"
         );
     }
 }

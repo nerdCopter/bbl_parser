@@ -314,7 +314,14 @@ fn build_command() -> Command {
         .arg(
             Arg::new("force-export")
                 .long("force-export")
-                .help("Force export of all logs, bypassing smart filtering. Normal filtering: <5s logs are skipped; 5-15s logs need >1500fps; >15s logs or logs without duration are checked for gyro activity (ground test detection)")
+                .help("Force export of all logs, bypassing smart filtering")
+                .long_help(
+                    "Force export of all logs, bypassing smart filtering.\n\n\
+                    Normal filtering behavior:\n\
+                      - Logs <5s: Always skipped\n\
+                      - Logs 5-15s: Kept if data density >1500fps\n\
+                      - Logs >15s or without duration: Checked for gyro activity (ground test detection)"
+                )
                 .action(clap::ArgAction::SetTrue),
         )
 }
