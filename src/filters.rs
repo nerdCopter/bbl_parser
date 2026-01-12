@@ -338,7 +338,7 @@ mod tests {
         let mut log = create_test_log(0, 0, 16000); // 16000 frames, no duration
 
         // Create frames with minimal gyro variation (ground test pattern)
-        // Gyro range will be < 1500 (just sensor noise)
+        // Gyro range will be < MIN_GYRO_RANGE (500.0) — representing sensor noise only
         for i in 0..100 {
             let mut data = HashMap::new();
             data.insert("gyroADC[0]".to_string(), 10 + (i % 5) as i32); // Range: 5
@@ -374,7 +374,7 @@ mod tests {
         let mut log = create_test_log(0, 0, 16000); // 16000 frames, no duration
 
         // Create frames with flight-typical gyro variation (large excursions)
-        // Gyro range will be > 1500 (actual flight movement)
+        // Gyro range will be > MIN_GYRO_RANGE (500.0) (actual flight movement)
         for i in 0..100 {
             let mut data = HashMap::new();
             // Simulate flight with gyro values ranging -3000 to +3000
