@@ -127,7 +127,7 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
 pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Conservative thresholds to avoid false-skips
     const MIN_SAMPLES_FOR_ANALYSIS: usize = 15; // Reduced for limited sample data
-    const MIN_GYRO_RANGE: f64 = 1500.0; // Minimum range to consider as actual flight activity (increased from 100)
+    const MIN_GYRO_RANGE: f64 = 500.0; // Minimum range to distinguish static bench tests from gentle flights
 
     let mut gyro_x_values = Vec::new();
     let mut gyro_y_values = Vec::new();
@@ -184,7 +184,8 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     let max_range = range_x.max(range_y).max(range_z);
 
     // If maximum axis range is below threshold, classify as ground test
-    // Threshold of MIN_GYRO_RANGE (1500.0) provides separation - flights typically >5000, ground tests <1500
+    // Threshold of MIN_GYRO_RANGE (500.0) catches static bench tests while allowing gentle/beginner flights
+    // True ground tests: <500 (sensor noise), Gentle flights: >500 (real movement)
     let is_minimal = max_range < MIN_GYRO_RANGE;
 
     (is_minimal, max_range)
