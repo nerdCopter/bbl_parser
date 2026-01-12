@@ -193,21 +193,24 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
 
 /// Calculate range (max - min) of a dataset
 ///
-/// Returns 0.0 for empty datasets. If input contains NaN or infinite values,
-/// the result will be NaN (conservative: won't trigger skip logic).
+/// Returns 0.0 for empty datasets. If input contains NaN values, the result will be NaN
+/// (conservative: won't trigger skip logic). This ensures data quality issues are caught
+/// rather than silently passing through.
 ///
 /// # Arguments
 /// * `values` - Slice of f64 values to compute range for
 ///
 /// # Returns
-/// The range of the dataset (max - min), or 0.0 if empty
+/// The range of the dataset (max - min), or 0.0 if empty, or NaN if input contains NaN
 pub fn calculate_range(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
     }
 
-    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    // Use NaN as initial seed to propagate NaN in case of any NaN inputs
+    // This is conservative: data quality issues won't be masked
+    let min = values.iter().copied().fold(f64::NAN, f64::min);
+    let max = values.iter().copied().fold(f64::NAN, f64::max);
 
     max - min
 }
