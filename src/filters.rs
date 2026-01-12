@@ -30,7 +30,7 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
     const VERY_SHORT_DURATION_MS: u64 = 5_000; // 5 seconds - always skip
     const SHORT_DURATION_MS: u64 = 15_000; // 15 seconds - threshold for normal logs
     const MIN_DATA_DENSITY_FPS: f64 = 1500.0; // Minimum fps for short logs
-    const FALLBACK_MIN_FRAMES: u32 = 15_000; // ~10 seconds at 1500 fps (increased from 7500 to reduce false positives)
+    const FALLBACK_MIN_FRAMES: u32 = 7_500; // ~5 seconds at 1500 fps, ~1 second at 8000 fps
 
     // Check if we have duration information
     let duration_us = log.duration_us();
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_fallback_to_frame_count() {
-        // No duration info, but sufficient frame count should keep (above 15,000 threshold)
+        // No duration info, but sufficient frame count should keep (above 7,500 threshold)
         let log = create_test_log(0, 0, 16000); // 16000 frames, no duration
         let (should_skip, _) = should_skip_export(&log, false);
         assert!(
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_fallback_to_frame_count_too_low() {
         // No duration info, insufficient frame count should skip
-        let log = create_test_log(0, 0, 10000); // 10000 frames, no duration (below 15000 threshold)
+        let log = create_test_log(0, 0, 5000); // 5000 frames, no duration (below 7500 threshold)
         let (should_skip, reason) = should_skip_export(&log, false);
         assert!(should_skip, "Expected to skip log with too few frames");
         assert!(
