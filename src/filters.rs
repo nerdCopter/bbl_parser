@@ -139,14 +139,14 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
         for (frame_type, frames) in debug_frames {
             if *frame_type == 'I' || *frame_type == 'P' {
                 for frame in frames {
-                    if let Some(gyro_x) = frame.data.get("gyroADC[0]") {
-                        if let Some(gyro_y) = frame.data.get("gyroADC[1]") {
-                            if let Some(gyro_z) = frame.data.get("gyroADC[2]") {
-                                gyro_x_values.push(*gyro_x as f64);
-                                gyro_y_values.push(*gyro_y as f64);
-                                gyro_z_values.push(*gyro_z as f64);
-                            }
-                        }
+                    if let (Some(&gx), Some(&gy), Some(&gz)) = (
+                        frame.data.get("gyroADC[0]"),
+                        frame.data.get("gyroADC[1]"),
+                        frame.data.get("gyroADC[2]"),
+                    ) {
+                        gyro_x_values.push(gx as f64);
+                        gyro_y_values.push(gy as f64);
+                        gyro_z_values.push(gz as f64);
                     }
                 }
             }
@@ -156,14 +156,14 @@ pub fn has_minimal_gyro_activity(log: &BBLLog) -> (bool, f64) {
     // Fallback to frames if debug_frames not available or insufficient data
     if gyro_x_values.len() < MIN_SAMPLES_FOR_ANALYSIS {
         for frame in &log.frames {
-            if let Some(gyro_x) = frame.data.get("gyroADC[0]") {
-                if let Some(gyro_y) = frame.data.get("gyroADC[1]") {
-                    if let Some(gyro_z) = frame.data.get("gyroADC[2]") {
-                        gyro_x_values.push(*gyro_x as f64);
-                        gyro_y_values.push(*gyro_y as f64);
-                        gyro_z_values.push(*gyro_z as f64);
-                    }
-                }
+            if let (Some(&gx), Some(&gy), Some(&gz)) = (
+                frame.data.get("gyroADC[0]"),
+                frame.data.get("gyroADC[1]"),
+                frame.data.get("gyroADC[2]"),
+            ) {
+                gyro_x_values.push(gx as f64);
+                gyro_y_values.push(gy as f64);
+                gyro_z_values.push(gz as f64);
             }
         }
     }
@@ -207,10 +207,13 @@ pub fn calculate_range(values: &[f64]) -> f64 {
         return 0.0;
     }
 
-    // Use NaN as initial seed to propagate NaN in case of any NaN inputs
-    // This is conservative: data quality issues won't be masked
-    let min = values.iter().copied().fold(f64::NAN, f64::min);
-    let max = values.iter().copied().fold(f64::NAN, f64::max);
+    // Check for NaN values first (conservative: propagate NaN to catch data quality issues)
+    if values.iter().any(|v| v.is_nan()) {
+        return f64::NAN;
+    }
+
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
     max - min
 }
@@ -398,5 +401,36 @@ mod tests {
             !should_skip,
             "Expected to keep flight with significant gyro activity"
         );
+    }
+
+    #[test]
+    fn test_calculate_range_empty() {
+        assert_eq!(calculate_range(&[]), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_range_single_element() {
+        assert_eq!(calculate_range(&[5.0]), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_range_identical_values() {
+        assert_eq!(calculate_range(&[3.0, 3.0, 3.0]), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_range_normal() {
+        assert_eq!(calculate_range(&[-10.0, 0.0, 10.0]), 20.0);
+    }
+
+    #[test]
+    fn test_calculate_range_negative_values() {
+        assert_eq!(calculate_range(&[-100.0, -50.0, -25.0]), 75.0);
+    }
+
+    #[test]
+    fn test_calculate_range_with_nan() {
+        let result = calculate_range(&[1.0, f64::NAN, 3.0]);
+        assert!(result.is_nan(), "Expected NaN propagation with NaN input");
     }
 }
