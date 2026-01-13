@@ -64,8 +64,11 @@ To reduce noise from test arm/disarm logs:
 - < 5s: skipped
 - 5–15s: exported only if data density > 1500 fps
 - > 15s: exported
+- Minimal gyro activity: skipped (ground test detection)
 
-Use `--force-export` to export everything.
+Gyro range threshold: 500 (below = likely ground test, above = potential flight)
+
+Use `--force-export` to export all logs regardless of filtering criteria.
 
 ## Documentation
 
