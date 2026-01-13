@@ -118,9 +118,12 @@ src/
 
 ### **Smart Export Filtering**
 - **Duration-based:** < 5s skipped, 5–15s exported only if data density > 1500 fps, > 15s exported
-- **Gyro activity detection:** Minimal gyro variance indicates ground test vs. actual flight
+- **Gyro activity detection:** Minimal gyro range (< 500) indicates ground test vs. actual flight
+- **Thresholds:**
+  - `FALLBACK_MIN_FRAMES = 7_500` (~5 seconds at 1500fps)
+  - `MIN_GYRO_RANGE = 500.0` (actual flights >500, ground tests <500)
 - **Configurable:** Available via library API `should_skip_export()` and `has_minimal_gyro_activity()` for programmatic control
-- **Override:** `--force-export` flag or `force_export` option bypasses filtering heuristics
+- **Override:** `--force-export` flag (CLI) or `force_export` option (library) bypasses all filtering heuristics
 
 ### **Library API**
 - **Complete Data Access:** Programmatic access to all BBL data structures
