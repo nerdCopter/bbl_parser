@@ -84,10 +84,14 @@ fn extract_base_name(input_path: &Path) -> &str {
 }
 
 /// Known firmware vendor filename prefixes mapped to their revision keywords.
+/// To add a new firmware: append `("PREFIX_", "keyword")` where keyword is a
+/// lowercase substring of that firmware's `H Firmware revision:` header value.
 const KNOWN_FIRMWARE_PREFIXES: &[(&str, &str)] = &[
     ("EMUF_", "emuflight"),
     ("BTFL_", "betaflight"),
     ("INAV_", "inav"),
+    ("QUIC_", "quicksilver"),
+    ("KISS_", "kiss"),
 ];
 
 /// Return the canonical filename prefix for a firmware revision string (e.g. `"BTFL_"`),
