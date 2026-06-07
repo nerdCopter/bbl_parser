@@ -36,7 +36,7 @@
 //!     force_export: false,
 //! };
 //! let log = parse_bbl_file(Path::new("flight.BBL"), export_options.clone(), false).unwrap();
-//! let report = export_to_csv(&log, Path::new("flight.BBL"), &export_options).unwrap();
+//! let report = export_to_csv(&log, Path::new("flight.BBL"), &export_options, None).unwrap();
 //! if let Some(path) = report.csv_path {
 //!     println!("Exported to: {}", path.display());
 //! }

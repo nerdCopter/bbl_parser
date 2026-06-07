@@ -36,7 +36,7 @@ fn test_export_gpx_creates_output_directory() {
         force_export: false,
     };
 
-    let result = export_to_gpx(&bbl_path, 0, 1, &gps_coords, &[], &export_opts, None);
+    let result = export_to_gpx(&bbl_path, 0, 1, &gps_coords, &[], &export_opts, None, None);
     assert!(
         result.is_ok(),
         "GPX export should succeed and create directories"
@@ -85,7 +85,7 @@ fn test_export_event_creates_output_directory() {
         force_export: false,
     };
 
-    let result = export_to_event(&bbl_path, 0, 1, &event_frames, &export_opts);
+    let result = export_to_event(&bbl_path, 0, 1, &event_frames, &export_opts, None);
     assert!(
         result.is_ok(),
         "Event export should succeed and create directory"
@@ -124,7 +124,7 @@ fn test_export_event_empty_returns_ok() {
         force_export: false,
     };
 
-    let result = export_to_event(&bbl_path, 0, 1, &[], &export_opts);
+    let result = export_to_event(&bbl_path, 0, 1, &[], &export_opts, None);
     assert!(
         result.is_ok(),
         "Event export should succeed with empty events"
@@ -153,7 +153,7 @@ fn test_compute_export_paths_single_log() {
     };
 
     let (csv_path, _headers_path, gpx_path, event_path) =
-        compute_export_paths(&input_path, &export_opts, 1, 1);
+        compute_export_paths(&input_path, &export_opts, 1, 1, None);
 
     // Verify no .NN suffix for single log
     assert!(
@@ -185,7 +185,7 @@ fn test_compute_export_paths_multi_log() {
     };
 
     let (csv_path, _headers_path, gpx_path, event_path) =
-        compute_export_paths(&input_path, &export_opts, 2, 3);
+        compute_export_paths(&input_path, &export_opts, 2, 3, None);
 
     // Verify .NN suffix is applied for multi-log
     assert!(
@@ -246,7 +246,7 @@ fn test_gpx_empty_coordinates_returns_ok() {
     };
 
     // Should return Ok even with empty GPS coordinates
-    let result = export_to_gpx(&bbl_path, 0, 1, &[], &[], &export_opts, None);
+    let result = export_to_gpx(&bbl_path, 0, 1, &[], &[], &export_opts, None, None);
     assert!(
         result.is_ok(),
         "Export should succeed with empty GPS coordinates"

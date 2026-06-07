@@ -343,8 +343,7 @@ fn parse_datetime_to_epoch(datetime_str: &str) -> Option<u64> {
 
     // Convert to days since epoch (simplified, doesn't handle all edge cases)
     let days = ymd_to_days(year, month, day)?;
-    let local_secs =
-        (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
+    let local_secs = days * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
 
     // Convert local time to UTC by subtracting the offset
     // If offset is +02:00, local time is 2 hours ahead of UTC, so subtract 2 hours
