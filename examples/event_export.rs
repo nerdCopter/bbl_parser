@@ -47,6 +47,7 @@ fn main() -> anyhow::Result<()> {
             1, // total_logs (assuming single log for this example)
             &log.event_frames,
             &export_opts,
+            None,
         )?;
         println!("✓ Event export complete");
         println!("  Exported {} events", log.event_frames.len());

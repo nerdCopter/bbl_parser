@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
     // Export to CSV
     println!("\nExporting to CSV...");
-    export_to_csv(&log, Path::new(&input_file), &export_opts)?;
+    export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
     println!("✓ CSV export complete");
 
     Ok(())

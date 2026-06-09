@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
 
     // CSV Export (always works)
     println!("Exporting CSV...");
-    export_to_csv(&log, Path::new(&input_file), &export_opts)?;
+    export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
     println!("✓ CSV export complete");
 
     // Compute log index once (log_number is 1-based)
@@ -84,6 +84,7 @@ fn main() -> anyhow::Result<()> {
             &log.home_coordinates,
             &export_opts,
             log.header.log_start_datetime.as_deref(),
+            None,
         )?;
         println!(
             "✓ GPX export complete ({} coordinates)",
@@ -107,6 +108,7 @@ fn main() -> anyhow::Result<()> {
             log.total_logs,
             &log.event_frames,
             &export_opts,
+            None,
         )?;
         println!(
             "✓ Event export complete ({} events)",

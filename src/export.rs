@@ -83,6 +83,95 @@ fn extract_base_name(input_path: &Path) -> &str {
         .unwrap_or("blackbox")
 }
 
+/// Sanitize a `base_name_override` value for safe use in file path construction.
+/// Returns the final path component only, preventing directory traversal via `../`
+/// segments or absolute paths. Returns `None` if the value is empty or ends in `..`.
+fn sanitize_base_name_override(base_name_override: Option<&str>) -> Option<&str> {
+    let raw = base_name_override?;
+    Path::new(raw).file_name().and_then(|s| s.to_str())
+}
+
+/// Return a human-readable vendor name for a known filename prefix.
+/// Falls back to `"Unknown"` for unrecognised prefixes.
+pub fn vendor_name_for_prefix(prefix: &str) -> &'static str {
+    match prefix {
+        "EMUF_" => "EmuFlight",
+        "BTFL_" => "Betaflight",
+        "INAV_" => "iNav",
+        "QUIC_" => "Quicksilver",
+        _ => "Unknown",
+    }
+}
+
+/// Known firmware vendor filename prefixes mapped to their revision keywords.
+/// To add a new firmware: append `("PREFIX_", "keyword")` where keyword is a
+/// lowercase substring of that firmware's `H Firmware revision:` header value.
+/// For forks that share a base firmware's revision string, add an entry here
+/// for filename detection and add a corresponding entry to `FORK_REVISION_MAP`.
+const KNOWN_FIRMWARE_PREFIXES: &[(&str, &str)] = &[
+    ("EMUF_", "emuflight"),
+    ("BTFL_", "betaflight"),
+    ("INAV_", "inav"),
+    ("QUIC_", "quicksilver"), // Quicksilver; see FORK_REVISION_MAP for rename exemption
+];
+
+/// Fork firmware prefixes that intentionally report another vendor's revision string.
+/// Sessions in files with these prefixes are NOT renamed even when the revision string
+/// maps to a different canonical prefix — the mismatch is by design.
+///
+/// Each entry is `(file_prefix, reported_canonical_prefix)`.
+/// To add a fork: append `("FORK_", "BASE_")` where BASE_ is what
+/// `firmware_prefix_for_revision` returns for that fork's revision headers.
+const FORK_REVISION_MAP: &[(&str, &str)] = &[
+    // Quicksilver writes Betaflight revision headers for Blackbox Explorer compatibility.
+    ("QUIC_", "BTFL_"),
+];
+
+/// Return the canonical filename prefix for a firmware revision string (e.g. `"BTFL_"`),
+/// or `None` if the vendor is not recognised.
+pub fn firmware_prefix_for_revision(revision: &str) -> Option<&'static str> {
+    let rev_lower = revision.trim().to_lowercase();
+    for &(prefix, keyword) in KNOWN_FIRMWARE_PREFIXES {
+        if rev_lower.contains(keyword) {
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn detect_bbl_filename_prefix(stem: &str) -> Option<&'static str> {
+    KNOWN_FIRMWARE_PREFIXES
+        .iter()
+        .find(|&&(prefix, _)| stem.starts_with(prefix))
+        .map(|&(prefix, _)| prefix)
+}
+
+/// Compute a corrected base name for a session whose firmware vendor differs from
+/// the BBL filename prefix.  Returns `Some(corrected_stem)` when a replacement is
+/// needed; `None` when the vendors match, either is unrecognised, or the file prefix
+/// is a known fork that intentionally uses a different base firmware's revision string.
+///
+/// # Examples
+/// - `EMUF_BLACKBOX_LOG_...BBL` + `EmuFlight 0.4.3`          → `None` (matches)
+/// - `EMUF_BLACKBOX_LOG_...BBL` + `Betaflight 2025.12.0-beta` → `Some("BTFL_BLACKBOX_LOG_...")`
+/// - `QUIC_Twiglet_...BFL`      + `Betaflight 4.3.0`          → `None` (fork exemption)
+pub fn corrected_session_base_name(bbl_path: &Path, firmware_revision: &str) -> Option<String> {
+    let stem = bbl_path.file_stem()?.to_str()?;
+    let bbl_prefix = detect_bbl_filename_prefix(stem)?;
+    let session_prefix = firmware_prefix_for_revision(firmware_revision)?;
+    if bbl_prefix == session_prefix {
+        return None;
+    }
+    // Known fork: the revision mismatch is by design — do not rename
+    if FORK_REVISION_MAP
+        .iter()
+        .any(|&(fp, bp)| fp == bbl_prefix && bp == session_prefix)
+    {
+        return None;
+    }
+    Some(format!("{}{}", session_prefix, &stem[bbl_prefix.len()..]))
+}
+
 /// Helper to compute export file paths with consistent naming across all export types.
 /// Ensures CLI status messages match actual filenames written by export functions.
 ///
@@ -91,6 +180,7 @@ fn extract_base_name(input_path: &Path) -> &str {
 /// * `export_options` - Export configuration with optional output directory
 /// * `log_number` - 1-based log number (for .NN suffix when multiple logs)
 /// * `total_logs` - Total number of logs in the file
+/// * `base_name_override` - Optional replacement stem (e.g. from `corrected_session_base_name`)
 ///
 /// # Returns
 /// Tuple of (csv_path, headers_path, gpx_path, event_path) using consistent naming
@@ -99,13 +189,15 @@ pub fn compute_export_paths(
     export_options: &ExportOptions,
     log_number: usize,
     total_logs: usize,
+    base_name_override: Option<&str>,
 ) -> (
     std::path::PathBuf,
     std::path::PathBuf,
     std::path::PathBuf,
     std::path::PathBuf,
 ) {
-    let base_name = extract_base_name(input_path);
+    let base_name = sanitize_base_name_override(base_name_override)
+        .unwrap_or_else(|| extract_base_name(input_path));
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         std::path::Path::new(dir)
@@ -192,8 +284,10 @@ pub fn export_to_csv(
     log: &BBLLog,
     input_path: &Path,
     export_options: &ExportOptions,
+    base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
-    let base_name = extract_base_name(input_path);
+    let base_name = sanitize_base_name_override(base_name_override)
+        .unwrap_or_else(|| extract_base_name(input_path));
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         Path::new(dir)
@@ -414,6 +508,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 /// For very large GPS traces, the `log_start_datetime` is parsed via `generate_gpx_timestamp()`
 /// on each trackpoint. Future optimization: consider caching the parsed base epoch once per log
 /// to avoid repeated parsing overhead when exporting thousands of GPS points.
+#[allow(clippy::too_many_arguments)]
 pub fn export_to_gpx(
     input_path: &Path,
     log_index: usize,
@@ -422,14 +517,20 @@ pub fn export_to_gpx(
     home_coordinates: &[GpsHomeCoordinate],
     export_options: &ExportOptions,
     log_start_datetime: Option<&str>,
+    base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
     if gps_coordinates.is_empty() {
         return Ok(ExportReport::default());
     }
 
     // Use compute_export_paths to ensure consistent naming with CSV exports
-    let (_, _, gpx_path, _) =
-        compute_export_paths(input_path, export_options, log_index + 1, total_logs);
+    let (_, _, gpx_path, _) = compute_export_paths(
+        input_path,
+        export_options,
+        log_index + 1,
+        total_logs,
+        base_name_override,
+    );
 
     // Create output directory if it doesn't exist (match export_to_csv behavior)
     if let Some(parent) = gpx_path.parent() {
@@ -505,14 +606,20 @@ pub fn export_to_event(
     total_logs: usize,
     event_frames: &[EventFrame],
     export_options: &ExportOptions,
+    base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
     if event_frames.is_empty() {
         return Ok(ExportReport::default());
     }
 
     // Use compute_export_paths to ensure consistent naming with CSV exports
-    let (_, _, _, event_path) =
-        compute_export_paths(input_path, export_options, log_index + 1, total_logs);
+    let (_, _, _, event_path) = compute_export_paths(
+        input_path,
+        export_options,
+        log_index + 1,
+        total_logs,
+        base_name_override,
+    );
 
     // Create output directory if it doesn't exist (match export_to_csv behavior)
     if let Some(parent) = event_path.parent() {
@@ -570,6 +677,7 @@ mod tests {
             gps_coords,
             home_coords,
             &export_opts,
+            None,
             None,
         )?;
 
@@ -858,6 +966,7 @@ mod tests {
             &home_coords,
             &export_opts,
             None,
+            None,
         );
         assert!(
             result.is_ok(),
@@ -914,5 +1023,77 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_firmware_prefix_for_revision() {
+        assert_eq!(
+            firmware_prefix_for_revision("EmuFlight 0.4.3"),
+            Some("EMUF_")
+        );
+        assert_eq!(
+            firmware_prefix_for_revision("EMUFLIGHT 0.4.3"),
+            Some("EMUF_")
+        );
+        assert_eq!(
+            firmware_prefix_for_revision("Betaflight 4.5.0"),
+            Some("BTFL_")
+        );
+        assert_eq!(
+            firmware_prefix_for_revision("Betaflight 2025.12.0-beta (abc) STM32H743"),
+            Some("BTFL_")
+        );
+        assert_eq!(firmware_prefix_for_revision("INAV 7.1.2"), Some("INAV_"));
+        assert_eq!(firmware_prefix_for_revision(""), None);
+        assert_eq!(firmware_prefix_for_revision("Unknown firmware"), None);
+    }
+
+    #[test]
+    fn test_corrected_session_base_name_matching_vendor() {
+        let path = std::path::Path::new("/logs/EMUF_BLACKBOX_LOG_QUAD_20260531.BBL");
+        assert_eq!(corrected_session_base_name(path, "EmuFlight 0.4.3"), None);
+
+        let path = std::path::Path::new("/logs/BTFL_BLACKBOX_LOG_QUAD_20260531.BBL");
+        assert_eq!(corrected_session_base_name(path, "Betaflight 4.5.0"), None);
+    }
+
+    #[test]
+    fn test_corrected_session_base_name_mismatched_vendor() {
+        let path = std::path::Path::new("/logs/EMUF_BLACKBOX_LOG_QUAD_20260531.BBL");
+        assert_eq!(
+            corrected_session_base_name(path, "Betaflight 2025.12.0-beta"),
+            Some("BTFL_BLACKBOX_LOG_QUAD_20260531".to_string())
+        );
+
+        let path = std::path::Path::new("/logs/BTFL_BLACKBOX_LOG_QUAD_20260531.BBL");
+        assert_eq!(
+            corrected_session_base_name(path, "EmuFlight 0.4.3"),
+            Some("EMUF_BLACKBOX_LOG_QUAD_20260531".to_string())
+        );
+    }
+
+    #[test]
+    fn test_corrected_session_base_name_unknown_prefix() {
+        // BBL without a known prefix — no correction regardless of firmware
+        let path = std::path::Path::new("/logs/BLACKBOX_LOG_QUAD_20260531.BBL");
+        assert_eq!(corrected_session_base_name(path, "EmuFlight 0.4.3"), None);
+        assert_eq!(corrected_session_base_name(path, "Betaflight 4.5.0"), None);
+    }
+
+    #[test]
+    fn test_corrected_session_base_name_fork_exemption() {
+        // Quicksilver (QUIC_) intentionally writes Betaflight revision headers — must NOT rename
+        let path = std::path::Path::new("/logs/QUIC_Twiglet_2026-06-09_file_0.bfl");
+        assert_eq!(
+            corrected_session_base_name(path, "Betaflight 4.3.0"),
+            None,
+            "QUIC_ files with Betaflight revision must not be renamed to BTFL_"
+        );
+        // Sanity: an actual mismatch on a non-fork prefix still renames
+        let path = std::path::Path::new("/logs/EMUF_BLACKBOX_LOG_20260531.BBL");
+        assert_eq!(
+            corrected_session_base_name(path, "Betaflight 4.3.0"),
+            Some("BTFL_BLACKBOX_LOG_20260531".to_string())
+        );
     }
 }

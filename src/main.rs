@@ -6,7 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Import export functions from crate library
-use bbl_parser::export::{export_to_csv, export_to_event, export_to_gpx};
+use bbl_parser::export::{
+    corrected_session_base_name, export_to_csv, export_to_event, export_to_gpx,
+    firmware_prefix_for_revision, vendor_name_for_prefix,
+};
 
 // Import parser functions from crate library - using crate's unified implementations
 use bbl_parser::parser::parse_single_log;
@@ -747,6 +750,7 @@ fn parse_bbl_file_streaming(
     }
 
     let mut processed_logs = 0;
+    let mut session_firmware: Vec<(usize, String)> = Vec::new();
 
     for (log_index, &start_pos) in log_positions.iter().enumerate() {
         if debug {
@@ -773,6 +777,9 @@ fn parse_bbl_file_streaming(
             export_options,
         )?;
 
+        // Record firmware for transition detection (before any early-continue)
+        session_firmware.push((log.log_number, log.header.firmware_revision.clone()));
+
         // Display log info immediately
         display_log_info(&log);
 
@@ -789,9 +796,18 @@ fn parse_bbl_file_streaming(
             continue;
         }
 
+        // Correct the output prefix when this session's firmware vendor differs from the BBL filename
+        let base_name_override =
+            corrected_session_base_name(file_path, &log.header.firmware_revision);
+
         // Export CSV immediately while data is hot in cache
         if export_options.csv {
-            match export_to_csv(&log, file_path, export_options) {
+            match export_to_csv(
+                &log,
+                file_path,
+                export_options,
+                base_name_override.as_deref(),
+            ) {
                 Ok(report) => {
                     if let Some(headers_path) = report.headers_path {
                         println!("Exported headers to: {}", headers_path.display());
@@ -823,6 +839,7 @@ fn parse_bbl_file_streaming(
                 &log.home_coordinates,
                 export_options,
                 log.header.log_start_datetime.as_deref(),
+                base_name_override.as_deref(),
             ) {
                 Ok(report) => {
                     if let Some(gpx_path) = report.gpx_path {
@@ -850,6 +867,7 @@ fn parse_bbl_file_streaming(
                 log_positions.len(),
                 &log.event_frames,
                 export_options,
+                base_name_override.as_deref(),
             ) {
                 Ok(report) => {
                     if let Some(event_path) = report.event_path {
@@ -879,7 +897,59 @@ fn parse_bbl_file_streaming(
         // Log goes out of scope here, memory is freed immediately
     }
 
+    // Warn when sessions within a single BBL file span multiple firmware vendors
+    if log_positions.len() > 1 {
+        print_firmware_transition_warning(file_path, &session_firmware);
+    }
+
     Ok(processed_logs)
+}
+
+fn print_firmware_transition_warning(file_path: &Path, session_firmware: &[(usize, String)]) {
+    if session_firmware.len() <= 1 {
+        return;
+    }
+
+    // Group consecutive sessions by firmware vendor prefix
+    let mut groups: Vec<(usize, usize, String, String)> = Vec::new(); // (first, last, prefix, revision)
+    for (log_num, revision) in session_firmware {
+        let prefix = firmware_prefix_for_revision(revision)
+            .unwrap_or("UNKN_")
+            .to_string();
+        if let Some(last_group) = groups.last_mut() {
+            if last_group.2 == prefix {
+                last_group.1 = *log_num;
+                continue;
+            }
+        }
+        groups.push((*log_num, *log_num, prefix, revision.clone()));
+    }
+
+    // Only warn when multiple distinct firmware vendors are present
+    let unique_vendors: std::collections::HashSet<&str> =
+        groups.iter().map(|(_, _, p, _)| p.as_str()).collect();
+    if unique_vendors.len() <= 1 {
+        return;
+    }
+
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    println!("\nWARNING: Firmware transition detected in {filename}");
+    for (first, last, prefix, revision) in &groups {
+        let vendor_name = vendor_name_for_prefix(prefix.as_str());
+        if first == last {
+            println!("  Session {:03}: {} ({})", first, vendor_name, revision);
+        } else {
+            println!(
+                "  Sessions {:03}-{:03}: {} ({})",
+                first, last, vendor_name, revision
+            );
+        }
+    }
+    println!("  The flash was not erased before reflashing. Consider excluding earlier sessions.");
 }
 
 #[cfg(test)]
