@@ -86,11 +86,25 @@ fn extract_base_name(input_path: &Path) -> &str {
 /// Known firmware vendor filename prefixes mapped to their revision keywords.
 /// To add a new firmware: append `("PREFIX_", "keyword")` where keyword is a
 /// lowercase substring of that firmware's `H Firmware revision:` header value.
+/// For forks that share a base firmware's revision string, add an entry here
+/// for filename detection and add a corresponding entry to `FORK_REVISION_MAP`.
 const KNOWN_FIRMWARE_PREFIXES: &[(&str, &str)] = &[
     ("EMUF_", "emuflight"),
     ("BTFL_", "betaflight"),
     ("INAV_", "inav"),
-    ("QUIC_", "quicksilver"),
+    ("QUIC_", "quicksilver"), // Quicksilver; see FORK_REVISION_MAP for rename exemption
+];
+
+/// Fork firmware prefixes that intentionally report another vendor's revision string.
+/// Sessions in files with these prefixes are NOT renamed even when the revision string
+/// maps to a different canonical prefix — the mismatch is by design.
+///
+/// Each entry is `(file_prefix, reported_canonical_prefix)`.
+/// To add a fork: append `("FORK_", "BASE_")` where BASE_ is what
+/// `firmware_prefix_for_revision` returns for that fork's revision headers.
+const FORK_REVISION_MAP: &[(&str, &str)] = &[
+    // Quicksilver writes Betaflight revision headers for Blackbox Explorer compatibility.
+    ("QUIC_", "BTFL_"),
 ];
 
 /// Return the canonical filename prefix for a firmware revision string (e.g. `"BTFL_"`),
@@ -114,16 +128,25 @@ fn detect_bbl_filename_prefix(stem: &str) -> Option<&'static str> {
 
 /// Compute a corrected base name for a session whose firmware vendor differs from
 /// the BBL filename prefix.  Returns `Some(corrected_stem)` when a replacement is
-/// needed; `None` when the vendors match or either is unrecognised.
+/// needed; `None` when the vendors match, either is unrecognised, or the file prefix
+/// is a known fork that intentionally uses a different base firmware's revision string.
 ///
 /// # Examples
-/// - `EMUF_BLACKBOX_LOG_...BBL` + `EmuFlight 0.4.3`         → `None` (matches)
+/// - `EMUF_BLACKBOX_LOG_...BBL` + `EmuFlight 0.4.3`          → `None` (matches)
 /// - `EMUF_BLACKBOX_LOG_...BBL` + `Betaflight 2025.12.0-beta` → `Some("BTFL_BLACKBOX_LOG_...")`
+/// - `QUIC_Twiglet_...BFL`      + `Betaflight 4.3.0`          → `None` (fork exemption)
 pub fn corrected_session_base_name(bbl_path: &Path, firmware_revision: &str) -> Option<String> {
     let stem = bbl_path.file_stem()?.to_str()?;
     let bbl_prefix = detect_bbl_filename_prefix(stem)?;
     let session_prefix = firmware_prefix_for_revision(firmware_revision)?;
     if bbl_prefix == session_prefix {
+        return None;
+    }
+    // Known fork: the revision mismatch is by design — do not rename
+    if FORK_REVISION_MAP
+        .iter()
+        .any(|&(fp, bp)| fp == bbl_prefix && bp == session_prefix)
+    {
         return None;
     }
     Some(format!("{}{}", session_prefix, &stem[bbl_prefix.len()..]))
@@ -1033,5 +1056,22 @@ mod tests {
         let path = std::path::Path::new("/logs/BLACKBOX_LOG_QUAD_20260531.BBL");
         assert_eq!(corrected_session_base_name(path, "EmuFlight 0.4.3"), None);
         assert_eq!(corrected_session_base_name(path, "Betaflight 4.5.0"), None);
+    }
+
+    #[test]
+    fn test_corrected_session_base_name_fork_exemption() {
+        // Quicksilver (QUIC_) intentionally writes Betaflight revision headers — must NOT rename
+        let path = std::path::Path::new("/logs/QUIC_Twiglet_2026-06-09_file_0.bfl");
+        assert_eq!(
+            corrected_session_base_name(path, "Betaflight 4.3.0"),
+            None,
+            "QUIC_ files with Betaflight revision must not be renamed to BTFL_"
+        );
+        // Sanity: an actual mismatch on a non-fork prefix still renames
+        let path = std::path::Path::new("/logs/EMUF_BLACKBOX_LOG_20260531.BBL");
+        assert_eq!(
+            corrected_session_base_name(path, "Betaflight 4.3.0"),
+            Some("BTFL_BLACKBOX_LOG_20260531".to_string())
+        );
     }
 }
