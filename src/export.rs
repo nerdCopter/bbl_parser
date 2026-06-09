@@ -83,6 +83,26 @@ fn extract_base_name(input_path: &Path) -> &str {
         .unwrap_or("blackbox")
 }
 
+/// Sanitize a `base_name_override` value for safe use in file path construction.
+/// Returns the final path component only, preventing directory traversal via `../`
+/// segments or absolute paths. Returns `None` if the value is empty or ends in `..`.
+fn sanitize_base_name_override(base_name_override: Option<&str>) -> Option<&str> {
+    let raw = base_name_override?;
+    Path::new(raw).file_name().and_then(|s| s.to_str())
+}
+
+/// Return a human-readable vendor name for a known filename prefix.
+/// Falls back to `"Unknown"` for unrecognised prefixes.
+pub fn vendor_name_for_prefix(prefix: &str) -> &'static str {
+    match prefix {
+        "EMUF_" => "EmuFlight",
+        "BTFL_" => "Betaflight",
+        "INAV_" => "iNav",
+        "QUIC_" => "Quicksilver",
+        _ => "Unknown",
+    }
+}
+
 /// Known firmware vendor filename prefixes mapped to their revision keywords.
 /// To add a new firmware: append `("PREFIX_", "keyword")` where keyword is a
 /// lowercase substring of that firmware's `H Firmware revision:` header value.
@@ -176,7 +196,8 @@ pub fn compute_export_paths(
     std::path::PathBuf,
     std::path::PathBuf,
 ) {
-    let base_name = base_name_override.unwrap_or_else(|| extract_base_name(input_path));
+    let base_name = sanitize_base_name_override(base_name_override)
+        .unwrap_or_else(|| extract_base_name(input_path));
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         std::path::Path::new(dir)
@@ -265,7 +286,8 @@ pub fn export_to_csv(
     export_options: &ExportOptions,
     base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
-    let base_name = base_name_override.unwrap_or_else(|| extract_base_name(input_path));
+    let base_name = sanitize_base_name_override(base_name_override)
+        .unwrap_or_else(|| extract_base_name(input_path));
 
     let output_dir = if let Some(ref dir) = export_options.output_dir {
         Path::new(dir)

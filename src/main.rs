@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 // Import export functions from crate library
 use bbl_parser::export::{
     corrected_session_base_name, export_to_csv, export_to_event, export_to_gpx,
-    firmware_prefix_for_revision,
+    firmware_prefix_for_revision, vendor_name_for_prefix,
 };
 
 // Import parser functions from crate library - using crate's unified implementations
@@ -939,13 +939,7 @@ fn print_firmware_transition_warning(file_path: &Path, session_firmware: &[(usiz
 
     println!("\nWARNING: Firmware transition detected in {filename}");
     for (first, last, prefix, revision) in &groups {
-        let vendor_name = match prefix.as_str() {
-            "EMUF_" => "EmuFlight",
-            "BTFL_" => "Betaflight",
-            "INAV_" => "iNav",
-            "QUIC_" => "Quicksilver",
-            _ => "Unknown",
-        };
+        let vendor_name = vendor_name_for_prefix(prefix.as_str());
         if first == last {
             println!("  Session {:03}: {} ({})", first, vendor_name, revision);
         } else {
