@@ -943,6 +943,7 @@ fn print_firmware_transition_warning(file_path: &Path, session_firmware: &[(usiz
             "EMUF_" => "EmuFlight",
             "BTFL_" => "Betaflight",
             "INAV_" => "iNav",
+            "QUIC_" => "Quicksilver",
             _ => "Unknown",
         };
         if first == last {
