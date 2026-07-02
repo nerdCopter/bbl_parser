@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-02
+
+### Added
+- **Firmware vendor transition detection**: detects when a BBL/BFL file spans multiple firmware vendors (e.g. Betaflight sessions recorded before a board was reflashed to EmuFlight), warns with per-vendor session ranges, and corrects per-session output filename prefixes accordingly (prevents duplicate/incorrect prefixes like `BTFL_BTFL_*` or `EMUF_BTFL_*`)
+- **QUIC_ fork exemption**: `FORK_REVISION_MAP` exempts known Betaflight forks (Quicksilver/`QUIC_`) from false-positive vendor-transition renames, since Quicksilver intentionally writes Betaflight revision headers for Blackbox Explorer compatibility
+- **`sanitize_base_name_override()`**: prevents path traversal via the public library API's base-name override
+- **`vendor_name_for_prefix()`**: single source of truth for prefix-to-display-name mapping
+
+### Fixed
+- **Universal gyro activity filtering** (#40): ground-test logs without duration metadata (common in INAV and older Betaflight) no longer produce "Data Unavailable" output. Replaced scale-dependent variance detection with scale-independent gyro range detection (`MIN_GYRO_RANGE = 500.0`), lowered the no-duration frame fallback threshold (`FALLBACK_MIN_FRAMES = 7,500`), and fixed NaN propagation in `calculate_range()` for conservative handling of bad data. `calculate_variance()` is retained but deprecated (`#[deprecated(since = "1.0.0")]`) in favor of `calculate_range()`.
+- **Release workflow**: corrected the binary version check that compared the full `bbl_parser 1.0.0 <sha> (<date>)` output against a string missing the `bbl_parser` prefix
+- **`time` crate RUSTSEC-2026-0009**: updated the transitive `time` dependency (via the `vergen`/`vergen-gitcl` build-dependency) to 0.3.53, patching a denial-of-service via stack exhaustion (CVSS 6.8, medium)
+
+### Changed
+- **Release artifact packaging**: CI and release workflows now build ZIP archives (`bbl_parser`/`bbl_parser.exe` inside) instead of uploading loose binaries, for cleaner, versioned release pages
+- **Dependency update**: broad `cargo update` sweep (clap 4.5.40 → 4.6.1, serde 1.0.140 → 1.0.150, regex 1.11.1 → 1.12.4, syn 2.0.103 → 2.0.118, libc 0.2.173 → 0.2.186, and others)
+- **Build tooling**: migrated `vergen` 8 → `vergen-gitcl` 10 (`EmitBuilder`/`git_sha`/`git_commit_date` → `Emitter`/`Gitcl::all_git()`); `VERGEN_GIT_SHA`/`VERGEN_GIT_COMMIT_DATE` env var names are unchanged, so no downstream code changes were required
+
 ## [1.0.0] - 2025-12-29
 
 ### Added
@@ -97,5 +115,6 @@ while providing the benefits of a modern, type-safe Rust library.
 
 ## Version History
 
+- **1.0.1** (2026-07-02) - Firmware vendor transition detection, universal gyro activity filtering fix, dependency updates
 - **1.0.0** (2025-12-29) - First stable release
 - **0.9.0** (2025-08+) - Development releases leading up to 1.0.0
