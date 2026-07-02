@@ -100,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Find all ZIP files in artifacts
-          find release-artifacts -name "*.zip" -type f -exec gh release upload "${{ github.ref_name }}" {} \; --repo "${{ github.repository }}" --clobber
+          find release-artifacts -name "*.zip" -type f -exec gh release upload "${{ github.ref_name }}" {} --repo "${{ github.repository }}" --clobber \;
           echo "✅ All ZIP binaries uploaded"
 
       - name: Update release notes
