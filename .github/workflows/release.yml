@@ -108,7 +108,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           BUILD_INFO="${{ steps.version.outputs.build_info }}"
+          EXISTING_NOTES=$(gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" --json body -q .body)
           gh release edit "${{ github.ref_name }}" \
-            --notes "**Build Information:** $BUILD_INFO" \
+            --notes "$(printf '%s\n\n---\n**Build Information:** %s' "$EXISTING_NOTES" "$BUILD_INFO")" \
             --repo "${{ github.repository }}"
           echo "🎉 Release $BUILD_INFO is now live with platform-specific ZIP files!"
