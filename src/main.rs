@@ -292,6 +292,7 @@ fn build_command() -> Command {
         )
         .arg(
             Arg::new("output-dir")
+                .short('O')
                 .long("output-dir")
                 .help("Directory for output files (default: same as input file)")
                 .value_name("DIR"),
@@ -316,7 +317,9 @@ fn build_command() -> Command {
         )
         .arg(
             Arg::new("force-export")
+                .short('F')
                 .long("force-export")
+                .alias("force")
                 .help("Force export of all logs, bypassing smart filtering")
                 .long_help(
                     "Force export of all logs, bypassing smart filtering.\n\n\
