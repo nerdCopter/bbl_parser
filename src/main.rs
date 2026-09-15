@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Arg, Command};
-use glob::glob;
+use glob::{glob_with, MatchOptions};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,11 +70,16 @@ fn expand_input_paths_with_depth(
         ));
     }
     let mut bbl_files = Vec::new();
+    let glob_match_options = MatchOptions {
+        case_sensitive: false,
+        require_literal_separator: false,
+        require_literal_leading_dot: false,
+    };
 
     for input_path_str in input_paths {
         // Check if this is a glob pattern
         if input_path_str.contains('*') || input_path_str.contains('?') {
-            match glob(input_path_str) {
+            match glob_with(input_path_str, glob_match_options) {
                 Ok(glob_iter) => {
                     let collected = glob_iter.collect::<Result<Vec<_>, _>>();
                     match collected {
@@ -1071,6 +1076,47 @@ mod tests {
                 .unwrap_or(false);
             assert!(!is_valid, "Extension {ext} should be invalid");
         }
+    }
+
+    #[test]
+    fn test_glob_pattern_case_insensitive() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("HELIOSPRING_V2_LOG.BBL");
+        fs::write(&file_path, b"test").unwrap();
+
+        let pattern = temp_dir
+            .path()
+            .join("*helio*v2*.bbl")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let mut visited = HashSet::new();
+        let expanded = expand_input_paths(&[pattern], &mut visited).unwrap();
+
+        assert_eq!(
+            expanded.len(),
+            1,
+            "Lowercase pattern should match uppercase filename"
+        );
+        assert!(expanded[0].ends_with("HELIOSPRING_V2_LOG.BBL"));
+    }
+
+    #[test]
+    fn test_glob_pattern_no_false_positive() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("ABC.TXT"), b"test").unwrap();
+
+        let pattern = temp_dir.path().join("*xyz*").to_str().unwrap().to_string();
+
+        let mut visited = HashSet::new();
+        let expanded = expand_input_paths(&[pattern], &mut visited).unwrap();
+
+        assert_eq!(
+            expanded.len(),
+            0,
+            "Non-matching pattern should find no files"
+        );
     }
 
     #[test]
