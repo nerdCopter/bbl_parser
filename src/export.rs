@@ -282,8 +282,8 @@ impl CsvFieldMap {
 ///
 /// Applies the same low-value-flight filtering heuristics as the CLI
 /// (see [`crate::filters::should_skip_export`]), gated by
-/// `export_options.force_export`. A skipped log returns an empty
-/// `ExportReport` (all paths `None`) rather than an error.
+/// `export_options.force_export`. A skipped log returns an `ExportReport`
+/// with all paths `None` and `skip_reason` set, rather than an error.
 ///
 /// # Returns
 /// An `ExportReport` containing paths to the CSV and headers files that were created,
