@@ -513,7 +513,7 @@ pub fn parse_frames(
                 stats.total_frames += 1;
 
                 // Show progress for large files
-                if (debug && stats.total_frames % 50000 == 0) || stats.total_frames % 100000 == 0 {
+                if debug && stats.total_frames % 50000 == 0 {
                     println!("Parsed {} frames so far...", stats.total_frames);
                     std::io::stdout().flush().unwrap_or_default();
                 }

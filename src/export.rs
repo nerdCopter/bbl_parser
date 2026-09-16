@@ -55,8 +55,9 @@ pub struct ExportOptions {
 
 /// Result of an export operation, containing paths of all files that were created.
 ///
-/// Any path that is `None` indicates that export format was not requested or
-/// no data was available for export (e.g., empty GPS coordinates for GPX export).
+/// Any path that is `None` indicates that export format was not requested, no data
+/// was available for export (e.g., empty GPS coordinates for GPX export), or the
+/// log was skipped by `should_skip_export` filtering heuristics.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ExportReport {
@@ -277,6 +278,11 @@ impl CsvFieldMap {
 
 /// Export BBL log to CSV format
 ///
+/// Applies the same low-value-flight filtering heuristics as the CLI
+/// (see [`crate::filters::should_skip_export`]), gated by
+/// `export_options.force_export`. A skipped log returns an empty
+/// `ExportReport` (all paths `None`) rather than an error.
+///
 /// # Returns
 /// An `ExportReport` containing paths to the CSV and headers files that were created,
 /// or an error if the export failed.
@@ -286,6 +292,12 @@ pub fn export_to_csv(
     export_options: &ExportOptions,
     base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
+    let (should_skip, _reason) =
+        crate::filters::should_skip_export(log, export_options.force_export);
+    if should_skip {
+        return Ok(ExportReport::default());
+    }
+
     let base_name = sanitize_base_name_override(base_name_override)
         .unwrap_or_else(|| extract_base_name(input_path));
 

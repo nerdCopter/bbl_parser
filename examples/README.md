@@ -93,13 +93,16 @@ use bbl_parser::{parse_bbl_file, parse_bbl_file_all_logs, export_to_csv, ExportO
 
 // If you only care about the first flight:
 let log = parse_bbl_file(path, options, false)?;
-export_to_csv(&log, path, &options)?;
+let report = export_to_csv(&log, path, &options, None)?;
+// report.csv_path is None if should_skip_export filtered this flight
+// (short/low-density/minimal-movement) and options.force_export was false.
 
 // If you need to handle all flights:
 let logs = parse_bbl_file_all_logs(path, options, false)?;
 for log in logs {
-    export_to_csv(&log, path, &options)?;
-    // Library automatically handles .01, .02, .03 suffixes
+    export_to_csv(&log, path, &options, None)?;
+    // Library automatically handles .01, .02, .03 suffixes;
+    // filtered flights return an empty ExportReport instead of writing files.
 }
 ```
 
@@ -138,7 +141,7 @@ let log = parse_bbl_file(path, options, false)?;  // Only gets first flight!
 ```rust
 let logs = parse_bbl_file_all_logs(path, options, false)?;
 for log in logs {
-    export_to_csv(&log, path, &options)?;
+    export_to_csv(&log, path, &options, None)?;
 }
 ```
 
@@ -356,8 +359,10 @@ use std::path::Path;
 
 let opts = ExportOptions { csv: true, gpx: false, event: false, output_dir: None, force_export: false };
 let log = parse_bbl_file(Path::new("flight.BBL"), opts.clone(), false)?;
-export_to_csv(&log, Path::new("flight.BBL"), &opts)?;
+let report = export_to_csv(&log, Path::new("flight.BBL"), &opts, None)?;
 // Creates: flight.csv + flight.headers.csv
+// report.csv_path is None instead if should_skip_export filtered this flight
+// (short/low-density/minimal-movement) and force_export was false.
 ```
 
 ### GPX + Event Export

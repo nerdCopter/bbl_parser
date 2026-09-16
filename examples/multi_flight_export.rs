@@ -60,16 +60,18 @@ fn main() -> anyhow::Result<()> {
 
         // Export to CSV
         println!("  Exporting to CSV...");
-        export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
+        let report = export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
 
         // Display export result with optional flight number suffix
-        if log.total_logs > 1 {
-            println!("  ✓ Exported as .{:02}.csv\n", log.log_number);
-        } else {
-            println!("  ✓ Exported\n");
+        match report.csv_path {
+            Some(_) if log.total_logs > 1 => {
+                println!("  ✓ Exported as .{:02}.csv\n", log.log_number)
+            }
+            Some(_) => println!("  ✓ Exported\n"),
+            None => println!("  ⊘ Skipped (low-value-flight filtering; see should_skip_export)\n"),
         }
     }
 
-    println!("✓ All CSV exports complete");
+    println!("✓ CSV export pass complete");
     Ok(())
 }

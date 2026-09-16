@@ -149,12 +149,21 @@ fn main() -> anyhow::Result<()> {
     // Export all logs from the file (handles both single and multi-log files)
     let logs = parse_bbl_file_all_logs(Path::new("flight.BBL"), export_opts.clone(), false)?;
     for log in logs {
-        export_to_csv(&log, Path::new("flight.BBL"), &export_opts)?;
+        let report = export_to_csv(&log, Path::new("flight.BBL"), &export_opts, None)?;
+        if let Some(csv_path) = report.csv_path {
+            println!("CSV exported: {}", csv_path.display());
+        } else {
+            println!("CSV export skipped (should_skip_export filtering)");
+        }
     }
-    println!("CSV exported successfully");
     Ok(())
 }
 ```
+
+With `force_export: false` (the default), `should_skip_export` can skip short, low-density, or
+minimal-movement flights — `export_to_csv` then returns an `ExportReport` with `csv_path: None`
+instead of writing files. Check the returned report rather than assuming a CSV was always
+created; set `force_export: true` to disable this filtering entirely.
 
 This creates two files per flight:
 - `flight.csv` or `flight.01.csv`, `flight.02.csv`, etc. - Main flight data with blackbox_decode compatible format
@@ -252,8 +261,8 @@ fn main() -> anyhow::Result<()> {
     let input_path = Path::new("flight.BBL");
     let log = parse_bbl_file(input_path, export_opts.clone(), false)?;
     
-    // Export CSV
-    export_to_csv(&log, input_path, &export_opts)?;
+    // Export CSV (skipped for short/low-density flights unless force_export is set)
+    let csv_report = export_to_csv(&log, input_path, &export_opts, None)?;
     
     // Export GPX if GPS data exists
     if !log.gps_coordinates.is_empty() {
@@ -265,7 +274,14 @@ fn main() -> anyhow::Result<()> {
         export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?;
     }
     
-    println!("All exports completed successfully");
+    println!(
+        "CSV: {}",
+        if csv_report.csv_path.is_some() {
+            "exported"
+        } else {
+            "skipped (should_skip_export filtering)"
+        }
+    );
     Ok(())
 }
 ```

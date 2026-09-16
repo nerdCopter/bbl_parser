@@ -65,10 +65,14 @@ fn main() -> anyhow::Result<()> {
     // Export all available formats
     println!("\n=== Exporting Data ===");
 
-    // CSV Export (always works)
+    // CSV Export (skipped for short/low-density flights unless force_export is set)
     println!("Exporting CSV...");
-    export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
-    println!("✓ CSV export complete");
+    let csv_report = export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
+    if csv_report.csv_path.is_some() {
+        println!("✓ CSV export complete");
+    } else {
+        println!("⊘ CSV export skipped (low-value-flight filtering; see should_skip_export)");
+    }
 
     // Compute log index once (log_number is 1-based)
     let log_index = log.log_number - 1;
@@ -127,7 +131,14 @@ fn main() -> anyhow::Result<()> {
     if let Some(dir) = output_dir {
         println!("Output directory: {}", dir);
     }
-    println!("✓ CSV files exported");
+    println!(
+        "{} CSV files exported",
+        if csv_report.csv_path.is_some() {
+            "✓"
+        } else {
+            "⊘"
+        }
+    );
     println!(
         "{} GPS data exported",
         if log.gps_coordinates.is_empty() {
