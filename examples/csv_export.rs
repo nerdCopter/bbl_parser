@@ -54,8 +54,12 @@ fn main() -> anyhow::Result<()> {
 
     // Export to CSV
     println!("\nExporting to CSV...");
-    export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
-    println!("✓ CSV export complete");
+    let report = export_to_csv(&log, Path::new(&input_file), &export_opts, None)?;
+    if let Some(csv_path) = report.csv_path {
+        println!("✓ CSV export complete: {}", csv_path.display());
+    } else {
+        println!("⊘ CSV export skipped (low-value-flight filtering; see should_skip_export)");
+    }
 
     Ok(())
 }

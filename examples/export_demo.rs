@@ -84,8 +84,12 @@ fn main() -> Result<()> {
     // Export CSV
     println!("=== Exporting Data ===");
     println!("Exporting CSV files...");
-    export_to_csv(&log, input_path, &export_opts, None)?;
-    println!("✓ CSV export complete");
+    let csv_report = export_to_csv(&log, input_path, &export_opts, None)?;
+    if csv_report.csv_path.is_some() {
+        println!("✓ CSV export complete");
+    } else {
+        println!("⊘ CSV export skipped (low-value-flight filtering; see should_skip_export)");
+    }
 
     // Compute log index once (log_number is 1-based)
     let log_index = log.log_number.checked_sub(1).ok_or_else(|| {
