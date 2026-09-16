@@ -69,6 +69,8 @@ pub struct ExportReport {
     pub gpx_path: Option<std::path::PathBuf>,
     /// Path to the event JSON file (None if event export was not performed or no events were found)
     pub event_path: Option<std::path::PathBuf>,
+    /// Reason the CSV export was skipped by `should_skip_export` filtering (None if not skipped)
+    pub skip_reason: Option<String>,
 }
 
 /// Extract the base filename from an input path with consistent fallback.
@@ -292,10 +294,13 @@ pub fn export_to_csv(
     export_options: &ExportOptions,
     base_name_override: Option<&str>,
 ) -> Result<ExportReport> {
-    let (should_skip, _reason) =
+    let (should_skip, reason) =
         crate::filters::should_skip_export(log, export_options.force_export);
     if should_skip {
-        return Ok(ExportReport::default());
+        return Ok(ExportReport {
+            skip_reason: Some(reason),
+            ..ExportReport::default()
+        });
     }
 
     let base_name = sanitize_base_name_override(base_name_override)
@@ -331,6 +336,7 @@ pub fn export_to_csv(
         headers_path: Some(header_csv_path),
         gpx_path: None,
         event_path: None,
+        skip_reason: None,
     })
 }
 
@@ -604,6 +610,7 @@ pub fn export_to_gpx(
         headers_path: None,
         gpx_path: Some(gpx_path),
         event_path: None,
+        skip_reason: None,
     })
 }
 
@@ -657,6 +664,7 @@ pub fn export_to_event(
         headers_path: None,
         gpx_path: None,
         event_path: Some(event_path),
+        skip_reason: None,
     })
 }
 
@@ -1107,5 +1115,57 @@ mod tests {
             corrected_session_base_name(path, "Betaflight 4.3.0"),
             Some("BTFL_BLACKBOX_LOG_20260531".to_string())
         );
+    }
+
+    #[test]
+    fn test_export_to_csv_reports_skip_reason() -> Result<()> {
+        // Default BBLLog has zero duration and zero frames, so should_skip_export
+        // takes the "no duration info" fallback path and skips on frame count.
+        let log = BBLLog::new(1, 1);
+        let temp_dir = TempDir::new()?;
+        let input_path = temp_dir.path().join("test_input.bbl");
+
+        let export_opts = ExportOptions {
+            csv: true,
+            gpx: false,
+            event: false,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            force_export: false,
+        };
+
+        let report = export_to_csv(&log, &input_path, &export_opts, None)?;
+
+        assert!(report.csv_path.is_none(), "skipped log must not write CSV");
+        let reason = report
+            .skip_reason
+            .expect("skipped log must carry a skip_reason");
+        assert!(
+            reason.contains("too few frames"),
+            "expected frame-count skip reason, got: {reason}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_export_to_csv_no_skip_reason_when_forced() -> Result<()> {
+        let log = BBLLog::new(1, 1);
+        let temp_dir = TempDir::new()?;
+        let input_path = temp_dir.path().join("test_input.bbl");
+
+        let export_opts = ExportOptions {
+            csv: true,
+            gpx: false,
+            event: false,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            force_export: true,
+        };
+
+        let report = export_to_csv(&log, &input_path, &export_opts, None)?;
+
+        assert!(
+            report.skip_reason.is_none(),
+            "forced export must not carry a skip_reason"
+        );
+        Ok(())
     }
 }

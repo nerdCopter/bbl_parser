@@ -153,7 +153,8 @@ fn main() -> anyhow::Result<()> {
         if let Some(csv_path) = report.csv_path {
             println!("CSV exported: {}", csv_path.display());
         } else {
-            println!("CSV export skipped (should_skip_export filtering)");
+            let reason = report.skip_reason.as_deref().unwrap_or("unknown");
+            println!("CSV export skipped: {reason}");
         }
     }
     Ok(())
@@ -162,8 +163,9 @@ fn main() -> anyhow::Result<()> {
 
 With `force_export: false` (the default), `should_skip_export` can skip short, low-density, or
 minimal-movement flights — `export_to_csv` then returns an `ExportReport` with `csv_path: None`
-instead of writing files. Check the returned report rather than assuming a CSV was always
-created; set `force_export: true` to disable this filtering entirely.
+and `skip_reason: Some(reason)` instead of writing files. Check the returned report rather than
+assuming a CSV was always created; set `force_export: true` to disable this filtering entirely,
+which also leaves `skip_reason` as `None`.
 
 This creates two files per flight:
 - `flight.csv` or `flight.01.csv`, `flight.02.csv`, etc. - Main flight data with blackbox_decode compatible format
@@ -274,14 +276,13 @@ fn main() -> anyhow::Result<()> {
         export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?;
     }
     
-    println!(
-        "CSV: {}",
-        if csv_report.csv_path.is_some() {
-            "exported"
-        } else {
-            "skipped (should_skip_export filtering)"
+    match csv_report.csv_path {
+        Some(csv_path) => println!("CSV: exported to {}", csv_path.display()),
+        None => {
+            let reason = csv_report.skip_reason.as_deref().unwrap_or("unknown");
+            println!("CSV: skipped ({reason})");
         }
-    );
+    }
     Ok(())
 }
 ```
