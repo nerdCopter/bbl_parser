@@ -11,7 +11,7 @@ rust-version = "1.70.0"
 
 [build-dependencies]
 anyhow = "1.0"
-vergen-gitcl = "10"
+vergen-gitcl = { version = "10", optional = true }
 
 [dependencies]
 anyhow = "1.0"
@@ -28,10 +28,15 @@ default = ["csv", "cli"]
 csv = ["dep:csv"]
 json = ["dep:serde", "dep:serde_json"]
 serde = ["dep:serde"]
-cli = ["dep:clap", "dep:glob", "dep:regex"]
+cli = ["dep:clap", "dep:glob", "dep:regex", "dep:vergen-gitcl"]
 
 [dev-dependencies]
 tempfile = "3.0"
+
+[[bin]]
+name = "bbl_parser"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [[example]]
 name = "bbl_crate_test"
