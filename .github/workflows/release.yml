@@ -76,6 +76,8 @@ jobs:
     name: Upload Assets to GitHub Release
     needs: build-release-binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
