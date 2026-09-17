@@ -90,14 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Future Roadmap
 
-### Planned for 1.1.0
+### Planned for 1.x series
 - IMU angle computation (roll, pitch, yaw) from gyro/accelerometer/magnetometer data
 - Extended unit conversions (altitude, speed, rotation rates, acceleration)
 - GPS data integration into main CSV output
 - Enhanced loop timing statistics and frame distribution analysis
 - Parallel frame processing for multi-log files
-
-### Planned for 1.x series
 - Advanced filtering options for specialized analysis
 - Raw mode output (unprocessed sensor values)
 - Current meter simulation improvements
@@ -130,6 +128,7 @@ while providing the benefits of a modern, type-safe Rust library.
 
 ## Version History
 
+- **1.1.0** (2026-09-17) - Export skip-reason reporting, library filtering parity, case-insensitive glob matching, `-O`/`-F` short flags
 - **1.0.1** (2026-07-02) - Firmware vendor transition detection, universal gyro activity filtering fix, dependency updates
 - **1.0.0** (2025-12-29) - First stable release
 - **0.9.0** (2025-08+) - Development releases leading up to 1.0.0
