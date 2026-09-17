@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-17
+
+### Added
+- **`ExportReport.skip_reason: Option<String>`**: `export_to_csv` now reports why a flight was filtered out (too short, low data density, minimal gyro activity, too few frames), instead of discarding the reason and returning only `csv_path: None` (#59)
+- **`-O`/`-F` short flags**: `-O` for `--output-dir`, `-F` for `--force-export`; also adds a hidden `--force` long alias for `--force-export` (#52)
+
+### Fixed
+- **Library filtering parity** (#57): `export_to_csv` now applies `should_skip_export` filtering directly, so `ExportOptions.force_export` has effect for library consumers calling `export_to_csv` without going through the CLI. Previously the heuristic only ran in the CLI's `main()`
+- **Frame-parsing progress print**: the unconditional 100,000-frame progress print in `parse_bbl_file_all_logs`/`parse_bbl_bytes_all_logs` is now fully gated behind the `debug` flag, matching the existing 50,000-frame branch (#57)
+- **Case-insensitive glob matching** (#54): `expand_input_paths_with_depth()` used the `glob` crate's default case-sensitive matching, contradicting documented case-insensitive behavior; switched to `glob_with()` with `case_sensitive: false`
+- **Release workflow `--repo`/`--clobber` placement** (#48): `find -exec gh release upload ... \; --repo ... --clobber` passed `--repo`/`--clobber` as `find` predicates instead of `gh` arguments, failing release asset uploads; moved `\;` to the end of the `-exec` invocation
+
+### Changed
+- **Semver note**: `ExportReport` gained a new public field. Treated as a minor addition — the struct is return-only, with no known consumer constructing it via struct literal or exhaustive pattern match.
+
 ## [1.0.1] - 2026-07-02
 
 ### Added
@@ -75,14 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Future Roadmap
 
-### Planned for 1.1.0
+### Planned for 1.x series
 - IMU angle computation (roll, pitch, yaw) from gyro/accelerometer/magnetometer data
 - Extended unit conversions (altitude, speed, rotation rates, acceleration)
 - GPS data integration into main CSV output
 - Enhanced loop timing statistics and frame distribution analysis
 - Parallel frame processing for multi-log files
-
-### Planned for 1.x series
 - Advanced filtering options for specialized analysis
 - Raw mode output (unprocessed sensor values)
 - Current meter simulation improvements
@@ -115,6 +128,7 @@ while providing the benefits of a modern, type-safe Rust library.
 
 ## Version History
 
+- **1.1.0** (2026-09-17) - Export skip-reason reporting, library filtering parity, case-insensitive glob matching, `-O`/`-F` short flags
 - **1.0.1** (2026-07-02) - Firmware vendor transition detection, universal gyro activity filtering fix, dependency updates
 - **1.0.0** (2025-12-29) - First stable release
 - **0.9.0** (2025-08+) - Development releases leading up to 1.0.0

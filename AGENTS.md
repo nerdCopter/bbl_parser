@@ -64,7 +64,8 @@
   - `cargo build --release` passes with no errors or warnings.
 - **Files to Commit:**
   - Only `src/**/*.rs`, `examples/**/*.rs`, `Cargo.*`, `README.md`, `OVERVIEW.md`, `CRATE_USAGE.md`,
-    `examples/README.md`, `.gitignore`, and `.github/**` — never `git add .` or `git add -A`.
+    `CHANGELOG.md`, `AGENTS.md`, `examples/README.md`, `.gitignore`, and `.github/**`.
+  - Never `git add .` or `git add -A`.
   - Follow `.gitignore`.
 - **User Confirmation:** Ask user before committing.
 - **Commit Message:**
