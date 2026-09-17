@@ -33,6 +33,11 @@ cli = ["dep:clap", "dep:glob", "dep:regex", "dep:vergen-gitcl"]
 [dev-dependencies]
 tempfile = "3.0"
 
+[[bin]]
+name = "bbl_parser"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [[example]]
 name = "bbl_crate_test"
 required-features = ["cli"]
