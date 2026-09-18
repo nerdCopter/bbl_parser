@@ -13,7 +13,8 @@ use crate::types::BBLLog;
 
 /// Determines if a log should be skipped for export based on duration and frame count
 ///
-/// Uses smart filtering: <5s always skip, 5-15s keep if good data density (>1500fps), >15s always keep
+/// Uses smart filtering: <5s always skip, [5s, 15s) requires data density >=1500fps AND
+/// meaningful gyro activity, >=15s requires meaningful gyro activity
 /// This helps eliminate ground tests, arm checks, and other non-flight activities.
 ///
 /// # Arguments
@@ -51,22 +52,21 @@ pub fn should_skip_export(log: &BBLLog, force_export: bool) -> (bool, String) {
             return (true, format!("too short ({:.1}s < 5.0s)", duration_s));
         }
 
-        // Short logs: 5-15 seconds → Keep if sufficient data density (>1500 fps)
-        if duration_ms < SHORT_DURATION_MS {
-            if fps < MIN_DATA_DENSITY_FPS {
-                return (
-                    true,
-                    format!(
-                        "insufficient data density ({:.0}fps < {:.0}fps for {:.1}s log)",
-                        fps, MIN_DATA_DENSITY_FPS, duration_s
-                    ),
-                );
-            }
-            // Good data density, keep it
-            return (false, String::new());
+        // Short logs: 5-15 seconds → additionally require sufficient data density
+        // (>1500 fps). A short, dense log still falls through to the gyro-activity
+        // check below — density alone doesn't rule out a stationary bench test.
+        if duration_ms < SHORT_DURATION_MS && fps < MIN_DATA_DENSITY_FPS {
+            return (
+                true,
+                format!(
+                    "insufficient data density ({:.0}fps < {:.0}fps for {:.1}s log)",
+                    fps, MIN_DATA_DENSITY_FPS, duration_s
+                ),
+            );
         }
 
-        // Normal logs: > 15 seconds → Check for minimal gyro activity (ground tests)
+        // 5+ second logs that passed the density gate above (if applicable):
+        // check for minimal gyro activity (ground tests).
         let (is_minimal_movement, max_range) = has_minimal_gyro_activity(log);
         if is_minimal_movement {
             return (
@@ -301,6 +301,71 @@ mod tests {
         assert!(
             reason.contains("insufficient data density"),
             "Expected 'insufficient data density' reason"
+        );
+    }
+
+    #[test]
+    fn test_should_skip_short_dense_stationary_log() {
+        // 10 seconds, 2000fps (good density), but minimal gyro range: a stationary
+        // bench test that logs fast enough to previously slip past the density-only check.
+        use crate::types::DecodedFrame;
+        use std::collections::HashMap;
+
+        let mut log = create_test_log(0, 10_000_000, 20_000); // 10s at 2000fps
+
+        for i in 0..100 {
+            let mut data = HashMap::new();
+            data.insert("gyroADC[0]".to_string(), 10 + (i % 5) as i32); // Range: 5
+            data.insert("gyroADC[1]".to_string(), -15 + (i % 7) as i32); // Range: 7
+            data.insert("gyroADC[2]".to_string(), 20 + (i % 10) as i32); // Range: 10
+
+            log.frames.push(DecodedFrame {
+                frame_type: 'P',
+                timestamp_us: i as u64 * 1000,
+                loop_iteration: i,
+                data,
+            });
+        }
+
+        let (should_skip, reason) = should_skip_export(&log, false);
+        assert!(
+            should_skip,
+            "Expected to skip short, dense, but stationary log"
+        );
+        assert!(
+            reason.contains("minimal gyro activity"),
+            "Expected 'minimal gyro activity' reason, got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn test_should_keep_short_dense_flight_log() {
+        // 10 seconds, 2000fps, and real gyro movement: still kept, no false positive
+        // from adding the gyro-activity check to this bucket.
+        use crate::types::DecodedFrame;
+        use std::collections::HashMap;
+
+        let mut log = create_test_log(0, 10_000_000, 20_000); // 10s at 2000fps
+
+        for i in 0..100 {
+            let mut data = HashMap::new();
+            data.insert("gyroADC[0]".to_string(), -3000 + (i * 60) as i32); // Large range
+            data.insert("gyroADC[1]".to_string(), -2500 + (i * 50) as i32); // Large range
+            data.insert("gyroADC[2]".to_string(), -2000 + (i * 40) as i32); // Large range
+
+            log.frames.push(DecodedFrame {
+                frame_type: 'P',
+                timestamp_us: i as u64 * 1000,
+                loop_iteration: i,
+                data,
+            });
+        }
+
+        let (should_skip, _) = should_skip_export(&log, false);
+        assert!(
+            !should_skip,
+            "Expected to keep short, dense log with real gyro activity"
         );
     }
 
