@@ -191,7 +191,7 @@ Data version: 2
 Looptime: 125 μs
 
 === Frame Statistics ===
-Total frames: 84235
+Total frames: 85005
 I frames: 1316
 P frames: 82845
 S frames: 6
@@ -211,8 +211,9 @@ Exporting event file (4 events)...
 
 === Sample Events ===
   1. Sync beep (time: 0 μs)
-  2. Disarm (time: 10529375 μs)
-  ... and 2 more events
+  2. Arm (time: 503200 μs)
+  3. Flight mode change (time: 2114700 μs)
+  4. Disarm (time: 10529375 μs)
 
 === Export Complete ===
 All requested exports completed successfully!
@@ -323,9 +324,9 @@ The `bbl_parser` crate includes a **CLI binary** (`src/main.rs`) in addition to 
 
 Build and run the CLI with:
 ```bash
-cargo run --bin bbl_parser --release -- flight.BBL ./output
+cargo run --bin bbl_parser --release -- flight.BBL --output-dir ./output
 cargo install --path .    # Install to system PATH
-bbl_parser flight.BBL ./output
+bbl_parser flight.BBL --output-dir ./output
 ```
 
 **Use the CLI when:**

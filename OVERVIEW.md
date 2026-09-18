@@ -117,8 +117,8 @@ src/
 - **Multi-log Processing:** Automatic detection of multiple flight sessions in single files
 
 ### **Smart Export Filtering**
-- **Duration-based:** < 5s skipped, 5–15s exported only if data density > 1500 fps, > 15s exported
-- **Gyro activity detection:** Minimal gyro range (< 500) indicates ground test vs. actual flight
+- **Duration-based:** < 5s skipped; 5–15s also skipped if data density ≤ 1500 fps
+- **Gyro activity detection:** applies to all remaining logs (≥ 5s, density check passed) — minimal gyro range (< 500) indicates ground test vs. actual flight
 - **Thresholds:**
   - `FALLBACK_MIN_FRAMES = 7_500` (~5 seconds at 1500fps)
   - `MIN_GYRO_RANGE = 500.0` (actual flights >500, ground tests <500)
@@ -188,8 +188,8 @@ src/
 # Multiple files with patterns
 ./target/release/bbl_parser logs/*.{BBL,BFL,TXT}
 
-# CSV export with custom output directory
-./target/release/bbl_parser --csv --output-dir ./results logs/*.BBL
+# CSV export (always on) with custom output directory
+./target/release/bbl_parser --output-dir ./results logs/*.BBL
 
 # GPS data export to GPX format
 ./target/release/bbl_parser --gpx flight_with_gps.BBL
@@ -198,10 +198,10 @@ src/
 ./target/release/bbl_parser --event logs/*.BBL
 
 # All export formats
-./target/release/bbl_parser --csv --gpx --event logs/*.BBL
+./target/release/bbl_parser --gpx --event logs/*.BBL
 
 # Force export all logs (bypasses smart filtering)
-./target/release/bbl_parser --csv --force-export logs/*.BBL
+./target/release/bbl_parser --force-export logs/*.BBL
 
 # Debug mode for development analysis
 ./target/release/bbl_parser --debug problematic_file.BBL

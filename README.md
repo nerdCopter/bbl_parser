@@ -42,8 +42,8 @@ cargo build --release
 # Analyze a file (console stats only)
 ./target/release/bbl_parser flight.BBL
 
-# Export CSV / GPX / Events
-./target/release/bbl_parser --csv --gpx --event logs/*.BBL
+# Export CSV (always on) / GPX / Events
+./target/release/bbl_parser --gpx --event logs/*.BBL
 
 # Useful options
 ./target/release/bbl_parser logs/*.BBL --output-dir ./output
@@ -62,9 +62,8 @@ Filenames are clean for single-log files and numbered for multi-log files (e.g.,
 
 To reduce noise from test arm/disarm logs:
 - < 5s: skipped
-- 5–15s: exported only if data density > 1500 fps
-- > 15s: exported
-- Minimal gyro activity: skipped (ground test detection)
+- 5–15s: also skipped if data density ≤ 1500 fps
+- Remaining logs (≥ 5s, density check passed): skipped if minimal gyro activity (ground test detection)
 
 Gyro range threshold: 500 (below = likely ground test, above = potential flight)
 
