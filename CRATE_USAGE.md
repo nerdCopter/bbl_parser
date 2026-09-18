@@ -42,9 +42,10 @@ bbl_parser = { path = "path/to/bbl_parser" }
 - `serde`: Enable serialization for data structures
 
 If you only need the parser types and functions, the defaults are fine. For the smallest
-dependency footprint with no file-export helpers (CSV/GPX/event writers, CLI), use
-`bbl_parser = { version = "1.1", default-features = false }` — `parse_bbl_file`/`parse_bbl_bytes`
-and all data types remain fully available, whether parsing from a file path or a memory buffer.
+dependency footprint with CSV export and the CLI unavailable, use
+`bbl_parser = { version = "1.1", default-features = false }` — `parse_bbl_file`/`parse_bbl_bytes`,
+all data types, and `export_to_gpx`/`export_to_event` (neither is feature-gated) remain fully
+available, whether parsing from a file path or a memory buffer.
 
 ## Single-flight usage
 
