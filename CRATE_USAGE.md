@@ -36,12 +36,16 @@ bbl_parser = { path = "path/to/bbl_parser" }
 
 ## Cargo features
 
-- `csv` (default): CSV export helpers
+- `csv` (default): CSV export helpers (`export_to_csv`); required by, and auto-enabled by, `cli`
 - `cli` (default): Command-line entry points
 - `json`: JSON-related helpers (requires `serde`)
 - `serde`: Enable serialization for data structures
 
-If you only need the parser types and functions, the defaults are fine.
+If you only need the parser types and functions, the defaults are fine. For the smallest
+dependency footprint with CSV export and the CLI unavailable, use
+`bbl_parser = { version = "1.1", default-features = false }` — `parse_bbl_file`/`parse_bbl_bytes`,
+all data types, and `export_to_gpx`/`export_to_event` (neither is feature-gated) remain fully
+available, whether parsing from a file path or a memory buffer.
 
 ## Single-flight usage
 

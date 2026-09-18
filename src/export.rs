@@ -5,10 +5,15 @@
 
 use crate::conversion::*;
 use crate::types::*;
-use anyhow::{Context, Result};
+#[cfg(feature = "csv")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(feature = "csv")]
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+#[cfg(feature = "csv")]
+use std::io::BufWriter;
+use std::io::Write;
 use std::path::Path;
 
 #[cfg(feature = "serde")]
@@ -223,11 +228,13 @@ pub fn compute_export_paths(
 }
 
 /// Pre-computed CSV field mapping for performance
+#[cfg(feature = "csv")]
 #[derive(Debug)]
 struct CsvFieldMap {
     field_name_to_lookup: Vec<(String, String)>, // (csv_name, lookup_name)
 }
 
+#[cfg(feature = "csv")]
 impl CsvFieldMap {
     fn new(header: &BBLHeader) -> Self {
         let mut field_name_to_lookup = Vec::new();
@@ -288,6 +295,7 @@ impl CsvFieldMap {
 /// # Returns
 /// An `ExportReport` containing paths to the CSV and headers files that were created,
 /// or an error if the export failed.
+#[cfg(feature = "csv")]
 pub fn export_to_csv(
     log: &BBLLog,
     input_path: &Path,
@@ -341,6 +349,7 @@ pub fn export_to_csv(
 }
 
 /// Export headers to CSV file
+#[cfg(feature = "csv")]
 fn export_headers_to_csv(header: &BBLHeader, output_path: &Path) -> Result<()> {
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create headers CSV file: {output_path:?}"))?;
@@ -377,6 +386,7 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path) -> Result<()> {
 }
 
 /// Export flight data to CSV file
+#[cfg(feature = "csv")]
 fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create flight data CSV file: {output_path:?}"))?;
@@ -1117,6 +1127,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "csv")]
     #[test]
     fn test_export_to_csv_reports_skip_reason() -> Result<()> {
         // Default BBLLog has zero duration and zero frames, so should_skip_export
@@ -1146,6 +1157,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "csv")]
     #[test]
     fn test_export_to_csv_no_skip_reason_when_forced() -> Result<()> {
         let log = BBLLog::new(1, 1);

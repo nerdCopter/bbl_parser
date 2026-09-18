@@ -23,8 +23,10 @@
 //! println!("Flight duration: {} μs", log.stats.end_time_us - log.stats.start_time_us);
 //! ```
 //!
-//! Export to CSV format:
+//! Export to CSV format (requires the `csv` feature, enabled by default):
 //! ```rust,no_run
+//! # #[cfg(feature = "csv")]
+//! # {
 //! use bbl_parser::{parse_bbl_file, ExportOptions, export_to_csv};
 //! use std::path::Path;
 //!
@@ -40,6 +42,7 @@
 //! if let Some(path) = report.csv_path {
 //!     println!("Exported to: {}", path.display());
 //! }
+//! # }
 //! ```
 //!
 //! # Public API
@@ -59,7 +62,7 @@
 //! - [`FrameDefinition`] - Frame structure metadata
 //!
 //! ## Export Functions
-//! - [`export_to_csv`] - Export flight data to CSV format
+//! - `export_to_csv` - Export flight data to CSV format (requires the `csv` feature)
 //! - [`export_to_gpx`] - Export GPS data to GPX format
 //! - [`export_to_event`] - Export event data to JSON format
 //! - [`compute_export_paths`] - Helper for consistent path computation
