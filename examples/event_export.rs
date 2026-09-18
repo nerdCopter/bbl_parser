@@ -1,9 +1,7 @@
 //! Event Export Example
 //!
 //! Demonstrates how to export flight event data to JSONL format.
-//! Note: Event data collection requires the parser to populate event_frames.
-//!       Currently, the parser module returns empty event vectors.
-//!       Use the CLI for event export: `bbl_parser --event flight.BBL`
+//! Note: output is empty when the BBL file has no E frames (e.g. no arm/disarm/mode-change events).
 
 use bbl_parser::{export_to_event, parse_bbl_file, ExportOptions};
 use std::path::Path;

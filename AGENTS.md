@@ -19,7 +19,7 @@
 - **Decision criteria:** "Is this needed by crate consumers?" determines placement — shared logic in library, CLI-only logic in `src/main.rs`.
 - **Feature flags:** `csv`, `cli`, `json`, `serde` control optional dependencies; default: `csv` + `cli`.
 - **CRATE_USAGE.md reference:** See `CRATE_USAGE.md` for library API examples with feature flags.
-- **Testing:** Comprehensive tests distributed across `src/main.rs`, `src/conversion.rs`, `src/parser/stream.rs`, and `src/parser/helpers.rs`.
+- **Testing:** Comprehensive tests distributed across `src/main.rs`, `src/conversion.rs`, `src/export.rs`, `src/filters.rs`, `src/parser/stream.rs`, and `src/parser/helpers.rs`.
 - **Public API:** `parse_bbl_file()`, `parse_bbl_bytes()`, `BBLLog`, `ExportOptions`, `export_to_csv()`, `export_to_gpx()`, `export_to_event()`, conversion utilities, parser helpers.
 
 ## Algorithms

@@ -1,4 +1,4 @@
-## Current Implementation Status (December 19 2025)
+## Current Implementation Status (September 17 2026)
 
 ✅ **COMPLETED GOALS:**
 - Full BBL binary format parsing using JavaScript blackbox-log-viewer and C blackbox-tools references
@@ -26,7 +26,7 @@
 - **Configurable export filtering:** Heuristics moved to library, accessible via `should_skip_export()` and `has_minimal_gyro_activity()`
 - **ExportReport type:** Structured path tracking for all export operations
 - **Public API audit:** Zero public functions in CLI, thin wrapper architecture
-- **Comprehensive test coverage:** 62 unit tests for parsing, filtering, conversions, and exports
+- **Comprehensive test coverage:** 58 unit tests for parsing, filtering, conversions, and exports
 
 🔧 **REMAINING WORK:** Feature Enhancements
 - **Error handling refinement:** Some unwrap() calls remain in test/example code; critical paths use proper Result handling
@@ -39,7 +39,7 @@
 - **Raw mode output:** Export unprocessed sensor values without scaling — not started
 - **Enhanced statistics:** Loop timing statistics, frame distribution analysis — not started
 - **Extended firmware testing:** Validates Betaflight 4.0+, EmuFlight, INAV across 6+ years of firmware releases
-- **Advanced filtering options:** Current implementation: duration + gyro variance heuristics; advanced options not implemented
+- **Advanced filtering options:** Current implementation: duration + gyro range/activity heuristics; advanced options not implemented
 
 ---
 

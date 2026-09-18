@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-17
+
+### Fixed
+- **5-15s duration bucket gyro-activity check** (#66): `should_skip_export`'s 5-15s bucket only checked data density, never `has_minimal_gyro_activity` — a short, dense, but genuinely stationary log (bench test) passed through as kept purely on data rate, with zero movement verification. Merges the 5-15s and >=15s branches into one shared gyro-activity check after a single density guard clause. Closes IT #62
+- **`vergen-gitcl` build-dependency gated behind `cli` feature** (#64): was an unconditional build-dependency requiring Rust 1.96.0 for every consumer regardless of selected library features, contradicting the declared MSRV. `build.rs` now skips the `Emitter` call when `cli` is disabled, so library-only consumers (`default-features = false`) never compile it
+- **Release workflow asset upload permissions** (#61): `upload-release-assets` job had no `permissions` block, so `gh release upload`/`gh release edit` inherited the repo's read-only default `GITHUB_TOKEN` and failed with `HTTP 403`; scoped `contents: write` to that job only
+- **`--force-export` CLI help text** (`src/main.rs`): described the pre-#66 filtering rule ("5-15s: kept if data density >1500fps" as if gyro activity were checked only above 15s); corrected to match the merged `should_skip_export` logic, where the gyro-activity check also applies to the 5-15s bucket after the density gate
+- **`--event` CLI help text**: said "JSON files"; actual output is JSONL (one JSON object per line), matching the rest of the docs
+
+### Changed
+- **Dependency update** (#65): `Cargo.lock` refreshed to the latest versions already permitted by existing `Cargo.toml` semver requirements (anyhow 1.0.103→1.0.104, clap 4.6.1→4.6.7, glob 0.3.3→0.3.4, regex 1.12.4→1.13.1, serde 1.0.228→1.0.229, serde_json 1.0.150→1.0.151). No `Cargo.toml` requirement changes
+
+### Documentation
+- Corrected `README.md`/`OVERVIEW.md`: quick-start CLI examples used a nonexistent `--csv` flag — CSV export is always on for the CLI binary, and passing `--csv` fails with `error: unexpected argument '--csv' found`
+- Corrected `examples/README.md`: CLI binary invocation examples (`bbl_parser flight.BBL ./output`) passed the output directory as a second positional argument; the CLI binary treats every positional argument as an input file pattern, unlike the example programs' own arg parsing — corrected to `--output-dir ./output`
+- Corrected `README.md`/`OVERVIEW.md` smart-filtering bullet lists: wording implied the gyro-activity check applied only above 15s or was independent of the density gate; reworded to match the merged `should_skip_export` logic (5-15s bucket also gyro-checked after the density gate)
+- Corrected `CRATE_USAGE.md` and `examples/README.md`: `export_to_gpx`/`export_to_event` code samples were missing the `log_start_datetime`/`base_name_override` parameters added since the functions' current signatures, and one GPX sample had an unbalanced brace that would not compile
+- Corrected `CRATE_USAGE.md`: `BBLLog.gps_track` field name did not exist; actual field is `gps_coordinates`
+- Corrected `OVERVIEW.md`/`GOALS.md`: stale "62 unit tests" count updated to the current 58
+- Corrected `OVERVIEW.md`: project-structure diagram referenced a nonexistent `bbl_format.rs` and omitted `filters.rs`
+- Corrected `AGENTS.md`: test-location list omitted `src/export.rs` and `src/filters.rs`
+- Corrected `examples/event_export.rs`: doc comment claimed the parser returns empty event vectors; event parsing has populated `event_frames` since commit 40f9311
+- Corrected `OVERVIEW.md`/`examples/README.md` sample CLI output: frame-type counts (I/P/S/G/H/E) summed to 85005, not the stated "Total frames: 84235"
+- Corrected `examples/README.md` sample event list: showed 2 of 4 events with a false "... and 2 more events" line — the real code (`.take(5)`) prints all events when the total is ≤5
+- Corrected `GOALS.md`: "gyro variance heuristics" is stale terminology from before `calculate_variance` was deprecated in favor of `calculate_range`; updated to "gyro range/activity heuristics"
+
 ## [1.1.0] - 2026-09-17
 
 ### Added
@@ -128,6 +154,7 @@ while providing the benefits of a modern, type-safe Rust library.
 
 ## Version History
 
+- **1.1.1** (2026-09-17) - 5-15s gyro-activity filter fix, vergen-gitcl MSRV gating, release workflow permissions fix, doc accuracy corrections
 - **1.1.0** (2026-09-17) - Export skip-reason reporting, library filtering parity, case-insensitive glob matching, `-O`/`-F` short flags
 - **1.0.1** (2026-07-02) - Firmware vendor transition detection, universal gyro activity filtering fix, dependency updates
 - **1.0.0** (2025-12-29) - First stable release

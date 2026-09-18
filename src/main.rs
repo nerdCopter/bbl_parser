@@ -317,7 +317,7 @@ fn build_command() -> Command {
         .arg(
             Arg::new("event")
                 .long("event")
-                .help("Export event data (E frames) to JSON files")
+                .help("Export event data (E frames) to JSONL files")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -330,8 +330,8 @@ fn build_command() -> Command {
                     "Force export of all logs, bypassing smart filtering.\n\n\
                     Normal filtering behavior:\n\
                       - Logs <5s: Always skipped\n\
-                      - Logs 5-15s: Kept if data density >1500fps\n\
-                      - Logs >15s or without duration: Checked for gyro activity (ground test detection)"
+                      - Logs 5-15s: Also skipped if data density <=1500fps\n\
+                      - Remaining logs (>=5s, density check passed): Skipped if minimal gyro activity (ground test detection)"
                 )
                 .action(clap::ArgAction::SetTrue),
         )
