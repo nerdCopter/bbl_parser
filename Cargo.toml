@@ -7,7 +7,7 @@ license = "AGPL-3.0-or-later"
 description = "Parser for Betaflight/EmuFlight/INAV blackbox log files"
 keywords = ["betaflight", "blackbox", "drone", "flight-log", "parser"]
 categories = ["parsing", "aerospace"]
-rust-version = "1.70.0"
+rust-version = "1.96.0"
 
 [build-dependencies]
 anyhow = "1.0"
