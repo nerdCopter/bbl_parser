@@ -17,7 +17,6 @@ vergen-gitcl = { version = "10", optional = true }
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"], optional = true }
 glob = { version = "0.3", optional = true }
-regex = { version = "1.11.1", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 csv = { version = "1.2", optional = true }
@@ -28,7 +27,7 @@ default = ["csv", "cli"]
 csv = ["dep:csv"]
 json = ["dep:serde", "dep:serde_json"]
 serde = ["dep:serde"]
-cli = ["dep:clap", "dep:glob", "dep:regex", "dep:vergen-gitcl"]
+cli = ["dep:clap", "dep:glob", "dep:vergen-gitcl", "csv"]
 
 [dev-dependencies]
 tempfile = "3.0"
