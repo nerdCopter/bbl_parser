@@ -40,3 +40,19 @@ required-features = ["cli"]
 [[example]]
 name = "bbl_crate_test"
 required-features = ["cli"]
+
+[[example]]
+name = "csv_export"
+required-features = ["csv"]
+
+[[example]]
+name = "multi_export"
+required-features = ["csv"]
+
+[[example]]
+name = "export_demo"
+required-features = ["csv"]
+
+[[example]]
+name = "multi_flight_export"
+required-features = ["csv"]

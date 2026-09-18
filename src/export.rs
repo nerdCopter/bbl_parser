@@ -1127,6 +1127,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "csv")]
     #[test]
     fn test_export_to_csv_reports_skip_reason() -> Result<()> {
         // Default BBLLog has zero duration and zero frames, so should_skip_export
@@ -1156,6 +1157,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "csv")]
     #[test]
     fn test_export_to_csv_no_skip_reason_when_forced() -> Result<()> {
         let log = BBLLog::new(1, 1);
