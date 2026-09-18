@@ -25,26 +25,24 @@
 //!
 //! Export to CSV format (requires the `csv` feature, enabled by default):
 //! ```rust,no_run
-//! #[cfg(feature = "csv")]
-//! fn main() {
-//!     use bbl_parser::{parse_bbl_file, ExportOptions, export_to_csv};
-//!     use std::path::Path;
+//! # #[cfg(feature = "csv")]
+//! # {
+//! use bbl_parser::{parse_bbl_file, ExportOptions, export_to_csv};
+//! use std::path::Path;
 //!
-//!     let export_options = ExportOptions {
-//!         csv: true,
-//!         gpx: false,
-//!         event: false,
-//!         output_dir: None,
-//!         force_export: false,
-//!     };
-//!     let log = parse_bbl_file(Path::new("flight.BBL"), export_options.clone(), false).unwrap();
-//!     let report = export_to_csv(&log, Path::new("flight.BBL"), &export_options, None).unwrap();
-//!     if let Some(path) = report.csv_path {
-//!         println!("Exported to: {}", path.display());
-//!     }
+//! let export_options = ExportOptions {
+//!     csv: true,
+//!     gpx: false,
+//!     event: false,
+//!     output_dir: None,
+//!     force_export: false,
+//! };
+//! let log = parse_bbl_file(Path::new("flight.BBL"), export_options.clone(), false).unwrap();
+//! let report = export_to_csv(&log, Path::new("flight.BBL"), &export_options, None).unwrap();
+//! if let Some(path) = report.csv_path {
+//!     println!("Exported to: {}", path.display());
 //! }
-//! #[cfg(not(feature = "csv"))]
-//! fn main() {}
+//! # }
 //! ```
 //!
 //! # Public API
