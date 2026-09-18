@@ -43,7 +43,7 @@ A comprehensive Rust library and command-line tool for BBL (Blackbox Log) parsin
 | **Crate Documentation** | ✅ Functional | Comprehensive API documentation and examples |
 | **Error Handling** | 🚧 Basic | Needs comprehensive testing |
 | **Performance** | 🚧 Basic | Optimization in progress |
-| **Testing** | ✅ Comprehensive | 62 unit tests covering filters, conversions, parsing, exports |
+| **Testing** | ✅ Comprehensive | 58 unit tests covering filters, conversions, parsing, exports |
 
 ---
 
@@ -88,10 +88,10 @@ BBL encoding compatibility: `SIGNED_VB`, `UNSIGNED_VB`, `NEG_14BIT`, `TAG8_8SVB`
 src/
 ├── main.rs              # CLI interface, file handling, statistics
 ├── lib.rs               # Library API exports and documentation
-├── bbl_format.rs        # BBL binary format decoding and encoding
 ├── conversion.rs        # Unit conversions (GPS coordinates, altitude, speed)
 ├── error.rs             # Error handling and result types
 ├── export.rs            # Export functions for CSV/GPX/Event formats
+├── filters.rs           # Smart export filtering heuristics (should_skip_export, has_minimal_gyro_activity)
 ├── types/               # Core data structures
 │   ├── mod.rs          #   Module definitions and re-exports
 │   ├── log.rs          #   BBLLog container type

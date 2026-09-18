@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-17
+
+### Fixed
+- **5-15s duration bucket gyro-activity check** (#66): `should_skip_export`'s 5-15s bucket only checked data density, never `has_minimal_gyro_activity` — a short, dense, but genuinely stationary log (bench test) passed through as kept purely on data rate, with zero movement verification. Merges the 5-15s and >=15s branches into one shared gyro-activity check after a single density guard clause. Closes IT #62
+- **`vergen-gitcl` build-dependency gated behind `cli` feature** (#64): was an unconditional build-dependency requiring Rust 1.96.0 for every consumer regardless of selected library features, contradicting the declared MSRV. `build.rs` now skips the `Emitter` call when `cli` is disabled, so library-only consumers (`default-features = false`) never compile it
+- **Release workflow asset upload permissions** (#61): `upload-release-assets` job had no `permissions` block, so `gh release upload`/`gh release edit` inherited the repo's read-only default `GITHUB_TOKEN` and failed with `HTTP 403`; scoped `contents: write` to that job only
+
+### Changed
+- **Dependency update** (#65): `Cargo.lock` refreshed to the latest versions already permitted by existing `Cargo.toml` semver requirements (anyhow 1.0.103→1.0.104, clap 4.6.1→4.6.7, glob 0.3.3→0.3.4, regex 1.12.4→1.13.1, serde 1.0.228→1.0.229, serde_json 1.0.150→1.0.151). No `Cargo.toml` requirement changes
+
+### Documentation
+- Corrected `CRATE_USAGE.md` and `examples/README.md`: `export_to_gpx`/`export_to_event` code samples were missing the `log_start_datetime`/`base_name_override` parameters added since the functions' current signatures, and one GPX sample had an unbalanced brace that would not compile
+- Corrected `CRATE_USAGE.md`: `BBLLog.gps_track` field name did not exist; actual field is `gps_coordinates`
+- Corrected `OVERVIEW.md`/`GOALS.md`: stale "62 unit tests" count updated to the current 58
+- Corrected `OVERVIEW.md`: project-structure diagram referenced a nonexistent `bbl_format.rs` and omitted `filters.rs`
+- Corrected `AGENTS.md`: test-location list omitted `src/export.rs` and `src/filters.rs`
+- Corrected `examples/event_export.rs`: doc comment claimed the parser returns empty event vectors; event parsing has populated `event_frames` since commit 40f9311
+
 ## [1.1.0] - 2026-09-17
 
 ### Added
@@ -128,6 +146,7 @@ while providing the benefits of a modern, type-safe Rust library.
 
 ## Version History
 
+- **1.1.1** (2026-09-17) - 5-15s gyro-activity filter fix, vergen-gitcl MSRV gating, release workflow permissions fix, doc accuracy corrections
 - **1.1.0** (2026-09-17) - Export skip-reason reporting, library filtering parity, case-insensitive glob matching, `-O`/`-F` short flags
 - **1.0.1** (2026-07-02) - Firmware vendor transition detection, universal gyro activity filtering fix, dependency updates
 - **1.0.0** (2025-12-29) - First stable release

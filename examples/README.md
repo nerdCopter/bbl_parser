@@ -372,11 +372,20 @@ use bbl_parser::{export_to_gpx, export_to_event, ExportOptions};
 let opts = ExportOptions { csv: false, gpx: true, event: true, output_dir: Some("out".into()), force_export: false };
 
 if !log.gps_coordinates.is_empty() {
-    export_to_gpx(Path::new("flight.BBL"), 0, 1, &log.gps_coordinates, &log.home_coordinates, &opts)?;
+    export_to_gpx(
+        Path::new("flight.BBL"),
+        0,
+        1,
+        &log.gps_coordinates,
+        &log.home_coordinates,
+        &opts,
+        log.header.log_start_datetime.as_deref(),
+        None,
+    )?;
 }
 
 if !log.event_frames.is_empty() {
-    export_to_event(Path::new("flight.BBL"), 0, 1, &log.event_frames, &opts)?;
+    export_to_event(Path::new("flight.BBL"), 0, 1, &log.event_frames, &opts, None)?;
 }
 ```
 

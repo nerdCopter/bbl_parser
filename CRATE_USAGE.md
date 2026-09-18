@@ -63,7 +63,7 @@ Key outputs on the BBLLog:
 - `header`: configuration and metadata
 - `frames`: decoded flight data frames
 - `event_frames`: flight events (when present)
-- `gps_track`: GPS coordinates (when present)
+- `gps_coordinates`: GPS coordinates (when present)
 - `log_number` / `total_logs`: Current log number and total (useful to know if multi-log)
 
 ## Multi-flight usage
@@ -197,14 +197,17 @@ fn main() -> anyhow::Result<()> {
     for log in logs {
         if !log.gps_coordinates.is_empty() {
             export_to_gpx(
-            Path::new("flight.BBL"),
-            0,  // log index
-            log.total_logs,
-            &log.gps_coordinates,
-            &log.home_coordinates,
-            &export_opts
-        )?;
-        println!("GPX exported successfully");
+                Path::new("flight.BBL"),
+                0, // log index
+                log.total_logs,
+                &log.gps_coordinates,
+                &log.home_coordinates,
+                &export_opts,
+                log.header.log_start_datetime.as_deref(),
+                None, // base_name_override
+            )?;
+            println!("GPX exported successfully");
+        }
     }
     Ok(())
 }
@@ -235,7 +238,8 @@ fn main() -> anyhow::Result<()> {
             0,  // log index
             log.total_logs,
             &log.event_frames,
-            &export_opts
+            &export_opts,
+            None, // base_name_override
         )?;
         println!("Events exported successfully");
     }
@@ -268,12 +272,21 @@ fn main() -> anyhow::Result<()> {
     
     // Export GPX if GPS data exists
     if !log.gps_coordinates.is_empty() {
-        export_to_gpx(input_path, 0, log.total_logs, &log.gps_coordinates, &log.home_coordinates, &export_opts)?;
+        export_to_gpx(
+            input_path,
+            0,
+            log.total_logs,
+            &log.gps_coordinates,
+            &log.home_coordinates,
+            &export_opts,
+            log.header.log_start_datetime.as_deref(),
+            None,
+        )?;
     }
     
     // Export events if event data exists
     if !log.event_frames.is_empty() {
-        export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts)?;
+        export_to_event(input_path, 0, log.total_logs, &log.event_frames, &export_opts, None)?;
     }
     
     match csv_report.csv_path {
