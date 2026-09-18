@@ -41,10 +41,10 @@ bbl_parser = { path = "path/to/bbl_parser" }
 - `json`: JSON-related helpers (requires `serde`)
 - `serde`: Enable serialization for data structures
 
-If you only need the parser types and functions, the defaults are fine. For an in-memory-only
-build with the smallest dependency footprint (no CSV/CLI helpers), use
+If you only need the parser types and functions, the defaults are fine. For the smallest
+dependency footprint with no file-export helpers (CSV/GPX/event writers, CLI), use
 `bbl_parser = { version = "1.1", default-features = false }` — `parse_bbl_file`/`parse_bbl_bytes`
-and all data types remain fully available.
+and all data types remain fully available, whether parsing from a file path or a memory buffer.
 
 ## Single-flight usage
 
