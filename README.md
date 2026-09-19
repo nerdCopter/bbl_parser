@@ -8,6 +8,7 @@ Supports `.BBL`, `.BFL`, `.TXT` (case-insensitive) across Betaflight, EmuFlight,
 - [Overview](#overview)
 - [Features](#features)
 - [Quick start (cli)](#quick-start-cli)
+- [CLI options](#cli-options)
 - [Output formats](#output-formats)
 - [Smart export filtering](#smart-export-filtering)
 - [Documentation](#documentation)
@@ -48,6 +49,31 @@ cargo build --release
 # Useful options
 ./target/release/bbl_parser logs/*.BBL --output-dir ./output
 ./target/release/bbl_parser --force-export logs/*.BBL
+```
+
+## CLI options
+
+```
+Read and parse BBL blackbox log files. Exports to CSV by default (optionally
+GPX/JSON).
+
+Usage: bbl_parser [OPTIONS] [files]...
+
+Arguments:
+  [files]...  BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT
+              extensions supported. Directories: recursively finds .BBL/.BFL files
+              only (TXT files must be specified directly). Case-insensitive,
+              supports globbing.
+
+Options:
+  -V, --version           Print version
+      --debug             Enable debug output and detailed parsing information
+  -O, --output-dir <DIR>  Directory for output files (default: same as input file)
+      --gpx               Export GPS data (G and H frames) to GPX XML files
+      --gps               Alias for --gpx: Export GPS data to GPX XML files
+      --event             Export event data (E frames) to JSONL files
+  -F, --force-export      Force export of all logs, bypassing smart filtering
+  -h, --help              Print help (see more with '--help')
 ```
 
 ## Output formats

@@ -256,7 +256,7 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 
 ### **Available Documentation**
 - **README.md** - CLI-focused user guide with installation and quick start
-- **CRATE_USAGE.md** - Rust crate API usage guide with code examples
+- **[CRATE_USAGE.md](./CRATE_USAGE.md)** - Rust crate API usage guide with code examples
 - **OVERVIEW.md** - Technical architecture and feature overview (this document)
 - **FRAMES.md** - Frame format specifications and encoding details
 - **GOALS.md** - Project objectives and design principles
@@ -264,7 +264,7 @@ Exported event data to: BTFL_BLACKBOX_LOG_20250601_121852.event
 
 ### **Development Documentation**
 - API documentation available via `cargo doc`
-- Comprehensive crate usage examples in `CRATE_USAGE.md` and `examples/`
+- Comprehensive crate usage examples in [CRATE_USAGE.md](./CRATE_USAGE.md) and `examples/`
 - Pre-commit hooks for automatic code formatting (`.github/pre-commit-hook.sh`)
 - Development environment setup script (`.github/setup-dev.sh`)
 
