@@ -53,15 +53,17 @@ cargo build --release
 
 ## CLI options
 
-Output of `bbl_parser -h`:
-
 ```
-Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).
+Read and parse BBL blackbox log files. Exports to CSV by default (optionally
+GPX/JSON).
 
 Usage: bbl_parser [OPTIONS] [files]...
 
 Arguments:
-  [files]...  BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.
+  [files]...  BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT
+              extensions supported. Directories: recursively finds .BBL/.BFL files
+              only (TXT files must be specified directly). Case-insensitive,
+              supports globbing.
 
 Options:
   -V, --version           Print version
