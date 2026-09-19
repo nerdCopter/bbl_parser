@@ -53,19 +53,28 @@ cargo build --release
 
 ## CLI options
 
-Run `bbl_parser --help` (or `-h` for a summary) to see the full flag set:
+Output of `bbl_parser -h` (version, SHA, and date will reflect your build):
 
-| Flag | Short | Description |
-| --- | --- | --- |
-| `[files]...` | | BBL files or directories to parse. Direct file paths: `.BBL`, `.BFL`, `.TXT` extensions supported. Directories: recursively finds `.BBL`/`.BFL` files only (`.TXT` files must be specified directly). Case-insensitive, supports globbing. |
-| `--version` | `-V` | Print version |
-| `--debug` | | Enable debug output and detailed parsing information |
-| `--output-dir <DIR>` | `-O` | Directory for output files (default: same as input file) |
-| `--gpx` | | Export GPS data (G and H frames) to GPX XML files |
-| `--gps` | | Alias for `--gpx`: export GPS data to GPX XML files |
-| `--event` | | Export event data (E frames) to JSONL files |
-| `--force-export` | `-F` | Force export of all logs, bypassing smart filtering (see [Smart export filtering](#smart-export-filtering)) |
-| `--help` | `-h` | Print help (see a summary with `-h`) |
+```
+bbl_parser 1.1.1 29e6b9f (2026-09-18)
+
+Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).
+
+Usage: bbl_parser [OPTIONS] [files]...
+
+Arguments:
+  [files]...  BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.
+
+Options:
+  -V, --version           Print version
+      --debug             Enable debug output and detailed parsing information
+  -O, --output-dir <DIR>  Directory for output files (default: same as input file)
+      --gpx               Export GPS data (G and H frames) to GPX XML files
+      --gps               Alias for --gpx: Export GPS data to GPX XML files
+      --event             Export event data (E frames) to JSONL files
+  -F, --force-export      Force export of all logs, bypassing smart filtering
+  -h, --help              Print help (see more with '--help')
+```
 
 ## Output formats
 
