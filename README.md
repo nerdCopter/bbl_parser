@@ -53,11 +53,9 @@ cargo build --release
 
 ## CLI options
 
-Output of `bbl_parser -h` (version, SHA, and date will reflect your build):
+Output of `bbl_parser -h`:
 
 ```
-bbl_parser 1.1.1 29e6b9f (2026-09-18)
-
 Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).
 
 Usage: bbl_parser [OPTIONS] [files]...
