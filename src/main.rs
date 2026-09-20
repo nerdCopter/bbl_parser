@@ -270,7 +270,7 @@ fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool
 
 fn build_command() -> Command {
     let about_text =
-        "Read and parse BBL blackbox log files. Exports to CSV by default (optionally GPX/JSON).";
+        "Read and parse BBL blackbox log files. Exports to CSV by default (optionally\nGPX/JSON).";
 
     Command::new(env!("CARGO_PKG_NAME"))
         .about(about_text)
@@ -284,7 +284,7 @@ fn build_command() -> Command {
         )
         .arg(
             Arg::new("files")
-                .help("BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT extensions supported. Directories: recursively finds .BBL/.BFL files only (TXT files must be specified directly). Case-insensitive, supports globbing.")
+                .help("BBL files or directories to parse. Direct file paths: .BBL, .BFL, .TXT\nextensions supported. Directories: recursively finds .BBL/.BFL files\nonly (TXT files must be specified directly). Case-insensitive,\nsupports globbing.")
                 .required(false)
                 .num_args(1..)
                 .index(1),
