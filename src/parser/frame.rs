@@ -38,6 +38,26 @@ pub fn parse_frames(
     Vec<GpsHomeCoordinate>,
     Vec<EventFrame>,
 )> {
+    parse_frames_with_raw(binary_data, header, debug, export_options, false)
+}
+
+/// Like [`parse_frames`]. With `raw` set no predictor runs and frames that fail
+/// the plausibility check are kept (`blackbox_decode --raw`).
+#[allow(clippy::type_complexity)]
+pub fn parse_frames_with_raw(
+    binary_data: &[u8],
+    header: &crate::types::BBLHeader,
+    debug: bool,
+    export_options: &ExportOptions,
+    raw: bool,
+) -> Result<(
+    FrameStats,
+    Vec<DecodedFrame>,
+    Option<HashMap<char, Vec<DecodedFrame>>>,
+    Vec<GpsCoordinate>,
+    Vec<GpsHomeCoordinate>,
+    Vec<EventFrame>,
+)> {
     let mut stats = FrameStats::default();
     let mut frames = Vec::new();
     let mut debug_frames: HashMap<char, Vec<DecodedFrame>> = HashMap::new();
@@ -131,7 +151,7 @@ pub fn parse_frames(
                                 None, // I-frames don't use prediction
                                 None,
                                 0,
-                                false, // Not raw
+                                raw,
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,
@@ -173,8 +193,9 @@ pub fn parse_frames(
                                 let current_loop =
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
-                                let is_valid_frame =
-                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
+                                let is_valid_frame = raw
+                                    || (current_time > 0
+                                        && (current_loop > 0 || current_time > 1000));
 
                                 if is_valid_frame {
                                     parsing_success = true;
@@ -206,7 +227,7 @@ pub fn parse_frames(
                                 Some(&frame_history.previous_frame),
                                 Some(&frame_history.previous2_frame),
                                 0,
-                                false,
+                                raw,
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,
@@ -271,8 +292,9 @@ pub fn parse_frames(
                                 let current_loop =
                                     frame_data.get("loopIteration").copied().unwrap_or(0) as u32;
 
-                                let is_valid_frame =
-                                    current_time > 0 && (current_loop > 0 || current_time > 1000);
+                                let is_valid_frame = raw
+                                    || (current_time > 0
+                                        && (current_loop > 0 || current_time > 1000));
 
                                 if is_valid_frame {
                                     parsing_success = true;
@@ -388,7 +410,7 @@ pub fn parse_frames(
                                 Some(&gps_frame_history),
                                 None,
                                 0,
-                                false,
+                                raw,
                                 header.data_version,
                                 &header.sysconfig,
                                 debug,

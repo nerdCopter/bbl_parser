@@ -80,6 +80,13 @@ Options:
       --index <NUM>       Process only log NUM (1-based) of a multi-log file
       --stdout            Write the CSV to stdout instead of a file (one log of one file)
       --limits            Print the min, max and range of each field after the log statistics
+      --unit-vbat <UNIT>  raw|mV|V (default V); also --unit-amperage raw|mA|A, --unit-flags raw|flags,
+                          --unit-frame-time raw|us|ms|s, --unit-height raw|cm|m|ft,
+                          --unit-rotation raw|deg/s|rad/s, --unit-acceleration raw|g|m/s2,
+                          --unit-gps-speed raw|mps|kph|mph
+      --alt-offset <M>    Meters added to every GPX elevation
+      --merge-gps         Append the GPS fields to the flight-data CSV
+      --raw               No predictors, stream order, no unit suffixes
   -F, --force-export      Force export of all logs, bypassing smart filtering
   -h, --help              Print help (see more with '--help')
 ```

@@ -8,16 +8,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 // Import export functions from crate library
 use bbl_parser::export::{
-    corrected_session_base_name, export_flight_data_to_writer, export_to_csv, export_to_event,
-    export_to_gpx, firmware_prefix_for_revision, vendor_name_for_prefix,
+    corrected_session_base_name, export_flight_data_to_writer_with_units, export_to_csv_with_units,
+    export_to_event, export_to_gpx_with_alt_offset, firmware_prefix_for_revision,
+    vendor_name_for_prefix,
 };
 
 // Import log selection and field-limit helpers from crate library
 use bbl_parser::limits::{compute_field_limits, format_field_limits};
 use bbl_parser::selection::{find_log_offsets, format_log_table, log_entries, select_log};
+use bbl_parser::units::{
+    parse_alt_offset, AccelerationUnit, AmperageUnit, FlagsUnit, FrameTimeUnit, GpsSpeedUnit,
+    HeightUnit, RotationUnit, UnitOptions, VbatUnit,
+};
 
 // Import parser functions from crate library - using crate's unified implementations
-use bbl_parser::parser::parse_single_log;
+use bbl_parser::parser::parse_single_log_with_raw;
 
 // Import filtering functions from crate library for export heuristics
 use bbl_parser::filters::should_skip_export;
@@ -72,6 +77,10 @@ struct CliOptions {
     to_stdout: bool,
     /// Print per-field min/max after each log's statistics (`--limits`).
     limits: bool,
+    /// Output units for the CSV (`--unit-*`).
+    units: UnitOptions,
+    /// Meters added to GPX elevations (`--alt-offset`).
+    alt_offset: f64,
 }
 
 /// Maximum recursion depth to prevent stack overflow
@@ -299,6 +308,77 @@ fn should_have_frame(frame_index: u32, sysconfig: &HashMap<String, i32>) -> bool
     left_side < frame_interval_p_num as u32
 }
 
+/// A `--unit-*` option whose value is parsed by the unit type's `FromStr`.
+fn unit_arg<T>(name: &'static str, help: &'static str) -> Arg
+where
+    T: std::str::FromStr<Err = String> + Clone + Send + Sync + 'static,
+{
+    Arg::new(name)
+        .long(name)
+        .value_name("UNIT")
+        .help(help)
+        .allow_hyphen_values(false)
+        .value_parser(|text: &str| text.parse::<T>())
+}
+
+/// Collect the `--unit-*` choices; an absent option keeps the default.
+fn unit_options_from_matches(matches: &clap::ArgMatches) -> UnitOptions {
+    let defaults = UnitOptions::default();
+    // --raw: every column as logged, whatever --unit-* says (blackbox_decode).
+    let mut options = if matches.get_flag("raw") {
+        UnitOptions {
+            gps_speed: matches
+                .get_one("unit-gps-speed")
+                .copied()
+                .unwrap_or(defaults.gps_speed),
+            ..UnitOptions::raw()
+        }
+    } else {
+        unit_options_from_matches_inner(matches, defaults)
+    };
+    options.merge_gps = matches.get_flag("merge-gps");
+    options
+}
+
+fn unit_options_from_matches_inner(
+    matches: &clap::ArgMatches,
+    defaults: UnitOptions,
+) -> UnitOptions {
+    UnitOptions {
+        vbat: matches
+            .get_one("unit-vbat")
+            .copied()
+            .unwrap_or(defaults.vbat),
+        amperage: matches
+            .get_one("unit-amperage")
+            .copied()
+            .unwrap_or(defaults.amperage),
+        flags: matches
+            .get_one("unit-flags")
+            .copied()
+            .unwrap_or(defaults.flags),
+        frame_time: matches
+            .get_one("unit-frame-time")
+            .copied()
+            .unwrap_or(defaults.frame_time),
+        height: matches.get_one("unit-height").copied().or(defaults.height),
+        rotation: matches
+            .get_one("unit-rotation")
+            .copied()
+            .unwrap_or(defaults.rotation),
+        acceleration: matches
+            .get_one("unit-acceleration")
+            .copied()
+            .unwrap_or(defaults.acceleration),
+        gps_speed: matches
+            .get_one("unit-gps-speed")
+            .copied()
+            .unwrap_or(defaults.gps_speed),
+        merge_gps: false,
+        raw: false,
+    }
+}
+
 fn build_command() -> Command {
     let about_text =
         "Read and parse BBL blackbox log files. Exports to CSV by default (optionally\nGPX/JSON).";
@@ -370,13 +450,65 @@ fn build_command() -> Command {
                 )
                 .action(clap::ArgAction::SetTrue)
                 .requires("files")
-                .conflicts_with_all(["debug", "gpx", "gps", "event", "output-dir"]),
+                .conflicts_with_all(["debug", "gpx", "gps", "event", "output-dir", "alt-offset"]),
         )
         .arg(
             Arg::new("limits")
                 .long("limits")
                 .help("Print the min, max and range of each field after the log statistics")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(unit_arg::<VbatUnit>(
+            "unit-vbat",
+            "Battery voltage unit (raw|mV|V), default V",
+        ))
+        .arg(unit_arg::<AmperageUnit>(
+            "unit-amperage",
+            "Current meter unit (raw|mA|A), default A",
+        ))
+        .arg(unit_arg::<FlagsUnit>(
+            "unit-flags",
+            "State flags form (raw|flags), default flags",
+        ))
+        .arg(unit_arg::<FrameTimeUnit>(
+            "unit-frame-time",
+            "Frame timestamp unit (raw|us|ms|s), default us",
+        ))
+        .arg(unit_arg::<HeightUnit>(
+            "unit-height",
+            "Barometer height unit (raw|cm|m|ft); default leaves BaroAlt unchanged",
+        ))
+        .arg(unit_arg::<RotationUnit>(
+            "unit-rotation",
+            "Gyro rotation rate unit (raw|deg/s|rad/s), default raw",
+        ))
+        .arg(unit_arg::<AccelerationUnit>(
+            "unit-acceleration",
+            "Acceleration unit (raw|g|m/s2), default raw",
+        ))
+        .arg(unit_arg::<GpsSpeedUnit>(
+            "unit-gps-speed",
+            "GPS speed unit (raw|mps|kph|mph) for --merge-gps, default mps",
+        ))
+        .arg(
+            Arg::new("merge-gps")
+                .long("merge-gps")
+                .help("Append the GPS fields to the flight-data CSV")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("raw")
+                .long("raw")
+                .help("Do not apply predictions to fields and write every value as logged")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("alt-offset")
+                .long("alt-offset")
+                .value_name("METERS")
+                .help("Meters added to every GPX track point elevation (use with --gpx)")
+                .allow_negative_numbers(true)
+                .value_parser(parse_alt_offset),
         )
         .arg(
             Arg::new("force-export")
@@ -431,6 +563,8 @@ fn main() -> Result<()> {
             .map(|&n| usize::try_from(n).unwrap_or(usize::MAX)),
         to_stdout,
         limits: matches.get_flag("limits"),
+        units: unit_options_from_matches(&matches),
+        alt_offset: matches.get_one::<f64>("alt-offset").copied().unwrap_or(0.0),
     };
 
     // Check if no files were provided and show help
@@ -871,12 +1005,13 @@ fn parse_bbl_file_streaming(
         let log_data = &file_data[start_pos..end_pos];
 
         // Parse this individual log
-        let log = parse_single_log(
+        let log = parse_single_log_with_raw(
             log_data,
             log_index + 1,
             log_positions.len(),
             debug,
             export_options,
+            cli.units.raw,
         )?;
 
         // Record firmware for transition detection (before any early-continue)
@@ -909,7 +1044,7 @@ fn parse_bbl_file_streaming(
         // --stdout: stream the flight-data CSV to stdout; no other files are written
         if cli.to_stdout {
             let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-            export_flight_data_to_writer(&log, &mut out)?;
+            export_flight_data_to_writer_with_units(&log, &mut out, &cli.units)?;
             std::io::Write::flush(&mut out)?;
             processed_logs += 1;
             continue;
@@ -917,11 +1052,12 @@ fn parse_bbl_file_streaming(
 
         // Export CSV immediately while data is hot in cache
         if export_options.csv {
-            match export_to_csv(
+            match export_to_csv_with_units(
                 &log,
                 file_path,
                 export_options,
                 base_name_override.as_deref(),
+                &cli.units,
             ) {
                 Ok(report) => {
                     if let Some(headers_path) = report.headers_path {
@@ -946,7 +1082,7 @@ fn parse_bbl_file_streaming(
 
         // Export GPS data to GPX if requested
         if export_options.gpx && !log.gps_coordinates.is_empty() {
-            match export_to_gpx(
+            match export_to_gpx_with_alt_offset(
                 file_path,
                 log_index,
                 log_positions.len(),
@@ -955,6 +1091,7 @@ fn parse_bbl_file_streaming(
                 export_options,
                 log.header.log_start_datetime.as_deref(),
                 base_name_override.as_deref(),
+                cli.alt_offset,
             ) {
                 Ok(report) => {
                     if let Some(gpx_path) = report.gpx_path {
@@ -1336,5 +1473,95 @@ mod tests {
         assert_eq!(format_failsafe_phase(99), "99");
         assert_eq!(format_failsafe_phase(-1), "-1");
         assert_eq!(format_failsafe_phase(i32::MAX), "2147483647");
+    }
+
+    fn parse_args(args: &[&str]) -> Result<clap::ArgMatches, clap::Error> {
+        let mut argv = vec!["bbl_parser", "log.bbl"];
+        argv.extend_from_slice(args);
+        build_command().try_get_matches_from(argv)
+    }
+
+    #[test]
+    fn test_unit_flags_default_to_historic_output() {
+        let matches = parse_args(&[]).unwrap();
+        assert_eq!(unit_options_from_matches(&matches), UnitOptions::default());
+        assert!(matches.get_one::<f64>("alt-offset").is_none());
+    }
+
+    #[test]
+    fn test_unit_flags_parse_valid_values() {
+        let matches = parse_args(&[
+            "--unit-vbat",
+            "MV",
+            "--unit-amperage",
+            "mA",
+            "--unit-flags",
+            "raw",
+            "--unit-frame-time",
+            "ms",
+            "--unit-height",
+            "ft",
+            "--unit-rotation",
+            "rad/s",
+            "--unit-acceleration",
+            "m/s2",
+            "--alt-offset",
+            "-2.5",
+        ])
+        .unwrap();
+        let units = unit_options_from_matches(&matches);
+        assert_eq!(units.vbat, VbatUnit::MilliVolts);
+        assert_eq!(units.amperage, AmperageUnit::MilliAmps);
+        assert_eq!(units.flags, FlagsUnit::Raw);
+        assert_eq!(units.frame_time, FrameTimeUnit::Milliseconds);
+        assert_eq!(units.height, Some(HeightUnit::Feet));
+        assert_eq!(units.rotation, RotationUnit::RadiansPerSecond);
+        assert_eq!(units.acceleration, AccelerationUnit::MetersPerSecondSquared);
+        assert_eq!(matches.get_one::<f64>("alt-offset"), Some(&-2.5));
+    }
+
+    #[test]
+    fn test_unit_flags_reject_invalid_values() {
+        for args in [
+            ["--unit-vbat", "ft"],
+            ["--unit-vbat", ""],
+            ["--unit-amperage", "V"],
+            ["--unit-flags", "mV"],
+            ["--unit-frame-time", "min"],
+            ["--unit-height", "kph"],
+            ["--unit-rotation", "g"],
+            ["--unit-acceleration", "deg/s"],
+            ["--unit-vbat", "mV;"],
+            ["--alt-offset", "abc"],
+            ["--alt-offset", "nan"],
+            ["--alt-offset", "inf"],
+        ] {
+            assert!(parse_args(&args).is_err(), "{args:?} must be rejected");
+        }
+        assert!(parse_args(&["--unit-vbat"]).is_err());
+        assert!(parse_args(&["--unit-vbat", "V", "--unit-vbat", "mV"]).is_err());
+        assert!(parse_args(&["--stdout", "--alt-offset", "1"]).is_err());
+        assert!(parse_args(&["--unit-gps-speed", "knots"]).is_err());
+        assert!(parse_args(&["--unit-gps-speed"]).is_err());
+        assert!(parse_args(&["--alt-offset"]).is_err());
+        assert!(parse_args(&["--alt-offset", "--raw"]).is_err());
+        assert!(parse_args(&["--merge-gps=yes"]).is_err());
+        assert!(parse_args(&["--raw", "--raw"]).is_err());
+    }
+
+    #[test]
+    fn test_raw_and_merge_gps_flags() {
+        let matches =
+            parse_args(&["--raw", "--unit-vbat", "mV", "--unit-gps-speed", "KPH"]).unwrap();
+        let units = unit_options_from_matches(&matches);
+        // --raw wins over the other conversions, except the GPS speed format
+        assert!(units.raw);
+        assert_eq!(units.vbat, VbatUnit::Raw);
+        assert_eq!(units.gps_speed, GpsSpeedUnit::KilometersPerHour);
+        assert!(!units.merge_gps);
+        let matches = parse_args(&["--merge-gps", "--unit-gps-speed", "mph"]).unwrap();
+        let units = unit_options_from_matches(&matches);
+        assert!(units.merge_gps && !units.raw);
+        assert_eq!(units.gps_speed, GpsSpeedUnit::MilesPerHour);
     }
 }

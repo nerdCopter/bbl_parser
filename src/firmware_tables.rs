@@ -161,3 +161,76 @@ pub const END_OF_LOG_INAV_PREFIX: &[u8] = b"End of log (disarm reason:";
 pub const END_OF_LOG_MESSAGE_LEN: usize = END_OF_LOG_MESSAGE.len() + 1;
 /// Upper bound for the null-terminated end-of-log payload (INAV suffix).
 pub const END_OF_LOG_MAX_LEN: usize = 64;
+
+// ============================================================================
+// Unit conversion constants
+// ============================================================================
+//
+// Source: blackbox-tools `src/units.h` and `src/parser.c` at
+// `d89f96b` (master).
+
+/// Feet per meter (`FEET_PER_METER`).
+pub const FEET_PER_METER: f64 = 3.28084;
+
+/// Standard gravity in m/s^2 (`ACCELERATION_DUE_TO_GRAVITY`).
+pub const ACCELERATION_DUE_TO_GRAVITY: f64 = 9.80665;
+
+/// Header key that holds the gyro scale as the hex bits of an `f32`.
+pub const HEADER_GYRO_SCALE: &str = "gyro_scale";
+
+/// Alternate header key for the gyro scale (newer firmware).
+pub const HEADER_GYRO_SCALE_DOTTED: &str = "gyro.scale";
+
+/// Header key that holds the raw accelerometer count for 1 g.
+pub const HEADER_ACC_1G: &str = "acc_1G";
+
+/// Header key that names the firmware type.
+pub const HEADER_FIRMWARE_TYPE: &str = "Firmware type";
+
+/// Firmware type whose `gyro_scale` already gives radians per microsecond.
+/// Every other firmware logs degrees per second.
+pub const NATIVE_RADIANS_FIRMWARE_TYPE: &str = "Baseflight";
+
+/// Microseconds per second, used to turn the per-microsecond gyro scale into
+/// a per-second rate.
+pub const MICROSECONDS_PER_SECOND: f64 = 1_000_000.0;
+
+/// I-frame field names that take part in unit conversion.
+pub const FIELD_TIME: &str = "time";
+/// Battery voltage field.
+pub const FIELD_VBAT_LATEST: &str = "vbatLatest";
+/// Current meter field.
+pub const FIELD_AMPERAGE_LATEST: &str = "amperageLatest";
+/// Barometer altitude field.
+pub const FIELD_BARO_ALT: &str = "BaroAlt";
+/// Gyro fields, X/Y/Z order.
+pub const FIELDS_GYRO_ADC: [&str; 3] = ["gyroADC[0]", "gyroADC[1]", "gyroADC[2]"];
+/// Accelerometer fields, X/Y/Z order.
+pub const FIELDS_ACC_SMOOTH: [&str; 3] = ["accSmooth[0]", "accSmooth[1]", "accSmooth[2]"];
+
+/// `acc_1G` upstream assumes when the header has none (`parser.c`).
+pub const DEFAULT_ACC_1G: i32 = 1;
+
+/// `gyroScale` upstream assumes when the header has none (`parser.c`).
+pub const DEFAULT_GYRO_SCALE: f32 = 1.0;
+
+/// Miles per meter, as `convertMetersPerSecondToUnit` in `units.c` uses it.
+pub const MILES_PER_METER: f64 = 0.00062137;
+
+/// Seconds per hour, for speed conversion.
+pub const SECONDS_PER_HOUR: f64 = 3600.0;
+
+/// Meters per kilometer, for speed conversion.
+pub const METERS_PER_KILOMETER: f64 = 1000.0;
+
+/// `GPS_coord` is logged as degrees times this factor.
+pub const GPS_COORDINATE_SCALE: i64 = 10_000_000;
+
+/// G-frame field names used when the GPS fields are merged into the main CSV.
+pub const FIELD_GPS_COORD: [&str; 2] = ["GPS_coord[0]", "GPS_coord[1]"];
+/// G-frame speed field (hundredths of m/s).
+pub const FIELD_GPS_SPEED: &str = "GPS_speed";
+/// G-frame ground course field (tenths of a degree).
+pub const FIELD_GPS_GROUND_COURSE: &str = "GPS_ground_course";
+/// H-frame home position fields (degrees times 10^7).
+pub const FIELD_GPS_HOME: [&str; 2] = ["GPS_home[0]", "GPS_home[1]"];
