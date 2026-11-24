@@ -102,5 +102,46 @@ pub const FAILSAFE_PHASE_NAMES: [&str; 8] = [
 ];
 
 // ============================================================================
-// Event type ids (reserved for a later change)
+// Event frame type ids (`E` frames)
 // ============================================================================
+
+/// `FLIGHT_LOG_EVENT_SYNC_BEEP`
+pub const EVENT_SYNC_BEEP: u8 = 0;
+/// `FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START` (old numbering)
+pub const EVENT_AUTOTUNE_CYCLE_START: u8 = 1;
+/// `FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT` (old numbering)
+pub const EVENT_AUTOTUNE_CYCLE_RESULT: u8 = 2;
+/// `FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS` (old numbering)
+pub const EVENT_AUTOTUNE_TARGETS: u8 = 3;
+/// `FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT` (old numbering)
+pub const EVENT_INFLIGHT_ADJUSTMENT_OLD: u8 = 4;
+/// `FLIGHT_LOG_EVENT_LOGGING_RESUME` (old numbering)
+pub const EVENT_LOGGING_RESUME_OLD: u8 = 5;
+/// `FLIGHT_LOG_EVENT_LOG_END` (old numbering)
+pub const EVENT_LOG_END_OLD: u8 = 6;
+/// Unused autotune cycle start (new numbering)
+pub const EVENT_AUTOTUNE_CYCLE_START_UNUSED: u8 = 10;
+/// Unused autotune cycle result (new numbering)
+pub const EVENT_AUTOTUNE_CYCLE_RESULT_UNUSED: u8 = 11;
+/// Unused autotune targets (new numbering)
+pub const EVENT_AUTOTUNE_TARGETS_UNUSED: u8 = 12;
+/// `FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT`
+pub const EVENT_INFLIGHT_ADJUSTMENT: u8 = 13;
+/// `FLIGHT_LOG_EVENT_LOGGING_RESUME`
+pub const EVENT_LOGGING_RESUME: u8 = 14;
+/// `FLIGHT_LOG_EVENT_DISARM`: payload is one unsigned VB, the disarm reason.
+///
+/// Betaflight only. Betaflight `blackbox.c` at `60abbac05` writes it in
+/// `blackboxLogEvent`. EmuFlight (`30eff58a0`) and INAV (`bbc055369`) do not
+/// define or write id 15, so there is no conflicting meaning to gate on.
+pub const EVENT_DISARM: u8 = 15;
+/// `FLIGHT_LOG_EVENT_FLIGHTMODE`: payload is two unsigned VBs, `flags` then
+/// `lastFlags`. Betaflight, EmuFlight and INAV write the same layout.
+pub const EVENT_FLIGHTMODE: u8 = 30;
+/// `FLIGHT_LOG_EVENT_LOG_END`
+pub const EVENT_LOG_END: u8 = 255;
+
+/// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_DISARM`.
+pub const EVENT_NAME_DISARM: &str = "Disarm";
+/// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_FLIGHTMODE`.
+pub const EVENT_NAME_FLIGHT_MODE: &str = "Flight mode";
