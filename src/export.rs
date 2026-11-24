@@ -4,6 +4,11 @@
 //! including CSV, GPX, and Event files.
 
 use crate::conversion::*;
+use crate::firmware_tables::{
+    ADJUSTMENT_FUNCTION_ID_MASK, ADJUSTMENT_FUNCTION_UNKNOWN, EVENT_NAME_DISARM,
+    EVENT_NAME_FLIGHT_MODE, EVENT_NAME_INFLIGHT_ADJUSTMENT, EVENT_NAME_LOGGING_RESUME,
+    EVENT_NAME_LOG_END, EVENT_NAME_SYNC_BEEP, INFLIGHT_ADJUSTMENT_FUNCTIONS,
+};
 #[cfg(feature = "csv")]
 use crate::firmware_tables::{FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_STATE_FLAGS};
 use crate::types::*;
@@ -626,6 +631,111 @@ pub fn export_to_gpx(
     })
 }
 
+/// Format a float like C `printf("%g")` (six significant digits), as
+/// blackbox_decode prints an inflight adjustment float value.
+fn format_g(value: f32) -> String {
+    let v = value as f64;
+    if v.is_nan() {
+        return if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        }
+        .to_string();
+    }
+    if v.is_infinite() {
+        return if v < 0.0 { "-inf" } else { "inf" }.to_string();
+    }
+    if v == 0.0 {
+        return if value.is_sign_negative() { "-0" } else { "0" }.to_string();
+    }
+    const PRECISION: usize = 6;
+    // The exponent after rounding to PRECISION digits decides the style.
+    let sci = format!("{:.*e}", PRECISION - 1, v);
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    if exp < -4 || exp >= PRECISION as i32 {
+        let mantissa = if mantissa.contains('.') {
+            mantissa.trim_end_matches('0').trim_end_matches('.')
+        } else {
+            mantissa
+        };
+        let sign = if exp < 0 { '-' } else { '+' };
+        format!("{}e{}{:02}", mantissa, sign, exp.abs())
+    } else {
+        let decimals = (PRECISION as i32 - 1 - exp).max(0) as usize;
+        let fixed = format!("{:.*}", decimals, v);
+        if fixed.contains('.') {
+            fixed
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string()
+        } else {
+            fixed
+        }
+    }
+}
+
+/// Format one event as a line of the `.event` file, matching `onEvent` in
+/// blackbox_decode.c: the plain event name, the time, and a `data` object for
+/// inflight adjustment, logging resume, disarm and flight mode events. Events
+/// blackbox_decode does not export keep their description as the name.
+fn format_event_json(event: &EventFrame) -> String {
+    let (name, time, data) = match event.data {
+        Some(EventData::SyncBeep { time_us }) => {
+            (EVENT_NAME_SYNC_BEEP, time_us as u64, String::new())
+        }
+        Some(EventData::InflightAdjustment { function, value }) => {
+            let index = (function & ADJUSTMENT_FUNCTION_ID_MASK) as usize;
+            let function_name = INFLIGHT_ADJUSTMENT_FUNCTIONS
+                .get(index)
+                .copied()
+                .unwrap_or(ADJUSTMENT_FUNCTION_UNKNOWN);
+            let value = match value {
+                AdjustmentValue::Int(v) => v.to_string(),
+                AdjustmentValue::Float(v) => format_g(v),
+            };
+            (
+                EVENT_NAME_INFLIGHT_ADJUSTMENT,
+                event.timestamp_us,
+                format!(
+                    r#", "data":{{"adjustmentFunction":"{}","value":{}}}"#,
+                    function_name, value
+                ),
+            )
+        }
+        Some(EventData::LoggingResume {
+            log_iteration,
+            time_us,
+        }) => (
+            EVENT_NAME_LOGGING_RESUME,
+            time_us as u64,
+            format!(r#", "data":{{"logIteration":{}}}"#, log_iteration),
+        ),
+        Some(EventData::Disarm { reason }) => (
+            EVENT_NAME_DISARM,
+            event.timestamp_us,
+            format!(r#", "data":{{"reason":{}}}"#, reason),
+        ),
+        Some(EventData::FlightMode { flags, last_flags }) => (
+            EVENT_NAME_FLIGHT_MODE,
+            event.timestamp_us,
+            format!(
+                r#", "data":{{"flags":{},"lastFlags":{}}}"#,
+                flags, last_flags
+            ),
+        ),
+        Some(EventData::LogEnd) => (EVENT_NAME_LOG_END, event.timestamp_us, String::new()),
+        None => (event.event_name.as_str(), event.timestamp_us, String::new()),
+    };
+    format!(
+        r#"{{"name":"{}", "time":{}{}}}"#,
+        name.replace('"', "\\\""),
+        time,
+        data
+    )
+}
+
 /// Export event data to file
 ///
 /// # Returns
@@ -663,12 +773,7 @@ pub fn export_to_event(
 
     // Export as JSONL format (individual JSON objects per line) to match blackbox_decode
     for event in event_frames.iter() {
-        writeln!(
-            event_file,
-            r#"{{"name":"{}", "time":{}}}"#,
-            event.event_name.replace('"', "\\\""),
-            event.timestamp_us
-        )?;
+        writeln!(event_file, "{}", format_event_json(event))?;
     }
 
     Ok(ExportReport {

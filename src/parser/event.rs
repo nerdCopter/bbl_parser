@@ -5,30 +5,34 @@
 
 use crate::firmware_tables::*;
 use crate::parser::stream::BBLDataStream;
-use crate::types::EventFrame;
+use crate::types::{AdjustmentValue, EventData, EventFrame};
 use anyhow::Result;
 
 /// Helper function to parse inflight adjustment events (types 4 and 13)
-/// Returns the event description string
+/// Returns the event description string and the decoded payload.
+///
+/// Function ids above 127 carry a raw float, the others a signed VB
+/// (`parseEventFrame` in blackbox-tools `parser.c`).
 fn parse_inflight_adjustment(
     stream: &mut BBLDataStream,
     event_data: &mut Vec<u8>,
-) -> Result<String> {
-    let adjustment_function = stream.read_byte()?;
-    event_data.extend_from_slice(&[adjustment_function]);
-    if adjustment_function > 127 {
-        let new_value = stream.read_unsigned_vb()? as f32;
-        Ok(format!(
-            "Inflight adjustment - Function: {}, New value: {:.3}",
-            adjustment_function, new_value
-        ))
+) -> Result<(String, EventData)> {
+    let function = stream.read_byte()?;
+    event_data.extend_from_slice(&[function]);
+    let (value, text) = if function > ADJUSTMENT_FUNCTION_ID_MASK {
+        let v = stream.read_raw_float()?;
+        (AdjustmentValue::Float(v), format!("{:.3}", v))
     } else {
-        let new_value = stream.read_signed_vb()?;
-        Ok(format!(
+        let v = stream.read_signed_vb()?;
+        (AdjustmentValue::Int(v), v.to_string())
+    };
+    Ok((
+        format!(
             "Inflight adjustment - Function: {}, New value: {}",
-            adjustment_function, new_value
-        ))
-    }
+            function, text
+        ),
+        EventData::InflightAdjustment { function, value },
+    ))
 }
 
 /// Parse E-frame (Event frame) data from the stream
@@ -46,10 +50,13 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
 
     // Read event data - the length depends on the event type
     let mut event_data = Vec::new();
+    let mut data = None;
     let event_name = match event_type {
         EVENT_SYNC_BEEP => {
-            // FLIGHT_LOG_EVENT_SYNC_BEEP
-            "Sync beep".to_string()
+            // FLIGHT_LOG_EVENT_SYNC_BEEP: one unsigned VB, the time
+            let time_us = stream.read_unsigned_vb()?;
+            data = Some(EventData::SyncBeep { time_us });
+            EVENT_NAME_SYNC_BEEP.to_string()
         }
         EVENT_AUTOTUNE_CYCLE_START => {
             // FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START
@@ -81,13 +88,19 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         }
         EVENT_INFLIGHT_ADJUSTMENT_OLD => {
             // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            parse_inflight_adjustment(stream, &mut event_data)?
+            let (name, d) = parse_inflight_adjustment(stream, &mut event_data)?;
+            data = Some(d);
+            name
         }
         EVENT_LOGGING_RESUME_OLD => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME
             // Note: Event type 14 has identical implementation - both use this newer numbering
             let log_iteration = stream.read_unsigned_vb()?;
             let current_time = stream.read_unsigned_vb()?;
+            data = Some(EventData::LoggingResume {
+                log_iteration,
+                time_us: current_time,
+            });
             format!(
                 "Logging resume - Iteration: {}, Time: {}",
                 log_iteration, current_time
@@ -117,13 +130,19 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         }
         EVENT_INFLIGHT_ADJUSTMENT => {
             // FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT
-            parse_inflight_adjustment(stream, &mut event_data)?
+            let (name, d) = parse_inflight_adjustment(stream, &mut event_data)?;
+            data = Some(d);
+            name
         }
         EVENT_LOGGING_RESUME => {
             // FLIGHT_LOG_EVENT_LOGGING_RESUME (newer numbering, same as type 5)
             // Both event type numbers are used in different firmware versions
             let log_iteration = stream.read_unsigned_vb()?;
             let current_time = stream.read_unsigned_vb()?;
+            data = Some(EventData::LoggingResume {
+                log_iteration,
+                time_us: current_time,
+            });
             format!(
                 "Logging resume - Iteration: {}, Time: {}",
                 log_iteration, current_time
@@ -132,12 +151,14 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         EVENT_DISARM => {
             // FLIGHT_LOG_EVENT_DISARM: one unsigned VB, the disarm reason
             let reason = stream.read_unsigned_vb()?;
+            data = Some(EventData::Disarm { reason });
             format!("{} - Reason: {}", EVENT_NAME_DISARM, reason)
         }
         EVENT_FLIGHTMODE => {
             // FLIGHT_LOG_EVENT_FLIGHTMODE: two unsigned VBs, flags then lastFlags
             let flags = stream.read_unsigned_vb()?;
             let last_flags = stream.read_unsigned_vb()?;
+            data = Some(EventData::FlightMode { flags, last_flags });
             format!(
                 "{} - Flags: {}, Last flags: {}",
                 EVENT_NAME_FLIGHT_MODE, flags, last_flags
@@ -166,6 +187,7 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
                 || (payload.starts_with(END_OF_LOG_INAV_PREFIX) && payload.ends_with(b")"));
             if terminated && is_end_message {
                 stream.end_here();
+                data = Some(EventData::LogEnd);
                 EVENT_NAME_LOG_END.to_string()
             } else {
                 stream.set_position((start + END_OF_LOG_MESSAGE_LEN).min(stream.end_position()));
@@ -196,6 +218,7 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
         event_type,
         event_data,
         event_name,
+        data,
     })
 }
 
