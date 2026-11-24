@@ -443,7 +443,8 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
                 let time_delta_hours = (*timestamp - last_timestamp_us) as f64 / 3_600_000_000.0;
-                let current_amps = convert_amperage_to_amps(current_raw) as f64;
+                // raw is in 0.01 A; divide in f64 (upstream integrates in double)
+                let current_amps = current_raw as f64 / 100.0;
                 cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
             }
             last_timestamp_us = *timestamp;
