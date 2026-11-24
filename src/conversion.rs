@@ -5,33 +5,56 @@
 
 use semver::Version;
 
-/// Convert raw vbat value to volts with firmware-aware scaling
-pub fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
-    // Determine scaling factor based on firmware
-    let scale_factor = if firmware_revision.contains("EmuFlight") {
+/// First Betaflight version whose `vbatLatest` is logged in hundredths of a volt.
+/// Matches `semver_gte_string(fcVersion, "4.3.0")` in blackbox-tools `blackbox_decode.c`.
+/// May move to a firmware table module later.
+const VBAT_HUNDREDTHS_MIN_BETAFLIGHT_VERSION: Version = Version::new(4, 3, 0);
+
+/// Decimal places printed for volts when the raw value is in hundredths.
+const VBAT_DECIMALS_HUNDREDTHS: usize = 2;
+/// Decimal places printed for volts when the raw value is in tenths.
+const VBAT_DECIMALS_TENTHS: usize = 1;
+
+/// True when the firmware logs `vbatLatest` in hundredths of a volt.
+fn vbat_is_hundredths(firmware_revision: &str) -> bool {
+    if firmware_revision.contains("EmuFlight") {
         // EmuFlight always uses tenths
-        0.1
+        false
     } else if firmware_revision.contains("iNav") {
         // iNav always uses hundredths
-        0.01
+        true
     } else if firmware_revision.contains("Betaflight") {
         // Betaflight version-dependent scaling
-        if let Some(version) = extract_firmware_version(firmware_revision) {
-            if version >= Version::new(4, 3, 0) {
-                0.01 // hundredths for >= 4.3.0
-            } else {
-                0.1 // tenths for < 4.3.0
-            }
-        } else {
+        match extract_firmware_version(firmware_revision) {
+            Some(version) => version >= VBAT_HUNDREDTHS_MIN_BETAFLIGHT_VERSION,
             // Default to modern Betaflight scaling if version can't be parsed
-            0.01
+            None => true,
         }
     } else {
         // Unknown firmware, default to hundredths
+        true
+    }
+}
+
+/// Convert raw vbat value to volts with firmware-aware scaling
+pub fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
+    let scale_factor = if vbat_is_hundredths(firmware_revision) {
         0.01
+    } else {
+        0.1
     };
 
     raw_value as f32 * scale_factor
+}
+
+/// Number of decimal places for printing volts, matching the scale of
+/// [`convert_vbat_to_volts`]: two for hundredths, one for tenths.
+pub fn vbat_decimal_places(firmware_revision: &str) -> usize {
+    if vbat_is_hundredths(firmware_revision) {
+        VBAT_DECIMALS_HUNDREDTHS
+    } else {
+        VBAT_DECIMALS_TENTHS
+    }
 }
 
 /// Extract version from firmware revision string
@@ -611,5 +634,70 @@ mod tests {
         // When no datetime provided, should use relative time from epoch
         let timestamp = generate_gpx_timestamp(None, 0);
         assert!(timestamp.contains("1970-01-01T00:00:00"));
+    }
+}
+
+#[cfg(test)]
+mod vbat_precision_tests {
+    use super::*;
+
+    // Expected values follow blackbox_decode.c `fprintfMainFieldInUnit` UNIT_VOLTS:
+    // Betaflight >= 4.3.0 prints raw/100 with "%.2f"; older prints raw/10 with "%.1f".
+    fn printed(raw: i32, fw: &str) -> String {
+        format!(
+            "{:.*}",
+            vbat_decimal_places(fw),
+            convert_vbat_to_volts(raw, fw)
+        )
+    }
+
+    #[test]
+    fn betaflight_exactly_4_3_0_uses_two_decimals() {
+        assert_eq!(
+            printed(1234, "Betaflight 4.3.0 (9360ab1) STM32H743"),
+            "12.34"
+        );
+    }
+
+    #[test]
+    fn betaflight_4_2_x_uses_one_decimal() {
+        assert_eq!(
+            printed(123, "Betaflight 4.2.9 (afdac08b3) STM32F411"),
+            "12.3"
+        );
+    }
+
+    #[test]
+    fn betaflight_4_3_0_prerelease_is_below_4_3_0() {
+        // semver orders 4.3.0-RC1 before 4.3.0, as in blackbox-tools semver.c
+        assert_eq!(printed(123, "Betaflight 4.3.0-RC1 (abc) STM32F7X2"), "12.3");
+    }
+
+    #[test]
+    fn betaflight_calendar_version_uses_two_decimals() {
+        assert_eq!(
+            printed(1234, "Betaflight 2026.12.0 (245eec10f) AT32F435G"),
+            "12.34"
+        );
+    }
+
+    #[test]
+    fn emuflight_keeps_one_decimal() {
+        assert_eq!(
+            printed(123, "EmuFlight 0.5.0-dev (bd02788) STELLARH7DEV"),
+            "12.3"
+        );
+    }
+
+    #[test]
+    fn hundredths_scale_always_has_two_decimals() {
+        for fw in [
+            "iNav 7.1.0 (abc) STM32F7X2",
+            "INAV 9.0.0 (a7932b92) SPEEDYBEEF405V4",
+            "Betaflight 4.5.1 (77d01ba3b) AT32F435M",
+        ] {
+            assert_eq!(vbat_decimal_places(fw), 2, "{fw}");
+            assert_eq!(printed(1365, fw), "13.65", "{fw}");
+        }
     }
 }
