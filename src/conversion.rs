@@ -3,12 +3,12 @@
 //! Contains all firmware-aware conversion functions for voltage, GPS data,
 //! and flag formatting to maintain compatibility across firmware versions.
 
+use crate::firmware_profile::{FirmwareProfile, FirmwareVersion, FlagNaming};
 use crate::firmware_tables::{
-    InavFlagName, InavVersion, FAILSAFE_PHASE_NAMES, FIELD_ACTIVE_FLIGHT_MODE_FLAGS,
-    FIELD_FLIGHT_MODE_FLAGS, FIELD_FLIGHT_MODE_FLAGS2, FIELD_STATE_FLAGS, FLIGHT_MODE_FLAG_NAMES,
+    InavFlagName, FAILSAFE_PHASE_NAMES, FIELD_ACTIVE_FLIGHT_MODE_FLAGS, FIELD_FLIGHT_MODE_FLAGS,
+    FIELD_FLIGHT_MODE_FLAGS2, FIELD_STATE_FLAGS, FLIGHT_MODE_FLAG_NAMES,
     INAV_ACTIVE_FLIGHT_MODE_NAMES, INAV_BOX_MODE_NAMES, INAV_BOX_MODE_NAMES_HIGH,
-    INAV_FAILSAFE_PHASE_NAMES, INAV_FIRST_VERIFIED_VERSION, INAV_STATE_FLAG_NAMES,
-    STATE_FLAG_NAMES,
+    INAV_STATE_FLAG_NAMES, STATE_FLAG_NAMES,
 };
 use semver::Version;
 
@@ -138,27 +138,11 @@ pub fn format_state_flags(flags: i32) -> String {
     format_flag_names(flags, &STATE_FLAG_NAMES)
 }
 
-/// Extract the `(major, minor, patch)` version from an INAV revision header
-///
-/// Parses the word after "INAV" in strings like
-/// `INAV 8.0.1 (ae47bcba01) TARGET`. Returns `None` when the header does not
-/// name INAV or has no parsable version. A pre-release suffix is ignored.
-pub fn extract_inav_version(firmware_revision: &str) -> Option<InavVersion> {
-    let mut words = firmware_revision.split_whitespace();
-    while let Some(word) = words.next() {
-        if word.eq_ignore_ascii_case("inav") {
-            let version = Version::parse(words.next()?).ok()?;
-            return Some((version.major, version.minor, version.patch));
-        }
-    }
-    None
-}
-
 /// Join the names of every set bit of `flags` that `names` defines for `version`
 ///
 /// Bits with no entry for `version` stay unnamed and are ignored, like bits
 /// above the table in [`format_flag_names`]. Prints `"0"` when no name matches.
-fn format_inav_flag_names(flags: i32, names: &[InavFlagName], version: InavVersion) -> String {
+fn format_inav_flag_names(flags: i32, names: &[InavFlagName], version: FirmwareVersion) -> String {
     let word = flags as u32;
     let set: Vec<&str> = names
         .iter()
@@ -175,11 +159,10 @@ fn format_inav_flag_names(flags: i32, names: &[InavFlagName], version: InavVersi
 
 /// Format one S-frame flag field for an INAV log
 ///
-/// Returns `None` when `field` is not an INAV flag field. When the revision
-/// has no parsable INAV version, or the version is older than
-/// [`INAV_FIRST_VERIFIED_VERSION`], the Betaflight names are wrong and the
-/// INAV names are unverified, so the raw unsigned value is printed.
-fn format_inav_flag_field(field: &str, flags: i32, firmware_revision: &str) -> Option<String> {
+/// Returns `None` when `field` is not an INAV flag field. The profile decides
+/// the naming: INAV names for a covered version, else the raw unsigned value
+/// (see [`FlagNaming::RawValue`]).
+fn format_inav_flag_field(field: &str, flags: i32, profile: &FirmwareProfile) -> Option<String> {
     let names: &[InavFlagName] = match field {
         FIELD_FLIGHT_MODE_FLAGS => &INAV_BOX_MODE_NAMES,
         FIELD_FLIGHT_MODE_FLAGS2 => &INAV_BOX_MODE_NAMES_HIGH,
@@ -187,10 +170,8 @@ fn format_inav_flag_field(field: &str, flags: i32, firmware_revision: &str) -> O
         FIELD_STATE_FLAGS => &INAV_STATE_FLAG_NAMES,
         _ => return None,
     };
-    Some(match extract_inav_version(firmware_revision) {
-        Some(version) if version >= INAV_FIRST_VERIFIED_VERSION => {
-            format_inav_flag_names(flags, names, version)
-        }
+    Some(match (profile.flag_naming, profile.version) {
+        (FlagNaming::Inav, Some(version)) => format_inav_flag_names(flags, names, version),
         _ => (flags as u32).to_string(),
     })
 }
@@ -198,24 +179,26 @@ fn format_inav_flag_field(field: &str, flags: i32, firmware_revision: &str) -> O
 /// Format a flag field for CSV output, choosing the name table by firmware
 ///
 /// `field` is the S-frame field name (`flightModeFlags`, `flightModeFlags2`,
-/// `activeFlightModeFlags` or `stateFlags`). INAV logs use the INAV tables
-/// keyed by the version in the revision header; every other firmware keeps
-/// the Betaflight tables of [`format_flight_mode_flags`] and
-/// [`format_state_flags`]. Returns `None` for any other field name, and for
-/// `flightModeFlags2` and `activeFlightModeFlags` on non-INAV firmware (they
-/// are INAV-only fields; the caller prints the raw value as before).
+/// `activeFlightModeFlags` or `stateFlags`). The [`FirmwareProfile`] of the
+/// revision header selects the tables: INAV tables keyed by version, the
+/// Betaflight tables of [`format_flight_mode_flags`] and
+/// [`format_state_flags`], or the raw value. Returns `None` for any other
+/// field name, and for `flightModeFlags2` and `activeFlightModeFlags` on
+/// non-INAV firmware (they are INAV-only fields; the caller prints the raw
+/// value as before).
 pub fn format_flag_field_for_firmware(
     field: &str,
     flags: i32,
     firmware_revision: &str,
 ) -> Option<String> {
-    if is_inav_firmware(firmware_revision) {
-        return format_inav_flag_field(field, flags, firmware_revision);
-    }
-    match field {
-        FIELD_FLIGHT_MODE_FLAGS => Some(format_flight_mode_flags(flags)),
-        FIELD_STATE_FLAGS => Some(format_state_flags(flags)),
-        _ => None,
+    let profile = FirmwareProfile::from_revision(firmware_revision);
+    match profile.flag_naming {
+        FlagNaming::Betaflight => match field {
+            FIELD_FLIGHT_MODE_FLAGS => Some(format_flight_mode_flags(flags)),
+            FIELD_STATE_FLAGS => Some(format_state_flags(flags)),
+            _ => None,
+        },
+        FlagNaming::Inav | FlagNaming::RawValue => format_inav_flag_field(field, flags, &profile),
     }
 }
 
@@ -230,22 +213,14 @@ pub fn format_failsafe_phase(phase: i32) -> String {
 
 /// Format failsafe phase for CSV output, choosing the name table by firmware
 ///
-/// INAV logs use [`INAV_FAILSAFE_PHASE_NAMES`]; every other firmware uses
+/// The [`FirmwareProfile`] of the revision header selects the table: INAV
+/// logs use the INAV enum names, every other firmware uses
 /// [`FAILSAFE_PHASE_NAMES`]. A value with no name prints as a raw integer.
 pub fn format_failsafe_phase_for_firmware(phase: i32, firmware_revision: &str) -> String {
-    if is_inav_firmware(firmware_revision) {
-        phase_name_or_raw(phase, &INAV_FAILSAFE_PHASE_NAMES)
-    } else {
-        format_failsafe_phase(phase)
-    }
-}
-
-/// True when the firmware revision header names INAV ("INAV" or "iNav")
-///
-/// Uses [`crate::export::firmware_prefix_for_revision`], so a revision that
-/// also names EmuFlight or Betaflight is classified as that vendor first.
-pub fn is_inav_firmware(firmware_revision: &str) -> bool {
-    crate::export::firmware_prefix_for_revision(firmware_revision) == Some("INAV_")
+    phase_name_or_raw(
+        phase,
+        FirmwareProfile::from_revision(firmware_revision).failsafe_phase_names,
+    )
 }
 
 fn phase_name_or_raw(phase: i32, names: &[&str]) -> String {
@@ -680,17 +655,24 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_inav_version() {
-        assert_eq!(extract_inav_version(INAV_8_0_1), Some((8, 0, 1)));
-        assert_eq!(extract_inav_version("iNav 7.1.2"), Some((7, 1, 2)));
-        assert_eq!(
-            extract_inav_version("INAV 10.0.0-rc2 (f1cd5c6f68) T"),
-            Some((10, 0, 0))
-        );
-        assert_eq!(extract_inav_version("INAV"), None);
-        assert_eq!(extract_inav_version("INAV 7.1 (sha) T"), None);
-        assert_eq!(extract_inav_version("Betaflight 4.5.1 (sha) T"), None);
-        assert_eq!(extract_inav_version(""), None);
+    fn test_non_inav_header_naming_inav_later_keeps_betaflight_tables() {
+        // First-word rule: "INAV" later in the string must not select INAV tables.
+        for rev in [
+            "Quicksilver 1.0 (INAV-compatible build)",
+            "Betaflight 4.5.0 (INAV)",
+        ] {
+            // Bit 2 is MAG in the Betaflight table; the INAV table names it differently.
+            assert_eq!(fmt("flightModeFlags", 1 << 2, rev), "MAG", "{rev}");
+            assert_eq!(
+                format_flag_field_for_firmware("flightModeFlags2", 1, rev),
+                None
+            );
+            assert_eq!(
+                format_flag_field_for_firmware("activeFlightModeFlags", 1, rev),
+                None
+            );
+            assert_eq!(format_failsafe_phase_for_firmware(2, rev), "LANDING");
+        }
     }
 
     #[test]
