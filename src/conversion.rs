@@ -5,6 +5,16 @@
 
 use semver::Version;
 
+// GPS altitude raw-unit divisors (raw value / divisor = meters).
+// INAV (releases 1.9.1 - 9.0.1 and master as of bbc055369) logs `llh.alt / 100` in whole meters
+// (src/main/blackbox/blackbox.c, "GPS_altitude" G-frame field).
+// Betaflight logs centimeters before 4.0 and decimeters from 4.0.
+// Can move to src/firmware_tables.rs once that module exists.
+const GPS_ALT_DIVISOR_INAV: f64 = 1.0;
+const GPS_ALT_DIVISOR_BF_LEGACY: f64 = 100.0;
+const GPS_ALT_DIVISOR_BF_MODERN: f64 = 10.0;
+const GPS_ALT_BF_MODERN_MIN_MAJOR: u8 = 4;
+
 /// Convert raw vbat value to volts with firmware-aware scaling
 pub fn convert_vbat_to_volts(raw_value: i32, firmware_revision: &str) -> f32 {
     // Determine scaling factor based on firmware
@@ -76,14 +86,16 @@ pub fn convert_gps_coordinate(raw_value: i32) -> f64 {
 
 /// Convert GPS altitude with firmware-aware unit conversion
 pub fn convert_gps_altitude(raw_value: i32, firmware_revision: &str) -> f64 {
-    // Altitude units changed between firmware versions:
-    // Before Betaflight 4: centimeters (factor 0.01)
-    // Betaflight 4+: decimeters (factor 0.1)
+    // INAV writes whole meters in every release; header reads "INAV x.y.z".
+    if firmware_revision.to_ascii_lowercase().starts_with("inav") {
+        return raw_value as f64 / GPS_ALT_DIVISOR_INAV;
+    }
+    // Betaflight/others: centimeters before 4, decimeters from 4.
     let major_version = extract_major_firmware_version(firmware_revision);
-    if major_version >= 4 {
-        raw_value as f64 / 10.0 // decimeters to meters
+    if major_version >= GPS_ALT_BF_MODERN_MIN_MAJOR {
+        raw_value as f64 / GPS_ALT_DIVISOR_BF_MODERN
     } else {
-        raw_value as f64 / 100.0 // centimeters to meters
+        raw_value as f64 / GPS_ALT_DIVISOR_BF_LEGACY
     }
 }
 
@@ -449,6 +461,30 @@ fn is_leap_year(year: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gps_altitude_units_by_firmware() {
+        // INAV: raw is meters in every release (writer: llh.alt / 100)
+        for fw in [
+            "INAV 1.9.1 (a) X",
+            "INAV 2.0.0 (a) X",
+            "INAV 7.1.0 (a) X",
+            "INAV 8.0.0 (a) X",
+            "INAV 9.0.1 (a) X",
+            "INAV 10.0.0 (a) X",
+            "iNav 7.1.0 (a) X",
+        ] {
+            assert!((convert_gps_altitude(76, fw) - 76.0).abs() < 1e-9, "{fw}");
+        }
+        // INAV negative altitude (below sea level) stays in meters
+        assert!((convert_gps_altitude(-12, "INAV 8.0.0 (a) X") + 12.0).abs() < 1e-9);
+        // Betaflight: cm before 4.0, dm from 4.0
+        assert!((convert_gps_altitude(1234, "Betaflight 3.5.7 (a) X") - 12.34).abs() < 1e-9);
+        assert!((convert_gps_altitude(1234, "Betaflight 4.0.0 (a) X") - 123.4).abs() < 1e-9);
+        assert!((convert_gps_altitude(1234, "Betaflight 4.5.1 (a) X") - 123.4).abs() < 1e-9);
+        // Unparseable firmware defaults to modern (decimeters)
+        assert!((convert_gps_altitude(1234, "Unknown") - 123.4).abs() < 1e-9);
+    }
+
     use super::*;
 
     #[test]
