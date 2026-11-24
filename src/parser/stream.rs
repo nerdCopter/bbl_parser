@@ -27,6 +27,18 @@ impl<'a> BBLDataStream<'a> {
         self.eof = pos >= self.end;
     }
 
+    /// Mark the current position as the end of the stream, like blackbox_decode
+    /// does after a valid end-of-log event (`stream->end = stream->pos`).
+    pub fn end_here(&mut self) {
+        self.end = self.pos;
+        self.eof = true;
+    }
+
+    /// Position of the end of the stream (data length, or where `end_here` cut it).
+    pub fn end_position(&self) -> usize {
+        self.end
+    }
+
     pub fn read_byte(&mut self) -> Result<u8> {
         if self.pos < self.end {
             let byte = self.data[self.pos];
