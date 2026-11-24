@@ -68,12 +68,14 @@ fn test_export_event_creates_output_directory() {
             timestamp_us: 143932686,
             event_type: 13, // EVT_END
             event_data: Vec::new(),
+            data: None,
         },
         EventFrame {
             event_name: "Flight mode change".to_string(),
             timestamp_us: 143905899,
             event_type: 8, // EVT_MODE
             event_data: Vec::new(),
+            data: None,
         },
     ];
 

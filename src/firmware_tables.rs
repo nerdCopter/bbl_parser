@@ -148,6 +148,46 @@ pub const EVENT_NAME_FLIGHT_MODE: &str = "Flight mode";
 /// Event name printed by blackbox_decode for a valid `FLIGHT_LOG_EVENT_LOG_END`.
 pub const EVENT_NAME_LOG_END: &str = "Log clean end";
 
+/// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_SYNC_BEEP`.
+pub const EVENT_NAME_SYNC_BEEP: &str = "Sync beep";
+/// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT`.
+pub const EVENT_NAME_INFLIGHT_ADJUSTMENT: &str = "Inflight adjustment";
+/// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_LOGGING_RESUME`.
+pub const EVENT_NAME_LOGGING_RESUME: &str = "Logging resume";
+
+/// Mask that clears bit 7 of an inflight adjustment function id. blackbox_decode
+/// applies it before the name lookup; an id above this value (bit 7 set)
+/// carries a raw 32-bit float payload instead of a signed VB (`parser.c`).
+pub const ADJUSTMENT_FUNCTION_ID_MASK: u8 = 127;
+/// Name printed when an inflight adjustment function id has no table entry
+/// (blackbox_decode indexes past its table in that case).
+pub const ADJUSTMENT_FUNCTION_UNKNOWN: &str = "UNKNOWN";
+/// Inflight adjustment function names, indexed by function id
+/// (`INFLIGHT_ADJUSTMENT_FUNCTIONS` in blackbox_decode.c).
+pub const INFLIGHT_ADJUSTMENT_FUNCTIONS: [&str; 21] = [
+    "NONE",
+    "RC_RATE",
+    "RC_EXPO",
+    "THROTTLE_EXPO",
+    "PITCH_ROLL_RATE",
+    "YAW_RATE",
+    "PITCH_ROLL_P",
+    "PITCH_ROLL_I",
+    "PITCH_ROLL_D",
+    "YAW_P",
+    "YAW_I",
+    "YAW_D",
+    "RATE_PROFILE",
+    "PITCH_RATE",
+    "ROLL_RATE",
+    "PITCH_P",
+    "PITCH_I",
+    "PITCH_D",
+    "ROLL_P",
+    "ROLL_I",
+    "ROLL_D",
+];
+
 /// Text that starts the `FLIGHT_LOG_EVENT_LOG_END` payload. Betaflight
 /// (`60abbac05`) and EmuFlight (`30eff58a0`) write exactly this text and a
 /// null byte (`blackboxWriteString("End of log"); blackboxWrite(0);`), 11 bytes.

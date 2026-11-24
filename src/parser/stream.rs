@@ -54,6 +54,15 @@ impl<'a> BBLDataStream<'a> {
         Ok(self.read_byte()? as char)
     }
 
+    /// Read a raw little-endian 32-bit float (`streamReadRawFloat` upstream)
+    pub fn read_raw_float(&mut self) -> Result<f32> {
+        let mut bytes = [0u8; 4];
+        for b in bytes.iter_mut() {
+            *b = self.read_byte()?;
+        }
+        Ok(f32::from_le_bytes(bytes))
+    }
+
     /// Read unsigned variable byte - exact replica of JavaScript implementation
     pub fn read_unsigned_vb(&mut self) -> Result<u32> {
         let mut result = 0u32;
