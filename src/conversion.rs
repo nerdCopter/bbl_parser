@@ -6,7 +6,7 @@
 use semver::Version;
 
 // GPS altitude raw-unit divisors (raw value / divisor = meters).
-// INAV (all releases 1.0 - 10.x) logs `llh.alt / 100` in whole meters
+// INAV (releases 1.9.1 - 9.0.1 and master as of bbc055369) logs `llh.alt / 100` in whole meters
 // (src/main/blackbox/blackbox.c, "GPS_altitude" G-frame field).
 // Betaflight logs centimeters before 4.0 and decimeters from 4.0.
 // Can move to src/firmware_tables.rs once that module exists.
