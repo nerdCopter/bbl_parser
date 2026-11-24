@@ -1205,17 +1205,26 @@ mod tests {
 
     #[test]
     fn test_format_failsafe_phase() {
-        // Test known phases - matches Betaflight failsafePhase_e enum
-        assert_eq!(format_failsafe_phase(0), "IDLE"); // FAILSAFE_IDLE
-        assert_eq!(format_failsafe_phase(1), "RX_LOSS_DETECTED"); // FAILSAFE_RX_LOSS_DETECTED
-        assert_eq!(format_failsafe_phase(2), "LANDING"); // FAILSAFE_LANDING
-        assert_eq!(format_failsafe_phase(3), "LANDED"); // FAILSAFE_LANDED
-        assert_eq!(format_failsafe_phase(4), "RX_LOSS_MONITORING"); // FAILSAFE_RX_LOSS_MONITORING (new)
-        assert_eq!(format_failsafe_phase(5), "RX_LOSS_RECOVERED"); // FAILSAFE_RX_LOSS_RECOVERED (new)
-        assert_eq!(format_failsafe_phase(6), "GPS_RESCUE"); // FAILSAFE_GPS_RESCUE (new)
+        // Expected strings are FLIGHT_LOG_FAILSAFE_PHASE_NAME in blackbox-tools
+        // src/blackbox_fielddefs.c at 49e18cac31e657f9bdb1ecccc32bd401803f66f6
+        let expected = [
+            "IDLE",
+            "RX_LOSS_DETECTED",
+            "LANDING",
+            "LANDED",
+            "FAILSAFE_RX_LOSS_MONITORING",
+            "FAILSAFE_RX_LOSS_RECOVERED",
+            "GPS_RESCUE",
+            "AUTOPILOT",
+        ];
+        for (phase, name) in expected.iter().enumerate() {
+            assert_eq!(format_failsafe_phase(phase as i32), *name, "phase {phase}");
+        }
 
-        // Test unknown phases (should return numeric string)
+        // Values past FLIGHT_LOG_FAILSAFE_PHASE_COUNT (8) print as raw integers
+        assert_eq!(format_failsafe_phase(8), "8");
         assert_eq!(format_failsafe_phase(99), "99");
         assert_eq!(format_failsafe_phase(-1), "-1");
+        assert_eq!(format_failsafe_phase(i32::MAX), "2147483647");
     }
 }

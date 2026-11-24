@@ -85,6 +85,7 @@ pub mod conversion;
 pub mod error;
 pub mod export;
 pub mod filters;
+pub mod firmware_tables;
 pub mod parser;
 pub mod types;
 
