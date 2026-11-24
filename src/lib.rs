@@ -95,6 +95,7 @@ pub mod limits;
 pub mod parser;
 pub mod selection;
 pub mod types;
+pub mod units;
 
 // Re-export everything from modules for convenience
 // This maintains backward compatibility while keeping the implementation flexible
@@ -114,6 +115,8 @@ pub use parser::*;
 pub use selection::*;
 #[allow(ambiguous_glob_reexports)]
 pub use types::*;
+#[allow(ambiguous_glob_reexports)]
+pub use units::*;
 
 // Re-export Result type for convenience
 pub use anyhow::Result;

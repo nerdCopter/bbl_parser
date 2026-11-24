@@ -5,8 +5,14 @@
 
 use crate::conversion::*;
 #[cfg(feature = "csv")]
-use crate::firmware_tables::{FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_STATE_FLAGS};
+use crate::firmware_tables::{
+    DEFAULT_ACC_1G, DEFAULT_GYRO_SCALE, FIELDS_ACC_SMOOTH, FIELDS_GYRO_ADC, FIELD_AMPERAGE_LATEST,
+    FIELD_BARO_ALT, FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_STATE_FLAGS, FIELD_TIME,
+    FIELD_VBAT_LATEST,
+};
 use crate::types::*;
+#[cfg(feature = "csv")]
+use crate::units::*;
 #[cfg(feature = "csv")]
 use anyhow::Context;
 use anyhow::Result;
@@ -229,61 +235,135 @@ pub fn compute_export_paths(
     (csv_path, headers_path, gpx_path, event_path)
 }
 
+/// How one CSV column is produced.
+#[cfg(feature = "csv")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldKind {
+    Time,
+    LoopIteration,
+    Vbat,
+    Amperage,
+    Energy,
+    Flags,
+    Height,
+    Gyro,
+    Acc,
+    Plain,
+}
+
+/// One CSV column: header text, source field name and how to write it.
+#[cfg(feature = "csv")]
+#[derive(Debug)]
+struct CsvField {
+    csv_name: String,
+    lookup_name: String,
+    kind: FieldKind,
+}
+
 /// Pre-computed CSV field mapping for performance
 #[cfg(feature = "csv")]
 #[derive(Debug)]
 struct CsvFieldMap {
-    field_name_to_lookup: Vec<(String, String)>, // (csv_name, lookup_name)
+    fields: Vec<CsvField>,
+}
+
+/// Header text of a converted column: `name (unit)`, or `name` for raw.
+#[cfg(feature = "csv")]
+fn with_unit_label(name: &str, label: Option<&str>) -> String {
+    match label {
+        Some(label) => format!("{name} ({label})"),
+        None => name.to_string(),
+    }
 }
 
 #[cfg(feature = "csv")]
 impl CsvFieldMap {
-    fn new(header: &BBLHeader) -> Self {
-        let mut field_name_to_lookup = Vec::new();
+    fn new(header: &BBLHeader, units: &UnitOptions) -> Self {
+        let mut fields = Vec::new();
 
         // I frame fields
         for field_name in &header.i_frame_def.field_names {
             let trimmed = field_name.trim();
-            let csv_name = if trimmed == "time" {
-                "time (us)".to_string()
-            } else if trimmed == "vbatLatest" {
-                "vbatLatest (V)".to_string()
-            } else if trimmed == "amperageLatest" {
-                "amperageLatest (A)".to_string()
+            let (csv_name, kind) = if trimmed == FIELD_TIME {
+                (
+                    with_unit_label(trimmed, units.frame_time.label()),
+                    FieldKind::Time,
+                )
+            } else if trimmed == FIELD_VBAT_LATEST {
+                (
+                    with_unit_label(trimmed, units.vbat.label()),
+                    FieldKind::Vbat,
+                )
+            } else if trimmed == FIELD_AMPERAGE_LATEST {
+                (
+                    with_unit_label(trimmed, units.amperage.label()),
+                    FieldKind::Amperage,
+                )
+            } else if trimmed == FIELD_BARO_ALT && units.height.is_some() {
+                (
+                    with_unit_label(trimmed, units.height.and_then(HeightUnit::label)),
+                    FieldKind::Height,
+                )
+            } else if FIELDS_GYRO_ADC.contains(&trimmed) {
+                (
+                    with_unit_label(trimmed, units.rotation.label()),
+                    FieldKind::Gyro,
+                )
+            } else if FIELDS_ACC_SMOOTH.contains(&trimmed) {
+                (
+                    with_unit_label(trimmed, units.acceleration.label()),
+                    FieldKind::Acc,
+                )
+            } else if trimmed == "loopIteration" {
+                (trimmed.to_string(), FieldKind::LoopIteration)
             } else {
-                trimmed.to_string()
+                (trimmed.to_string(), FieldKind::Plain)
             };
 
-            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            fields.push(CsvField {
+                csv_name,
+                lookup_name: trimmed.to_string(),
+                kind,
+            });
         }
 
         // Add computed fields IMMEDIATELY after I frame fields (like blackbox_decode does)
-        if field_name_to_lookup
+        if fields
             .iter()
-            .any(|(_, lookup)| lookup == "amperageLatest")
+            .any(|field| field.lookup_name == FIELD_AMPERAGE_LATEST)
         {
-            field_name_to_lookup.push(("energyCumulative (mAh)".to_string(), "".to_string()));
+            fields.push(CsvField {
+                csv_name: "energyCumulative (mAh)".to_string(),
+                lookup_name: String::new(),
+                kind: FieldKind::Energy,
+            });
         }
 
         // S frame fields (with flag formatting)
         for field_name in &header.s_frame_def.field_names {
             let trimmed = field_name.trim();
-            if trimmed == "time" {
+            if trimmed == FIELD_TIME {
                 continue;
             } // Skip duplicate
 
-            let csv_name = if trimmed.contains("Flag") || trimmed == FIELD_FAILSAFE_PHASE {
-                format!("{trimmed} (flags)")
+            let is_flags = trimmed.contains("Flag") || trimmed == FIELD_FAILSAFE_PHASE;
+            let (csv_name, kind) = if is_flags {
+                (
+                    with_unit_label(trimmed, units.flags.label()),
+                    FieldKind::Flags,
+                )
             } else {
-                trimmed.to_string()
+                (trimmed.to_string(), FieldKind::Plain)
             };
 
-            field_name_to_lookup.push((csv_name.clone(), trimmed.to_string()));
+            fields.push(CsvField {
+                csv_name,
+                lookup_name: trimmed.to_string(),
+                kind,
+            });
         }
 
-        Self {
-            field_name_to_lookup,
-        }
+        Self { fields }
     }
 }
 
@@ -303,6 +383,26 @@ pub fn export_to_csv(
     input_path: &Path,
     export_options: &ExportOptions,
     base_name_override: Option<&str>,
+) -> Result<ExportReport> {
+    export_to_csv_with_units(
+        log,
+        input_path,
+        export_options,
+        base_name_override,
+        &UnitOptions::default(),
+    )
+}
+
+/// Like [`export_to_csv`], with the output units chosen by `units`.
+///
+/// The headers file is not affected by `units`.
+#[cfg(feature = "csv")]
+pub fn export_to_csv_with_units(
+    log: &BBLLog,
+    input_path: &Path,
+    export_options: &ExportOptions,
+    base_name_override: Option<&str>,
+    units: &UnitOptions,
 ) -> Result<ExportReport> {
     let (should_skip, reason) =
         crate::filters::should_skip_export(log, export_options.force_export);
@@ -339,7 +439,7 @@ pub fn export_to_csv(
 
     // Export flight data (I, P, S frames) to main CSV
     let flight_csv_path = output_dir.join(format!("{base_name}{log_suffix}.csv"));
-    export_flight_data_to_csv(log, &flight_csv_path)?;
+    export_flight_data_to_csv(log, &flight_csv_path, units)?;
 
     Ok(ExportReport {
         csv_path: Some(flight_csv_path),
@@ -389,12 +489,12 @@ fn export_headers_to_csv(header: &BBLHeader, output_path: &Path) -> Result<()> {
 
 /// Export flight data to CSV file
 #[cfg(feature = "csv")]
-fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
+fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path, units: &UnitOptions) -> Result<()> {
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create flight data CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
 
-    export_flight_data_to_writer(log, &mut writer)?;
+    export_flight_data_to_writer_with_units(log, &mut writer, units)?;
 
     writer
         .flush()
@@ -412,13 +512,28 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
 /// has no I/P frames.
 #[cfg(feature = "csv")]
 pub fn export_flight_data_to_writer<W: Write>(log: &BBLLog, writer: &mut W) -> Result<()> {
+    export_flight_data_to_writer_with_units(log, writer, &UnitOptions::default())
+}
+
+/// Like [`export_flight_data_to_writer`], with the output units chosen by `units`.
+///
+/// `UnitOptions::default()` gives exactly the output of
+/// [`export_flight_data_to_writer`].
+#[cfg(feature = "csv")]
+pub fn export_flight_data_to_writer_with_units<W: Write>(
+    log: &BBLLog,
+    writer: &mut W,
+    units: &UnitOptions,
+) -> Result<()> {
     // Build optimized field mapping
-    let csv_map = CsvFieldMap::new(&log.header);
-    let field_names: Vec<String> = csv_map
-        .field_name_to_lookup
+    let csv_map = CsvFieldMap::new(&log.header, units);
+    let field_names: Vec<&str> = csv_map
+        .fields
         .iter()
-        .map(|(csv_name, _)| csv_name.clone())
+        .map(|field| field.csv_name.as_str())
         .collect();
+    let gyro_scale = gyro_scale_radians_per_microsecond(&log.header).unwrap_or(DEFAULT_GYRO_SCALE);
+    let acc_1g = acc_1g(&log.header).unwrap_or(DEFAULT_ACC_1G);
 
     // Collect all I and P frames in chronological order
     let mut all_frames: Vec<(u64, char, &DecodedFrame)> = Vec::new();
@@ -470,61 +585,113 @@ pub fn export_flight_data_to_writer<W: Write>(log: &BBLLog, writer: &mut W) -> R
         }
 
         // Write data row using optimized field mapping
-        for (i, (csv_name, lookup_name)) in csv_map.field_name_to_lookup.iter().enumerate() {
+        for (i, field) in csv_map.fields.iter().enumerate() {
             if i > 0 {
                 write!(writer, ", ")?;
             }
 
-            // Fast path for special fields using pre-computed indices
-            if csv_name == "time (us)" {
-                write!(writer, "{}", *timestamp as i32)?;
-            } else if csv_name == "loopIteration" {
-                let value = frame
+            let lookup_name = &field.lookup_name;
+            let raw_of = |name: &str| frame.data.get(name).copied().unwrap_or(0);
+            let raw_or_slow = |name: &str| {
+                frame
                     .data
-                    .get("loopIteration")
+                    .get(name)
                     .copied()
-                    .unwrap_or(output_iteration as i32);
-                write!(writer, "{value:4}")?;
-            } else if csv_name == "vbatLatest (V)" {
-                let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
-                write!(
-                    writer,
-                    "{:4.1}",
-                    convert_vbat_to_volts(raw_value, &log.header.firmware_revision)
-                )?;
-            } else if csv_name == "amperageLatest (A)" {
-                let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
-                write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
-            } else if csv_name == "energyCumulative (mAh)" {
-                write!(writer, "{:5}", cumulative_energy_mah as i32)?;
-            } else if csv_name.ends_with(" (flags)") {
-                // Handle flag fields - output text values like blackbox_decode.c
-                let raw_value = frame
-                    .data
-                    .get(lookup_name)
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
-                    .unwrap_or(0);
+                    .or_else(|| latest_s_frame_data.get(name).copied())
+                    .unwrap_or(0)
+            };
 
-                let formatted = if lookup_name == FIELD_FLIGHT_MODE_FLAGS {
-                    format_flight_mode_flags(raw_value)
-                } else if lookup_name == FIELD_STATE_FLAGS {
-                    format_state_flags(raw_value)
-                } else if lookup_name == FIELD_FAILSAFE_PHASE {
-                    format_failsafe_phase(raw_value)
-                } else {
-                    raw_value.to_string()
-                };
-                write!(writer, "{formatted}")?;
-            } else {
-                // Regular field lookup with S-frame fallback
-                let value = frame
-                    .data
-                    .get(lookup_name)
-                    .copied()
-                    .or_else(|| latest_s_frame_data.get(lookup_name).copied())
-                    .unwrap_or(0);
-                write!(writer, "{value:4}")?;
+            match field.kind {
+                FieldKind::Time => match units.frame_time {
+                    FrameTimeUnit::Microseconds => write!(writer, "{}", *timestamp as i32)?,
+                    FrameTimeUnit::Raw => write!(writer, "{:3}", *timestamp as i32)?,
+                    FrameTimeUnit::Milliseconds => {
+                        write!(writer, "{:.3}", *timestamp as f64 / 1000.0)?
+                    }
+                    FrameTimeUnit::Seconds => {
+                        write!(writer, "{:.6}", *timestamp as f64 / 1_000_000.0)?
+                    }
+                },
+                FieldKind::LoopIteration => {
+                    let value = frame
+                        .data
+                        .get("loopIteration")
+                        .copied()
+                        .unwrap_or(output_iteration as i32);
+                    write!(writer, "{value:4}")?;
+                }
+                FieldKind::Vbat => {
+                    let raw_value = raw_of(lookup_name);
+                    let volts = convert_vbat_to_volts(raw_value, &log.header.firmware_revision);
+                    match units.vbat {
+                        VbatUnit::Volts => write!(writer, "{volts:4.1}")?,
+                        VbatUnit::Raw => write!(writer, "{raw_value:3}")?,
+                        VbatUnit::MilliVolts => {
+                            write!(writer, "{:3}", (volts as f64 * 1000.0).round() as i64)?
+                        }
+                    }
+                }
+                FieldKind::Amperage => {
+                    let raw_value = raw_of(lookup_name);
+                    match units.amperage {
+                        AmperageUnit::Amps => {
+                            write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?
+                        }
+                        AmperageUnit::Raw => write!(writer, "{raw_value:3}")?,
+                        AmperageUnit::MilliAmps => write!(writer, "{:3}", raw_value as i64 * 10)?,
+                    }
+                }
+                FieldKind::Energy => write!(writer, "{:5}", cumulative_energy_mah as i32)?,
+                FieldKind::Flags => {
+                    // Handle flag fields - output text values like blackbox_decode.c
+                    let raw_value = raw_or_slow(lookup_name);
+
+                    if units.flags == FlagsUnit::Raw {
+                        write!(writer, "{}", raw_value as u32)?;
+                    } else {
+                        let formatted = if lookup_name == FIELD_FLIGHT_MODE_FLAGS {
+                            format_flight_mode_flags(raw_value)
+                        } else if lookup_name == FIELD_STATE_FLAGS {
+                            format_state_flags(raw_value)
+                        } else if lookup_name == FIELD_FAILSAFE_PHASE {
+                            format_failsafe_phase(raw_value)
+                        } else {
+                            raw_value.to_string()
+                        };
+                        write!(writer, "{formatted}")?;
+                    }
+                }
+                FieldKind::Height => {
+                    let raw_value = raw_or_slow(lookup_name);
+                    match units.height {
+                        Some(HeightUnit::Centimeters) => write!(writer, "{raw_value}")?,
+                        Some(HeightUnit::Raw) | None => write!(writer, "{raw_value:3}")?,
+                        Some(unit) => write!(writer, "{:.2}", height_to_unit(raw_value, unit))?,
+                    }
+                }
+                FieldKind::Gyro => {
+                    let raw_value = raw_or_slow(lookup_name);
+                    match units.rotation {
+                        RotationUnit::Raw => write!(writer, "{raw_value:4}")?,
+                        unit => write!(writer, "{:.2}", gyro_to_unit(raw_value, gyro_scale, unit))?,
+                    }
+                }
+                FieldKind::Acc => {
+                    let raw_value = raw_or_slow(lookup_name);
+                    match units.acceleration {
+                        AccelerationUnit::Raw => write!(writer, "{raw_value:4}")?,
+                        unit => write!(
+                            writer,
+                            "{:.2}",
+                            acceleration_to_unit(raw_value, acc_1g, unit)
+                        )?,
+                    }
+                }
+                FieldKind::Plain => {
+                    // Regular field lookup with S-frame fallback
+                    let value = raw_or_slow(lookup_name);
+                    write!(writer, "{value:4}")?;
+                }
             }
         }
         writeln!(writer)?;
@@ -562,6 +729,33 @@ pub fn export_to_gpx(
     export_options: &ExportOptions,
     log_start_datetime: Option<&str>,
     base_name_override: Option<&str>,
+) -> Result<ExportReport> {
+    export_to_gpx_with_alt_offset(
+        input_path,
+        log_index,
+        total_logs,
+        gps_coordinates,
+        home_coordinates,
+        export_options,
+        log_start_datetime,
+        base_name_override,
+        0.0,
+    )
+}
+
+/// Like [`export_to_gpx`], adding `alt_offset_m` meters to every track point's
+/// `<ele>` (`blackbox_decode --alt-offset`). The home waypoint has no elevation.
+#[allow(clippy::too_many_arguments)]
+pub fn export_to_gpx_with_alt_offset(
+    input_path: &Path,
+    log_index: usize,
+    total_logs: usize,
+    gps_coordinates: &[GpsCoordinate],
+    home_coordinates: &[GpsHomeCoordinate],
+    export_options: &ExportOptions,
+    log_start_datetime: Option<&str>,
+    base_name_override: Option<&str>,
+    alt_offset_m: f64,
 ) -> Result<ExportReport> {
     if gps_coordinates.is_empty() {
         return Ok(ExportReport::default());
@@ -624,7 +818,10 @@ pub fn export_to_gpx(
         writeln!(
             gpx_file,
             r#"  <trkpt lat="{:.7}" lon="{:.7}"><ele>{:.2}</ele><time>{}</time></trkpt>"#,
-            coord.latitude, coord.longitude, coord.altitude, timestamp_str
+            coord.latitude,
+            coord.longitude,
+            coord.altitude + alt_offset_m,
+            timestamp_str
         )?;
     }
 
@@ -1258,6 +1455,212 @@ mod tests {
         let mut mem: Vec<u8> = Vec::new();
         export_flight_data_to_writer(&BBLLog::new(1, 1), &mut mem)?;
         assert!(mem.is_empty());
+        Ok(())
+    }
+
+    #[cfg(feature = "csv")]
+    fn csv_cells(text: &str) -> Vec<Vec<String>> {
+        text.lines()
+            .map(|line| line.split(',').map(|c| c.trim().to_string()).collect())
+            .collect()
+    }
+
+    #[cfg(feature = "csv")]
+    fn unit_test_log() -> BBLLog {
+        let mut log = csv_test_log();
+        log.header
+            .all_headers
+            .push("H Firmware type:Cleanflight".into());
+        log.header
+            .all_headers
+            .push("H gyro_scale:0x3f800000".into());
+        log.header.sysconfig.insert("acc_1G".into(), 2048);
+        log
+    }
+
+    #[cfg(feature = "csv")]
+    fn export_with(log: &BBLLog, units: &UnitOptions) -> Vec<Vec<String>> {
+        let mut mem: Vec<u8> = Vec::new();
+        export_flight_data_to_writer_with_units(log, &mut mem, units).unwrap();
+        csv_cells(&String::from_utf8(mem).unwrap())
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_default_units_leave_output_unchanged() {
+        let log = unit_test_log();
+        let mut plain: Vec<u8> = Vec::new();
+        export_flight_data_to_writer(&log, &mut plain).unwrap();
+        let mut with_default: Vec<u8> = Vec::new();
+        export_flight_data_to_writer_with_units(&log, &mut with_default, &UnitOptions::default())
+            .unwrap();
+        assert_eq!(plain, with_default);
+        let text = String::from_utf8(plain).unwrap();
+        assert!(text.starts_with(
+            "loopIteration, time (us), vbatLatest (V), amperageLatest (A), gyroADC[0], energyCumulative (mAh)\n"
+        ));
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_electrical_and_time_units() {
+        let log = unit_test_log();
+        let units = UnitOptions {
+            vbat: VbatUnit::MilliVolts,
+            amperage: AmperageUnit::MilliAmps,
+            frame_time: FrameTimeUnit::Seconds,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(
+            rows[0],
+            [
+                "loopIteration",
+                "time (s)",
+                "vbatLatest (mV)",
+                "amperageLatest (mA)",
+                "gyroADC[0]",
+                "energyCumulative (mAh)"
+            ]
+        );
+        // raw vbat 1601 hundredths of a volt = 16010 mV; raw current 250 = 2500 mA
+        assert_eq!(rows[2][..4], ["1", "0.002000", "16010", "2500"]);
+
+        let units = UnitOptions {
+            frame_time: FrameTimeUnit::Milliseconds,
+            vbat: VbatUnit::Raw,
+            amperage: AmperageUnit::Raw,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(rows[0][1..4], ["time (ms)", "vbatLatest", "amperageLatest"]);
+        assert_eq!(rows[3][..4], ["2", "3.000", "1602", "500"]);
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_rotation_units_from_header_scale() {
+        let log = unit_test_log();
+        // gyro_scale 1.0 deg/s per count: -14 counts = -14 deg/s = -14 * pi/180 rad/s
+        let rows = export_with(
+            &log,
+            &UnitOptions {
+                rotation: RotationUnit::DegreesPerSecond,
+                ..UnitOptions::default()
+            },
+        );
+        assert_eq!(rows[0][4], "gyroADC[0] (deg/s)");
+        assert_eq!(rows[3][4], "-14.00");
+        let rows = export_with(
+            &log,
+            &UnitOptions {
+                rotation: RotationUnit::RadiansPerSecond,
+                ..UnitOptions::default()
+            },
+        );
+        assert_eq!(rows[0][4], "gyroADC[0] (rad/s)");
+        assert_eq!(rows[3][4], "-0.24");
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_flags_raw_drops_suffix_and_names() {
+        let mut log = unit_test_log();
+        log.header.s_frame_def =
+            FrameDefinition::from_field_names(vec!["time".into(), "flightModeFlags".into()]);
+        log.frames[0].data.insert("flightModeFlags".into(), 3);
+        let rows = export_with(&log, &UnitOptions::default());
+        assert_eq!(rows[0].last().unwrap(), "flightModeFlags (flags)");
+        assert_eq!(rows[1].last().unwrap(), "ANGLE_MODE|HORIZON_MODE");
+        let rows = export_with(
+            &log,
+            &UnitOptions {
+                flags: FlagsUnit::Raw,
+                ..UnitOptions::default()
+            },
+        );
+        assert_eq!(rows[0].last().unwrap(), "flightModeFlags");
+        assert_eq!(rows[1].last().unwrap(), "3");
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_height_and_acceleration_units() {
+        let mut log = unit_test_log();
+        log.header.i_frame_def = FrameDefinition::from_field_names(vec![
+            "loopIteration".into(),
+            "time".into(),
+            "BaroAlt".into(),
+            "accSmooth[2]".into(),
+        ]);
+        for (i, frame) in log.frames.iter_mut().enumerate() {
+            frame.data.insert("BaroAlt".into(), 1000 * (i as i32 + 1));
+            frame
+                .data
+                .insert("accSmooth[2]".into(), 2048 * (i as i32 + 1));
+        }
+        // no unit given: BaroAlt column is left as it was
+        let rows = export_with(&log, &UnitOptions::default());
+        assert_eq!(rows[0][2..], ["BaroAlt", "accSmooth[2]"]);
+        assert_eq!(rows[1][2..], ["1000", "2048"]);
+
+        let units = UnitOptions {
+            height: Some(HeightUnit::Feet),
+            acceleration: AccelerationUnit::MetersPerSecondSquared,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(rows[0][2..], ["BaroAlt (ft)", "accSmooth[2] (m/s/s)"]);
+        // 1000 cm = 10 m = 32.8084 ft; 1 g = 9.80665 m/s^2
+        assert_eq!(rows[1][2..], ["32.81", "9.81"]);
+        assert_eq!(rows[3][2..], ["98.43", "29.42"]);
+
+        let units = UnitOptions {
+            height: Some(HeightUnit::Centimeters),
+            acceleration: AccelerationUnit::Gs,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(rows[0][2..], ["BaroAlt (cm)", "accSmooth[2] (g)"]);
+        assert_eq!(rows[2][2..], ["2000", "2.00"]);
+    }
+
+    #[test]
+    fn test_gpx_alt_offset_is_added_to_elevation() -> Result<()> {
+        let coords = vec![GpsCoordinate {
+            latitude: 1.0,
+            longitude: 2.0,
+            altitude: 21.0,
+            timestamp_us: 0,
+            num_sats: Some(9),
+            speed: None,
+            ground_course: None,
+        }];
+        let temp_dir = TempDir::new()?;
+        let input_path = temp_dir.path().join("in.bbl");
+        let opts = ExportOptions {
+            gpx: true,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            ..ExportOptions::default()
+        };
+        let read = |offset: f64| -> Result<String> {
+            let report = export_to_gpx_with_alt_offset(
+                &input_path,
+                0,
+                1,
+                &coords,
+                &[],
+                &opts,
+                None,
+                None,
+                offset,
+            )?;
+            Ok(std::fs::read_to_string(report.gpx_path.unwrap())?)
+        };
+        assert!(read(0.0)?.contains("<ele>21.00</ele>"));
+        assert!(read(-3.5)?.contains("<ele>17.50</ele>"));
+        let plain = export_to_gpx(&input_path, 0, 1, &coords, &[], &opts, None, None)?;
+        assert!(std::fs::read_to_string(plain.gpx_path.unwrap())?.contains("<ele>21.00</ele>"));
         Ok(())
     }
 }
