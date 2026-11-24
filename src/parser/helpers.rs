@@ -52,12 +52,12 @@ pub fn sign_extend_24bit(value: u32) -> i32 {
     }
 }
 
-/// Sign-extend a 14-bit value to i32 (sign-magnitude format)
-/// Bit 13 indicates sign, bits 0-12 are the magnitude.
-/// Returns negative value if sign bit is set.
+/// Sign-extend a 14-bit two's-complement value to i32
+/// Bit 13 is the sign bit; when set, the upper bits are filled with ones.
+/// Matches `signExtend14Bit` in blackbox-tools `tools.c`.
 pub fn sign_extend_14bit(value: u16) -> i32 {
     if (value & 0x2000) != 0 {
-        -((value & 0x1fff) as i32)
+        (value | 0xC000) as i16 as i32
     } else {
         (value & 0x1fff) as i32
     }
@@ -122,9 +122,9 @@ mod tests {
         assert_eq!(sign_extend_14bit(1), 1);
         assert_eq!(sign_extend_14bit(0x1FFF), 0x1FFF); // 8191
 
-        // Negative values (bit 13 set)
-        assert_eq!(sign_extend_14bit(0x2000), 0); // -0
-        assert_eq!(sign_extend_14bit(0x2001), -1);
-        assert_eq!(sign_extend_14bit(0x3FFF), -8191);
+        // Negative values (bit 13 set), two's complement over 14 bits
+        assert_eq!(sign_extend_14bit(0x2000), -8192);
+        assert_eq!(sign_extend_14bit(0x2001), -8191);
+        assert_eq!(sign_extend_14bit(0x3FFF), -1);
     }
 }
