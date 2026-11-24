@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--limits` CLI flag**: print min, max and range of each I-frame field after each log's statistics, in the `blackbox_decode --limits` table layout. As upstream, the export still runs
 - **Library API (additive)**: `export_flight_data_to_writer` (CSV to any `Write`, byte-identical to the `.csv` file); module `selection` (`find_log_offsets`, `log_entries`, `format_log_table`, `select_log`, `LogSelectError`, `LOG_START_MARKER`); module `limits` (`compute_field_limits`, `format_field_limits`, `FieldLimit`). `ExportOptions` is unchanged
 
+- **`--unit-*` CLI flags** (`--unit-vbat raw|mV|V`, `--unit-amperage raw|mA|A`, `--unit-flags raw|flags`, `--unit-frame-time raw|us|ms|s`, `--unit-height raw|cm|m|ft`, `--unit-rotation raw|deg/s|rad/s`, `--unit-acceleration raw|g|m/s2`, `--unit-gps-speed raw|mps|kph|mph`): choose the CSV units as `blackbox_decode` does, with the same header suffixes. Names are case-insensitive and a unit that does not fit its option is rejected at parse time (upstream fails later or prints a wrong column). Without flags the CSV is unchanged; `--unit-height` is the exception to upstream's default and adds the `(cm)` header only when given
+- **`--alt-offset <METERS>` CLI flag**: adds meters to every GPX track point elevation. Non-numeric, `nan` and `inf` are rejected (upstream `atof` turns them into 0)
+- **`--merge-gps` CLI flag**: appends the G-frame fields to the flight-data CSV with `blackbox_decode`'s row rules (G frames wait for an H frame, a G frame at another time repeats the last main row), coordinate and speed formats
+- **`--raw` CLI flag**: no predictors, frames in stream order, no unit suffixes. Flag fields still print as names, as upstream does
+- **Library API (additive)**: module `units` (`UnitOptions` and unit enums), `export_to_csv_with_units`, `export_flight_data_to_writer_with_units`, `export_to_gpx_with_alt_offset`, `parse_single_log_with_raw`, `parse_frames_with_raw`. `ExportOptions` is unchanged
+
 ## [1.1.1] - 2026-09-17
 
 ### Fixed

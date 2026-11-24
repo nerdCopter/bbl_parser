@@ -7,7 +7,8 @@ use crate::conversion::*;
 #[cfg(feature = "csv")]
 use crate::firmware_tables::{
     DEFAULT_ACC_1G, DEFAULT_GYRO_SCALE, FIELDS_ACC_SMOOTH, FIELDS_GYRO_ADC, FIELD_AMPERAGE_LATEST,
-    FIELD_BARO_ALT, FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_STATE_FLAGS, FIELD_TIME,
+    FIELD_BARO_ALT, FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_GPS_COORD,
+    FIELD_GPS_GROUND_COURSE, FIELD_GPS_HOME, FIELD_GPS_SPEED, FIELD_STATE_FLAGS, FIELD_TIME,
     FIELD_VBAT_LATEST,
 };
 use crate::types::*;
@@ -349,7 +350,7 @@ impl CsvFieldMap {
             let is_flags = trimmed.contains("Flag") || trimmed == FIELD_FAILSAFE_PHASE;
             let (csv_name, kind) = if is_flags {
                 (
-                    with_unit_label(trimmed, units.flags.label()),
+                    with_unit_label(trimmed, units.flags.label().filter(|_| !units.raw)),
                     FieldKind::Flags,
                 )
             } else {
@@ -535,20 +536,20 @@ pub fn export_flight_data_to_writer_with_units<W: Write>(
     let gyro_scale = gyro_scale_radians_per_microsecond(&log.header).unwrap_or(DEFAULT_GYRO_SCALE);
     let acc_1g = acc_1g(&log.header).unwrap_or(DEFAULT_ACC_1G);
 
-    // Collect all I and P frames in chronological order
-    let mut all_frames: Vec<(u64, char, &DecodedFrame)> = Vec::new();
+    let g_names: Vec<&str> = if units.merge_gps {
+        log.header
+            .g_frame_def
+            .field_names
+            .iter()
+            .map(|name| name.trim())
+            .filter(|name| *name != FIELD_TIME)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let rows = collect_csv_rows(log, !g_names.is_empty(), units.raw);
 
-    // Use log.frames which contains all parsed frames
-    for frame in &log.frames {
-        if frame.frame_type == 'I' || frame.frame_type == 'P' {
-            all_frames.push((frame.timestamp_us, frame.frame_type, frame));
-        }
-    }
-
-    // Sort by timestamp
-    all_frames.sort_by_key(|(timestamp, _, _)| *timestamp);
-
-    if all_frames.is_empty() {
+    if rows.is_empty() {
         return Ok(()); // No data to export
     }
 
@@ -559,6 +560,18 @@ pub fn export_flight_data_to_writer_with_units<W: Write>(
         }
         write!(writer, "{field_name}")?;
     }
+    for name in &g_names {
+        write!(writer, ", ")?;
+        if *name == FIELD_GPS_SPEED {
+            write!(
+                writer,
+                "{}",
+                with_unit_label(name, units.gps_speed.label().filter(|_| !units.raw))
+            )?;
+        } else {
+            write!(writer, "{name}")?;
+        }
+    }
     writeln!(writer)?;
 
     // Optimized CSV writing with pre-computed mappings
@@ -566,22 +579,28 @@ pub fn export_flight_data_to_writer_with_units<W: Write>(
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
-    for (output_iteration, (timestamp, frame_type, frame)) in all_frames.iter().enumerate() {
+    for (output_iteration, row) in rows.iter().enumerate() {
+        let frame = row.frame;
+        let timestamp = &row.timestamp;
         // Update latest S-frame data if this is an S frame
-        if *frame_type == 'S' {
+        if frame.frame_type == 'S' {
             for (key, value) in &frame.data {
                 latest_s_frame_data.insert(key.clone(), *value);
             }
         }
 
-        // Calculate energyCumulative for this frame
+        // Calculate energyCumulative for this frame; a row the GPS merge
+        // repeats for a G frame adds no new current sample.
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
-            if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
-                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
-                let current_amps = convert_amperage_to_amps(current_raw);
-                cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
+            if row.new_sample {
+                if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
+                    let time_delta_hours =
+                        (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
+                    let current_amps = convert_amperage_to_amps(current_raw);
+                    cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
+                }
+                last_timestamp_us = *timestamp;
             }
-            last_timestamp_us = *timestamp;
         }
 
         // Write data row using optimized field mapping
@@ -694,10 +713,152 @@ pub fn export_flight_data_to_writer_with_units<W: Write>(
                 }
             }
         }
+        for name in &g_names {
+            write!(writer, ", ")?;
+            let raw = row
+                .gps
+                .and_then(|g| g.data.get(*name).copied())
+                .unwrap_or(0);
+            if FIELD_GPS_COORD.contains(name) {
+                let home_raw = row.home[usize::from(*name != FIELD_GPS_COORD[0])];
+                // Before the first G frame blackbox_decode writes plain zeros.
+                let absolute = if row.gps.is_some() {
+                    raw as i64 + home_raw
+                } else {
+                    0
+                };
+                write!(writer, "{}", format_gps_coordinate(absolute))?;
+            } else if *name == FIELD_GPS_SPEED {
+                write!(writer, "{}", format_gps_speed(raw, units.gps_speed))?;
+            } else if *name == FIELD_GPS_GROUND_COURSE {
+                write!(writer, "{}", format_gps_course(raw))?;
+            } else {
+                write!(writer, "{raw}")?;
+            }
+        }
         writeln!(writer)?;
     }
 
     Ok(())
+}
+
+/// One flight-data CSV row.
+#[cfg(feature = "csv")]
+struct CsvRow<'a> {
+    timestamp: u64,
+    frame: &'a DecodedFrame,
+    /// Latest G frame when the GPS fields are merged.
+    gps: Option<&'a DecodedFrame>,
+    /// Home position (degrees times 10^7) of the latest H frame.
+    home: [i64; 2],
+    /// False for the row a G frame repeats of the previous main frame.
+    new_sample: bool,
+}
+
+/// Order the I and P frames into CSV rows. With `merge_gps`, follow
+/// `onFrameReadyMerge` in blackbox_decode: a main frame waits for a possible
+/// G frame at the same time and is written with it; a G frame at another time
+/// first flushes the waiting frame, then adds a row of its own that repeats
+/// the last main frame under the G frame time.
+#[cfg(feature = "csv")]
+fn collect_csv_rows(log: &BBLLog, merge_gps: bool, stream_order: bool) -> Vec<CsvRow<'_>> {
+    if !merge_gps {
+        let mut rows: Vec<CsvRow<'_>> = log
+            .frames
+            .iter()
+            .filter(|f| f.frame_type == 'I' || f.frame_type == 'P')
+            .map(|frame| CsvRow {
+                timestamp: frame.timestamp_us,
+                frame,
+                gps: None,
+                home: [0, 0],
+                new_sample: true,
+            })
+            .collect();
+        if !stream_order {
+            rows.sort_by_key(|row| row.timestamp);
+        }
+        return rows;
+    }
+
+    let mut rows = Vec::new();
+    let mut waiting: Option<&DecodedFrame> = None;
+    let mut last_main: Option<&DecodedFrame> = None;
+    let mut last_time: Option<u64> = None;
+    let mut gps: Option<&DecodedFrame> = None;
+    // blackbox_decode drops G frames until an H (home) frame has been read.
+    let mut home: Option<[i64; 2]> = None;
+    for frame in &log.frames {
+        match frame.frame_type {
+            'H' => {
+                let coord = |name: &str| frame.data.get(name).copied().unwrap_or(0) as i64;
+                // With --raw the home position is not added to coordinates.
+                home = Some(if stream_order {
+                    [0, 0]
+                } else {
+                    [coord(FIELD_GPS_HOME[0]), coord(FIELD_GPS_HOME[1])]
+                });
+            }
+            'I' | 'P' => {
+                if let Some(main) = waiting.take() {
+                    rows.push(CsvRow {
+                        timestamp: main.timestamp_us,
+                        frame: main,
+                        gps,
+                        home: home.unwrap_or_default(),
+                        new_sample: true,
+                    });
+                }
+                waiting = Some(frame);
+                last_main = Some(frame);
+                last_time = Some(frame.timestamp_us);
+            }
+            'G' if home.is_some() => {
+                // The G-frame time is logged as an offset from the last main
+                // frame (predictor 10); a G frame without one belongs to it.
+                let gps_time = match (frame.data.get(FIELD_TIME), last_time) {
+                    // With --raw no predictor runs, so the logged offset is the time.
+                    (Some(offset), _) if stream_order => *offset as u64,
+                    (Some(offset), Some(base)) => base.wrapping_add_signed(*offset as i64),
+                    _ => last_time.unwrap_or(frame.timestamp_us),
+                };
+                let home = home.unwrap_or_default();
+                if last_time != Some(gps_time) {
+                    if let Some(main) = waiting.take() {
+                        rows.push(CsvRow {
+                            timestamp: main.timestamp_us,
+                            frame: main,
+                            gps,
+                            home,
+                            new_sample: true,
+                        });
+                    }
+                }
+                gps = Some(frame);
+                let new_sample = waiting.is_some();
+                if let Some(main) = waiting.take().or(last_main) {
+                    rows.push(CsvRow {
+                        timestamp: gps_time,
+                        frame: main,
+                        gps,
+                        home,
+                        new_sample,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(main) = waiting {
+        rows.push(CsvRow {
+            timestamp: main.timestamp_us,
+            frame: main,
+            gps,
+            home: home.unwrap_or_default(),
+            new_sample: true,
+        });
+    }
+    rows
 }
 
 /// Export GPS data to GPX format
@@ -1623,6 +1784,148 @@ mod tests {
         let rows = export_with(&log, &units);
         assert_eq!(rows[0][2..], ["BaroAlt (cm)", "accSmooth[2] (g)"]);
         assert_eq!(rows[2][2..], ["2000", "2.00"]);
+    }
+
+    #[cfg(feature = "csv")]
+    fn frame_with(frame_type: char, t: u64, fields: &[(&str, i32)]) -> DecodedFrame {
+        DecodedFrame {
+            frame_type,
+            timestamp_us: t,
+            loop_iteration: 0,
+            data: fields.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_merge_gps_follows_blackbox_decode_row_rules() {
+        let mut log = unit_test_log();
+        log.header.g_frame_def = FrameDefinition::from_field_names(
+            [
+                "time",
+                "GPS_numSat",
+                "GPS_coord[0]",
+                "GPS_coord[1]",
+                "GPS_speed",
+                "GPS_ground_course",
+            ]
+            .map(String::from)
+            .to_vec(),
+        );
+        let main = log.frames.clone();
+        let g1 = [
+            ("time", 0),
+            ("GPS_numSat", 7),
+            ("GPS_coord[0]", 5_000_000),
+            ("GPS_coord[1]", -1_000_000),
+            ("GPS_speed", 1234),
+            ("GPS_ground_course", 1234),
+        ];
+        let g2 = [
+            ("time", 500),
+            ("GPS_numSat", 8),
+            ("GPS_coord[0]", 10_000_000),
+            ("GPS_coord[1]", 0),
+            ("GPS_speed", 100_000),
+            ("GPS_ground_course", 0),
+        ];
+        log.frames = vec![
+            // before any H frame: dropped
+            frame_with('G', 900, &g2),
+            frame_with(
+                'H',
+                900,
+                &[("GPS_home[0]", 100_000_000), ("GPS_home[1]", -50_000_000)],
+            ),
+            main[0].clone(),
+            frame_with('G', 1000, &g1), // offset 0: same time as the I frame
+            main[1].clone(),
+            frame_with('G', 2000, &g2), // offset 500: later than the P frame
+            main[2].clone(),
+        ];
+        let units = UnitOptions {
+            merge_gps: true,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(
+            rows[0][5..],
+            [
+                "energyCumulative (mAh)",
+                "GPS_numSat",
+                "GPS_coord[0]",
+                "GPS_coord[1]",
+                "GPS_speed (m/s)",
+                "GPS_ground_course"
+            ]
+        );
+        assert_eq!(rows.len(), 5);
+        // I frame written with the G frame of its own time
+        assert_eq!(rows[1][1], "1000".to_string());
+        assert_eq!(
+            rows[1][6..],
+            ["7", "10.5000000", "-5.1000000", "12.34", "123.4"]
+        );
+        // P frame flushed with the old GPS data
+        assert_eq!(rows[2][1], "2000");
+        assert_eq!(rows[2][6], "7");
+        // the G frame at 2500 repeats the P frame under its own time
+        assert_eq!(rows[3][..2], ["1", "2500"]);
+        assert_eq!(
+            rows[3][6..],
+            ["8", "11.0000000", "-5.0000000", "1000.00", "0.0"]
+        );
+        assert_eq!(rows[4][..2], ["2", "3000"]);
+        assert_eq!(rows[4][6], "8");
+
+        // kph and a log without GPS rows ahead of the first G frame
+        let units = UnitOptions {
+            merge_gps: true,
+            gps_speed: GpsSpeedUnit::KilometersPerHour,
+            ..UnitOptions::default()
+        };
+        let rows = export_with(&log, &units);
+        assert_eq!(rows[0].last().unwrap(), "GPS_ground_course");
+        assert_eq!(rows[0][9], "GPS_speed (km/h)");
+        assert_eq!(rows[1][9], "44.42");
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_merge_gps_without_g_fields_is_plain_csv() {
+        let log = unit_test_log();
+        let merged = export_with(
+            &log,
+            &UnitOptions {
+                merge_gps: true,
+                ..UnitOptions::default()
+            },
+        );
+        assert_eq!(merged, export_with(&log, &UnitOptions::default()));
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_raw_units_keep_stream_order_and_drop_suffixes() {
+        let mut log = unit_test_log();
+        log.frames.reverse();
+        let sorted = export_with(&log, &UnitOptions::default());
+        assert_eq!(sorted[1][1], "1000");
+        let raw = export_with(&log, &UnitOptions::raw());
+        assert_eq!(
+            raw[0],
+            [
+                "loopIteration",
+                "time",
+                "vbatLatest",
+                "amperageLatest",
+                "gyroADC[0]",
+                "energyCumulative (mAh)"
+            ]
+        );
+        assert_eq!(raw[1][1], "3000");
+        assert_eq!(raw[3][1], "1000");
+        assert_eq!(raw[1][2], "1602");
     }
 
     #[test]

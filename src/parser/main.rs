@@ -133,6 +133,26 @@ pub fn parse_single_log(
     debug: bool,
     export_options: &crate::ExportOptions,
 ) -> Result<BBLLog> {
+    parse_single_log_with_raw(
+        log_data,
+        log_number,
+        total_logs,
+        debug,
+        export_options,
+        false,
+    )
+}
+
+/// Like [`parse_single_log`]. With `raw` set no predictor runs and implausible
+/// frames are kept, as `blackbox_decode --raw` does.
+pub fn parse_single_log_with_raw(
+    log_data: &[u8],
+    log_number: usize,
+    total_logs: usize,
+    debug: bool,
+    export_options: &crate::ExportOptions,
+    raw: bool,
+) -> Result<BBLLog> {
     // Find where headers end and binary data begins
     let mut header_end = 0;
     for i in 1..log_data.len() {
@@ -153,7 +173,13 @@ pub fn parse_single_log(
     // Parse binary frame data
     let binary_data = &log_data[header_end..];
     let (mut stats, frames, debug_frames, gps_coordinates, home_coordinates, event_frames) =
-        crate::parser::frame::parse_frames(binary_data, &header, debug, export_options)?;
+        crate::parser::frame::parse_frames_with_raw(
+            binary_data,
+            &header,
+            debug,
+            export_options,
+            raw,
+        )?;
 
     // Update frame stats timing from actual frame data
     if !frames.is_empty() {

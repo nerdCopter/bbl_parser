@@ -213,3 +213,24 @@ pub const DEFAULT_ACC_1G: i32 = 1;
 
 /// `gyroScale` upstream assumes when the header has none (`parser.c`).
 pub const DEFAULT_GYRO_SCALE: f32 = 1.0;
+
+/// Miles per meter, as `convertMetersPerSecondToUnit` in `units.c` uses it.
+pub const MILES_PER_METER: f64 = 0.00062137;
+
+/// Seconds per hour, for speed conversion.
+pub const SECONDS_PER_HOUR: f64 = 3600.0;
+
+/// Meters per kilometer, for speed conversion.
+pub const METERS_PER_KILOMETER: f64 = 1000.0;
+
+/// `GPS_coord` is logged as degrees times this factor.
+pub const GPS_COORDINATE_SCALE: i64 = 10_000_000;
+
+/// G-frame field names used when the GPS fields are merged into the main CSV.
+pub const FIELD_GPS_COORD: [&str; 2] = ["GPS_coord[0]", "GPS_coord[1]"];
+/// G-frame speed field (hundredths of m/s).
+pub const FIELD_GPS_SPEED: &str = "GPS_speed";
+/// G-frame ground course field (tenths of a degree).
+pub const FIELD_GPS_GROUND_COURSE: &str = "GPS_ground_course";
+/// H-frame home position fields (degrees times 10^7).
+pub const FIELD_GPS_HOME: [&str; 2] = ["GPS_home[0]", "GPS_home[1]"];

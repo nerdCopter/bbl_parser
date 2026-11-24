@@ -7,9 +7,9 @@
 //! The default [`UnitOptions`] reproduce the historic CSV output exactly.
 
 use crate::firmware_tables::{
-    ACCELERATION_DUE_TO_GRAVITY, FEET_PER_METER, HEADER_ACC_1G, HEADER_FIRMWARE_TYPE,
-    HEADER_GYRO_SCALE, HEADER_GYRO_SCALE_DOTTED, MICROSECONDS_PER_SECOND,
-    NATIVE_RADIANS_FIRMWARE_TYPE,
+    ACCELERATION_DUE_TO_GRAVITY, FEET_PER_METER, GPS_COORDINATE_SCALE, HEADER_ACC_1G,
+    HEADER_FIRMWARE_TYPE, HEADER_GYRO_SCALE, HEADER_GYRO_SCALE_DOTTED, METERS_PER_KILOMETER,
+    MICROSECONDS_PER_SECOND, MILES_PER_METER, NATIVE_RADIANS_FIRMWARE_TYPE, SECONDS_PER_HOUR,
 };
 use crate::types::BBLHeader;
 use std::str::FromStr;
@@ -85,6 +85,88 @@ unit_enum! {
     AccelerationUnit { Raw => "raw", "raw", Gs => "g", "g", MetersPerSecondSquared => "m/s2", "m/s/s" }
 }
 
+/// Unit of `GPS_speed` in the merged GPS columns (`--unit-gps-speed`).
+///
+/// Names and aliases follow `unitFromName` in blackbox-tools `src/units.c`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpsSpeedUnit {
+    /// Hundredths of a meter per second as logged.
+    Raw,
+    MetersPerSecond,
+    KilometersPerHour,
+    MilesPerHour,
+}
+
+impl GpsSpeedUnit {
+    /// Primary accepted names, in the order they are documented.
+    pub const NAMES: &'static [&'static str] = &["raw", "mps", "kph", "mph"];
+
+    /// Unit text in the CSV header, `None` for [`Self::Raw`] (`UNIT_NAME`).
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Raw => None,
+            Self::MetersPerSecond => Some("m/s"),
+            Self::KilometersPerHour => Some("km/h"),
+            Self::MilesPerHour => Some("mi/h"),
+        }
+    }
+}
+
+impl FromStr for GpsSpeedUnit {
+    type Err = String;
+
+    /// Case-insensitive, with the aliases `unitFromName` accepts.
+    fn from_str(text: &str) -> Result<Self, String> {
+        match text.to_ascii_lowercase().as_str() {
+            "raw" => Ok(Self::Raw),
+            "mps" | "m/s" => Ok(Self::MetersPerSecond),
+            "kph" | "kmph" | "km/h" | "km/hr" => Ok(Self::KilometersPerHour),
+            "mph" | "mi/h" | "mi/hr" => Ok(Self::MilesPerHour),
+            _ => Err(format!(
+                "invalid unit '{}', expected one of: {}",
+                text,
+                Self::NAMES.join(", ")
+            )),
+        }
+    }
+}
+
+/// Format a `GPS_speed` value (hundredths of m/s) like `outputGPSFields`.
+pub fn format_gps_speed(raw: i32, unit: GpsSpeedUnit) -> String {
+    let raw = raw as i64;
+    match unit {
+        GpsSpeedUnit::Raw => raw.to_string(),
+        GpsSpeedUnit::MetersPerSecond => format!("{}.{:02}", raw / 100, raw.abs() % 100),
+        GpsSpeedUnit::KilometersPerHour => {
+            format!(
+                "{:.2}",
+                raw as f64 / 100.0 * SECONDS_PER_HOUR / METERS_PER_KILOMETER
+            )
+        }
+        GpsSpeedUnit::MilesPerHour => {
+            format!(
+                "{:.2}",
+                raw as f64 / 100.0 * MILES_PER_METER * SECONDS_PER_HOUR
+            )
+        }
+    }
+}
+
+/// Format a `GPS_coord` value (degrees times 10^7) like `outputGPSFields`,
+/// including the minus sign it keeps only when the whole degrees are zero.
+pub fn format_gps_coordinate(raw: i64) -> String {
+    let degrees = raw / GPS_COORDINATE_SCALE;
+    let fraction = raw.abs() % GPS_COORDINATE_SCALE;
+    let sign = if raw < 0 && degrees == 0 { "-" } else { "" };
+    format!("{sign}{degrees}.{fraction:07}")
+}
+
+/// Format a `GPS_ground_course` value (degrees times 10) like `outputGPSFields`.
+pub fn format_gps_course(raw: i32) -> String {
+    let raw = raw as i64;
+    format!("{}.{}", raw / 10, raw.abs() % 10)
+}
+
 /// Output unit choices for one export.
 ///
 /// `Default` matches the historic output: volts, amps, decoded flags,
@@ -107,6 +189,32 @@ pub struct UnitOptions {
     pub rotation: RotationUnit,
     /// `--unit-acceleration`
     pub acceleration: AccelerationUnit,
+    /// `--unit-gps-speed`; only used with `merge_gps`.
+    pub gps_speed: GpsSpeedUnit,
+    /// `--merge-gps`: append the GPS fields to the flight-data CSV.
+    pub merge_gps: bool,
+    /// `--raw`: no unit suffixes, frames in stream order. Flag fields still
+    /// print as names, like `blackbox_decode`.
+    pub raw: bool,
+}
+
+impl UnitOptions {
+    /// Units for `--raw`: every converted column is written as logged.
+    pub fn raw() -> Self {
+        Self {
+            vbat: VbatUnit::Raw,
+            amperage: AmperageUnit::Raw,
+            flags: FlagsUnit::Flags,
+            frame_time: FrameTimeUnit::Raw,
+            height: None,
+            rotation: RotationUnit::Raw,
+            acceleration: AccelerationUnit::Raw,
+            // `blackbox_decode` still formats GPS speed by its own unit option.
+            gps_speed: GpsSpeedUnit::MetersPerSecond,
+            merge_gps: false,
+            raw: true,
+        }
+    }
 }
 
 impl Default for UnitOptions {
@@ -119,6 +227,9 @@ impl Default for UnitOptions {
             height: None,
             rotation: RotationUnit::Raw,
             acceleration: AccelerationUnit::Raw,
+            gps_speed: GpsSpeedUnit::MetersPerSecond,
+            merge_gps: false,
+            raw: false,
         }
     }
 }
@@ -157,8 +268,10 @@ pub fn acc_1g(header: &BBLHeader) -> Option<i32> {
 ///
 /// The header holds the `f32` bits as hex. Only firmware type `Baseflight`
 /// already logs radians per microsecond; every other firmware logs degrees per
-/// second and is converted, as `parser.c` does for every firmware type other
-/// than Baseflight.
+/// second and is converted. `parser.c` converts only for the type string
+/// `Cleanflight` and treats every other string, such as `Betaflight`, as
+/// Baseflight, which makes rates 10^6 times too large for current Betaflight
+/// logs. This converts for every type except `Baseflight`.
 pub fn gyro_scale_radians_per_microsecond(header: &BBLHeader) -> Option<f32> {
     let hex = header_value(header, &[HEADER_GYRO_SCALE, HEADER_GYRO_SCALE_DOTTED])?;
     let digits = hex
@@ -284,6 +397,58 @@ mod tests {
         assert_eq!(gyro_scale_radians_per_microsecond(&header), Some(1.0));
         header.all_headers = vec!["H gyro_scale:zz".to_string()];
         assert_eq!(gyro_scale_radians_per_microsecond(&header), None);
+    }
+
+    #[test]
+    fn gps_speed_names_and_aliases() {
+        for (text, unit) in [
+            ("MPS", GpsSpeedUnit::MetersPerSecond),
+            ("m/s", GpsSpeedUnit::MetersPerSecond),
+            ("KM/H", GpsSpeedUnit::KilometersPerHour),
+            ("kmph", GpsSpeedUnit::KilometersPerHour),
+            ("km/hr", GpsSpeedUnit::KilometersPerHour),
+            ("mi/hr", GpsSpeedUnit::MilesPerHour),
+            ("raw", GpsSpeedUnit::Raw),
+        ] {
+            assert_eq!(text.parse::<GpsSpeedUnit>(), Ok(unit), "{text}");
+        }
+        for bad in ["knots", "", "m/s2", "kph "] {
+            assert!(bad.parse::<GpsSpeedUnit>().is_err(), "{bad:?}");
+        }
+        assert_eq!(GpsSpeedUnit::KilometersPerHour.label(), Some("km/h"));
+        assert_eq!(GpsSpeedUnit::Raw.label(), None);
+    }
+
+    #[test]
+    fn gps_field_formats_follow_output_gps_fields() {
+        assert_eq!(
+            format_gps_speed(12345, GpsSpeedUnit::MetersPerSecond),
+            "123.45"
+        );
+        // blackbox_decode prints the sign of a negative speed only via the quotient
+        assert_eq!(format_gps_speed(-5, GpsSpeedUnit::MetersPerSecond), "0.05");
+        assert_eq!(
+            format_gps_speed(1000, GpsSpeedUnit::KilometersPerHour),
+            "36.00"
+        );
+        assert_eq!(format_gps_speed(1000, GpsSpeedUnit::MilesPerHour), "22.37");
+        assert_eq!(format_gps_speed(-77, GpsSpeedUnit::Raw), "-77");
+        assert_eq!(format_gps_coordinate(298_106_446), "29.8106446");
+        assert_eq!(format_gps_coordinate(-5), "-0.0000005");
+        assert_eq!(format_gps_coordinate(-15_000_000), "-1.5000000");
+        assert_eq!(format_gps_coordinate(0), "0.0000000");
+        assert_eq!(format_gps_course(1234), "123.4");
+    }
+
+    #[test]
+    fn raw_units_suppress_all_conversions() {
+        let raw = UnitOptions::raw();
+        assert!(raw.raw);
+        assert_eq!(raw.vbat.label(), None);
+        assert_eq!(raw.amperage.label(), None);
+        assert_eq!(raw.frame_time.label(), None);
+        assert_eq!(raw.flags, FlagsUnit::Flags);
+        assert!(!UnitOptions::default().raw);
     }
 
     #[test]
