@@ -248,10 +248,10 @@ impl<'a> BBLDataStream<'a> {
         Ok(())
     }
 
-    /// Read negative 14-bit encoding (sign-magnitude format)
-    /// Reads an unsigned variable byte and interprets it as a 14-bit sign-magnitude value.
-    /// Bit 13 is the sign bit, bits 0-12 are the magnitude.
-    /// Returns the negated value to match blackbox_decode behavior.
+    /// Read negative 14-bit encoding (NEG_14BIT).
+    /// Reads an unsigned variable byte, keeps the low 14 bits, and sign-extends them
+    /// as a 14-bit two's-complement value (bit 13 is the sign bit).
+    /// Returns the negated result, as the blackbox-tools decoder does for NEG_14BIT.
     pub fn read_neg_14bit(&mut self) -> Result<i32> {
         let unsigned = self.read_unsigned_vb()? as u16;
         Ok(-sign_extend_14bit(unsigned))

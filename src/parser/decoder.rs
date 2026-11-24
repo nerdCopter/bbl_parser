@@ -252,3 +252,39 @@ pub fn apply_predictor_with_debug(
         _ => raw_value,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// An I-frame vbatLatest field stored as NEG_14BIT with PREDICT_VBATREF.
+    /// Stored 0x3FFF is -1 after 14-bit sign extension and +1 after negation,
+    /// so the decoded value is vbatref + 1 (blackbox-tools NEG_14BIT rule).
+    #[test]
+    fn test_vbatref_neg_14bit_all_ones_decodes_to_vbatref_plus_one() {
+        // VB encoding of 0x3FFF is 0xFF 0x7F.
+        let data = [0xFFu8, 0x7F];
+        let mut stream = BBLDataStream::new(&data);
+        let mut values = [0i32; 1];
+        decode_field_value(&mut stream, ENCODING_NEG_14BIT, &mut values, 0).unwrap();
+        assert_eq!(values[0], 1);
+
+        let mut sysconfig = HashMap::new();
+        sysconfig.insert("vbatref".to_string(), 1000);
+        let field_names = vec!["vbatLatest".to_string()];
+        let decoded = apply_predictor_with_debug(
+            0,
+            PREDICT_VBATREF,
+            values[0],
+            &[],
+            None,
+            None,
+            0,
+            &sysconfig,
+            &field_names,
+            false,
+        );
+        assert_eq!(decoded, 1001);
+    }
+}
