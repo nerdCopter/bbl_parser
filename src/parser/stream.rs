@@ -260,6 +260,38 @@ impl<'a> BBLDataStream<'a> {
 
 #[cfg(test)]
 mod tests {
+    // Spec: blackbox-tools streamReadUnsignedVB (stream.c at 707344b3): at most
+    // 5 bytes, 7 bits each, low group first; EOF or a 6th byte returns 0.
+    #[test]
+    fn unsigned_vb_fifth_byte_sets_bit_31() {
+        let data = [0x80, 0x80, 0x80, 0x80, 0x08];
+        let mut s = BBLDataStream::new(&data);
+        assert_eq!(s.read_unsigned_vb().unwrap(), 0x8000_0000);
+    }
+
+    #[test]
+    fn unsigned_vb_fifth_byte_high_bits_are_dropped() {
+        // 5th byte 0x7F: only the low 4 bits fit in 32 bits (uint32 shift in C).
+        let data = [0xFF, 0xFF, 0xFF, 0xFF, 0x7F];
+        let mut s = BBLDataStream::new(&data);
+        assert_eq!(s.read_unsigned_vb().unwrap(), 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn unsigned_vb_overlong_returns_zero() {
+        let data = [0x80, 0x80, 0x80, 0x80, 0x80, 0x01];
+        let mut s = BBLDataStream::new(&data);
+        assert_eq!(s.read_unsigned_vb().unwrap(), 0);
+        assert_eq!(s.pos, 5);
+    }
+
+    #[test]
+    fn unsigned_vb_truncated_returns_zero() {
+        let data = [0x80, 0x80];
+        let mut s = BBLDataStream::new(&data);
+        assert_eq!(s.read_unsigned_vb().unwrap(), 0);
+    }
+
     use super::*;
     use crate::parser::helpers::sign_extend_14bit;
 
