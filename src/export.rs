@@ -427,7 +427,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
     writeln!(writer)?;
 
     // Optimized CSV writing with pre-computed mappings
-    let mut cumulative_energy_mah = 0f32;
+    let mut cumulative_energy_mah = 0f64;
     let mut last_timestamp_us = 0u64;
     let mut latest_s_frame_data: HashMap<String, i32> = HashMap::new();
 
@@ -442,8 +442,9 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
         // Calculate energyCumulative for this frame
         if let Some(current_raw) = frame.data.get("amperageLatest").copied() {
             if last_timestamp_us > 0 && *timestamp > last_timestamp_us {
-                let time_delta_hours = (*timestamp - last_timestamp_us) as f32 / 3_600_000_000.0;
-                let current_amps = convert_amperage_to_amps(current_raw);
+                let time_delta_hours = (*timestamp - last_timestamp_us) as f64 / 3_600_000_000.0;
+                // raw is in 0.01 A; divide in f64 (upstream integrates in double)
+                let current_amps = current_raw as f64 / 100.0;
                 cumulative_energy_mah += current_amps * time_delta_hours * 1000.0;
             }
             last_timestamp_us = *timestamp;
@@ -469,14 +470,16 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
                 let raw_value = frame.data.get("vbatLatest").copied().unwrap_or(0);
                 write!(
                     writer,
-                    "{:4.1}",
+                    "{:4.*}",
+                    vbat_decimal_places(&log.header.firmware_revision),
                     convert_vbat_to_volts(raw_value, &log.header.firmware_revision)
                 )?;
             } else if csv_name == "amperageLatest (A)" {
                 let raw_value = frame.data.get("amperageLatest").copied().unwrap_or(0);
                 write!(writer, "{:4.2}", convert_amperage_to_amps(raw_value))?;
             } else if csv_name == "energyCumulative (mAh)" {
-                write!(writer, "{:5}", cumulative_energy_mah as i32)?;
+                // blackbox_decode.c: (int) round(energyMilliampHours)
+                write!(writer, "{:5}", cumulative_energy_mah.round() as i32)?;
             } else if csv_name.ends_with(" (flags)") {
                 // Handle flag fields - output text values like blackbox_decode.c
                 let raw_value = frame
