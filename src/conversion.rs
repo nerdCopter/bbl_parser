@@ -15,13 +15,25 @@ const VBAT_DECIMALS_HUNDREDTHS: usize = 2;
 /// Decimal places printed for volts when the raw value is in tenths.
 const VBAT_DECIMALS_TENTHS: usize = 1;
 
+/// Vendor word INAV writes first in `Firmware revision` (e.g. `INAV 8.0.0 (ec2106af) FLYWOOF745`).
+/// Compared case-insensitively.
+const INAV_VENDOR: &str = "inav";
+
+/// True when the first word of the firmware revision is the INAV vendor name.
+fn is_inav(firmware_revision: &str) -> bool {
+    firmware_revision
+        .split_whitespace()
+        .next()
+        .is_some_and(|vendor| vendor.eq_ignore_ascii_case(INAV_VENDOR))
+}
+
 /// True when the firmware logs `vbatLatest` in hundredths of a volt.
 fn vbat_is_hundredths(firmware_revision: &str) -> bool {
     if firmware_revision.contains("EmuFlight") {
         // EmuFlight always uses tenths
         false
-    } else if firmware_revision.contains("iNav") {
-        // iNav always uses hundredths
+    } else if is_inav(firmware_revision) {
+        // INAV always uses hundredths
         true
     } else if firmware_revision.contains("Betaflight") {
         // Betaflight version-dependent scaling
@@ -687,6 +699,35 @@ mod vbat_precision_tests {
             printed(123, "EmuFlight 0.5.0-dev (bd02788) STELLARH7DEV"),
             "12.3"
         );
+    }
+
+    #[test]
+    fn inav_vendor_match_is_case_insensitive_first_word() {
+        // Real INAV header spelling, plus other cases.
+        assert!(is_inav("INAV 8.0.0 (ec2106af) FLYWOOF745"));
+        assert!(is_inav("iNav 7.1.0 (abc) STM32F7X2"));
+        assert!(is_inav("inav 4.0.0"));
+        assert!(!is_inav(""));
+        assert!(!is_inav("INAVX 1.0"));
+        assert!(!is_inav("Betaflight 4.5.1 (77d01ba3b) AT32F435M"));
+    }
+
+    #[test]
+    fn inav_raw_hundredths_convert_to_volts() {
+        // 4S INAV raw values are hundredths of a volt.
+        let fw = "INAV 8.0.0 (ec2106af) FLYWOOF745";
+        assert!((convert_vbat_to_volts(1271, fw) - 12.71).abs() < 1e-3);
+        assert!((convert_vbat_to_volts(1497, fw) - 14.97).abs() < 1e-3);
+    }
+
+    #[test]
+    fn non_inav_scaling_unchanged() {
+        // Tenths for EmuFlight and Betaflight below 4.3; hundredths for Betaflight 4.3+.
+        assert_eq!(vbat_decimal_places("EmuFlight 0.5.0"), 1);
+        assert_eq!(vbat_decimal_places("Betaflight 4.2.0 (x) T"), 1);
+        assert_eq!(vbat_decimal_places("Betaflight 4.5.1 (x) T"), 2);
+        // Empty string takes the unknown-firmware default.
+        assert_eq!(vbat_decimal_places(""), 2);
     }
 
     #[test]
