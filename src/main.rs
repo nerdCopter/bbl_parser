@@ -369,6 +369,7 @@ fn build_command() -> Command {
                     --debug, --gpx, --gps, --event or --output-dir.",
                 )
                 .action(clap::ArgAction::SetTrue)
+                .requires("files")
                 .conflicts_with_all(["debug", "gpx", "gps", "event", "output-dir"]),
         )
         .arg(
@@ -425,7 +426,9 @@ fn main() -> Result<()> {
     let output_dir = matches.get_one::<String>("output-dir").cloned();
     let cli_options = CliOptions {
         debug,
-        log_index: matches.get_one::<u64>("index").map(|&n| n as usize),
+        log_index: matches
+            .get_one::<u64>("index")
+            .map(|&n| usize::try_from(n).unwrap_or(usize::MAX)),
         to_stdout,
         limits: matches.get_flag("limits"),
     };

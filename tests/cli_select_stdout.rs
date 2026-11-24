@@ -173,6 +173,28 @@ fn stdout_multi_log_without_index_lists_logs_and_emits_no_csv() {
 }
 
 #[test]
+fn stdout_without_input_file_fails_on_stderr() {
+    let out = run(&["--stdout"]);
+    assert!(!out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "nothing on stdout: {}",
+        s(&out.stdout)
+    );
+    assert!(s(&out.stderr).contains("required"));
+}
+
+#[test]
+fn index_beyond_usize_is_out_of_range_not_wrapped() {
+    let tmp = TempDir::new().unwrap();
+    let f = write_fixture(tmp.path(), 3);
+    // 2^32 + 1 would wrap to 1 on a 32-bit usize with a plain cast
+    let out = run(&["-F", "--index", "4294967297", f.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(!tmp.path().join("fixture.01.csv").exists());
+}
+
+#[test]
 fn stdout_rejects_conflicting_flags_and_multiple_files() {
     let tmp = TempDir::new().unwrap();
     let a = write_fixture(tmp.path(), 1);
