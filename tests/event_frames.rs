@@ -1,7 +1,7 @@
 //! Event frame decoding through the public parser API.
 //!
 //! Fixtures mirror blackbox-tools `test/test_events.sh` (PR 78): two I frames
-//! with one event frame between them, then a clean-end event. Expected
+//! with one event frame between them. Expected
 //! payload layouts come from Betaflight `blackbox.c` `blackboxLogEvent`.
 
 use bbl_parser::{parse_single_log, ExportOptions};
@@ -73,6 +73,14 @@ fn flightmode_flags_73_does_not_swallow_an_i_frame() {
 }
 
 #[test]
+fn flightmode_multi_byte_last_flags() {
+    // flags = 1; lastFlags VB 0x81 0x01 = 1 + (1 << 7) = 129.
+    let log = parse(&log_with_event(&[b'E', 30, 0x01, 0x81, 0x01]));
+    assert_eq!(i_frames(&log), 2);
+    assert_eq!(names(&log)[0], "Flight mode - Flags: 1, Last flags: 129");
+}
+
+#[test]
 fn flightmode_flags_with_bit_31() {
     let log = parse(&log_with_event(&[
         b'E', 30, 0x80, 0x80, 0x80, 0x80, 0x08, 0x01,
@@ -91,4 +99,7 @@ fn truncated_disarm_payload_at_end_of_data_does_not_panic() {
     data.extend_from_slice(&[b'E', 15]); // payload missing
     let log = parse(&data);
     assert_eq!(i_frames(&log), 1);
+    // Missing payload reads as reason 0, as in the event.rs unit test.
+    assert_eq!(names(&log), vec!["Disarm - Reason: 0".to_string()]);
+    assert_eq!(log.event_frames[0].event_type, 15);
 }
