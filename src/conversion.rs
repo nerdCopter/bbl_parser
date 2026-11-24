@@ -4,7 +4,11 @@
 //! and flag formatting to maintain compatibility across firmware versions.
 
 use crate::firmware_tables::{
-    FAILSAFE_PHASE_NAMES, FLIGHT_MODE_FLAG_NAMES, INAV_FAILSAFE_PHASE_NAMES, STATE_FLAG_NAMES,
+    InavFlagName, InavVersion, FAILSAFE_PHASE_NAMES, FIELD_ACTIVE_FLIGHT_MODE_FLAGS,
+    FIELD_FLIGHT_MODE_FLAGS, FIELD_FLIGHT_MODE_FLAGS2, FIELD_STATE_FLAGS, FLIGHT_MODE_FLAG_NAMES,
+    INAV_ACTIVE_FLIGHT_MODE_NAMES, INAV_BOX_MODE_NAMES, INAV_BOX_MODE_NAMES_HIGH,
+    INAV_FAILSAFE_PHASE_NAMES, INAV_FIRST_VERIFIED_VERSION, INAV_STATE_FLAG_NAMES,
+    STATE_FLAG_NAMES,
 };
 use semver::Version;
 
@@ -132,6 +136,87 @@ pub fn format_flight_mode_flags(flags: i32) -> String {
 /// Names come from [`STATE_FLAG_NAMES`].
 pub fn format_state_flags(flags: i32) -> String {
     format_flag_names(flags, &STATE_FLAG_NAMES)
+}
+
+/// Extract the `(major, minor, patch)` version from an INAV revision header
+///
+/// Parses the word after "INAV" in strings like
+/// `INAV 8.0.1 (ae47bcba01) TARGET`. Returns `None` when the header does not
+/// name INAV or has no parsable version. A pre-release suffix is ignored.
+pub fn extract_inav_version(firmware_revision: &str) -> Option<InavVersion> {
+    let mut words = firmware_revision.split_whitespace();
+    while let Some(word) = words.next() {
+        if word.eq_ignore_ascii_case("inav") {
+            let version = Version::parse(words.next()?).ok()?;
+            return Some((version.major, version.minor, version.patch));
+        }
+    }
+    None
+}
+
+/// Join the names of every set bit of `flags` that `names` defines for `version`
+///
+/// Bits with no entry for `version` stay unnamed and are ignored, like bits
+/// above the table in [`format_flag_names`]. Prints `"0"` when no name matches.
+fn format_inav_flag_names(flags: i32, names: &[InavFlagName], version: InavVersion) -> String {
+    let word = flags as u32;
+    let set: Vec<&str> = names
+        .iter()
+        .filter(|entry| entry.is_defined_in(version) && (word >> entry.bit) & 1 == 1)
+        .map(|entry| entry.name)
+        .collect();
+
+    if set.is_empty() {
+        "0".to_string()
+    } else {
+        set.join("|")
+    }
+}
+
+/// Format one S-frame flag field for an INAV log
+///
+/// Returns `None` when `field` is not an INAV flag field. When the revision
+/// has no parsable INAV version, or the version is older than
+/// [`INAV_FIRST_VERIFIED_VERSION`], the Betaflight names are wrong and the
+/// INAV names are unverified, so the raw unsigned value is printed.
+fn format_inav_flag_field(field: &str, flags: i32, firmware_revision: &str) -> Option<String> {
+    let names: &[InavFlagName] = match field {
+        FIELD_FLIGHT_MODE_FLAGS => &INAV_BOX_MODE_NAMES,
+        FIELD_FLIGHT_MODE_FLAGS2 => &INAV_BOX_MODE_NAMES_HIGH,
+        FIELD_ACTIVE_FLIGHT_MODE_FLAGS => &INAV_ACTIVE_FLIGHT_MODE_NAMES,
+        FIELD_STATE_FLAGS => &INAV_STATE_FLAG_NAMES,
+        _ => return None,
+    };
+    Some(match extract_inav_version(firmware_revision) {
+        Some(version) if version >= INAV_FIRST_VERIFIED_VERSION => {
+            format_inav_flag_names(flags, names, version)
+        }
+        _ => (flags as u32).to_string(),
+    })
+}
+
+/// Format a flag field for CSV output, choosing the name table by firmware
+///
+/// `field` is the S-frame field name (`flightModeFlags`, `flightModeFlags2`,
+/// `activeFlightModeFlags` or `stateFlags`). INAV logs use the INAV tables
+/// keyed by the version in the revision header; every other firmware keeps
+/// the Betaflight tables of [`format_flight_mode_flags`] and
+/// [`format_state_flags`]. Returns `None` for any other field name, and for
+/// `flightModeFlags2` and `activeFlightModeFlags` on non-INAV firmware (they
+/// are INAV-only fields; the caller prints the raw value as before).
+pub fn format_flag_field_for_firmware(
+    field: &str,
+    flags: i32,
+    firmware_revision: &str,
+) -> Option<String> {
+    if is_inav_firmware(firmware_revision) {
+        return format_inav_flag_field(field, flags, firmware_revision);
+    }
+    match field {
+        FIELD_FLIGHT_MODE_FLAGS => Some(format_flight_mode_flags(flags)),
+        FIELD_STATE_FLAGS => Some(format_state_flags(flags)),
+        _ => None,
+    }
 }
 
 /// Format failsafe phase for CSV output (Betaflight/EmuFlight numbering)
@@ -578,5 +663,210 @@ mod tests {
         // When no datetime provided, should use relative time from epoch
         let timestamp = generate_gpx_timestamp(None, 0);
         assert!(timestamp.contains("1970-01-01T00:00:00"));
+    }
+
+    // Expected names below are written from the INAV enums (rc_modes.h
+    // boxId_e, runtime_config.h flightModeFlags_e and stateFlags_t), not
+    // read back from the tables.
+    const INAV_6_1_1: &str = "INAV 6.1.1 (42ced253bd) MATEKF405";
+    const INAV_7_0_0: &str = "INAV 7.0.0 (118cd48550) MATEKF405";
+    const INAV_7_1_2: &str = "INAV 7.1.2 (ed7fb3bb32) MATEKF405";
+    const INAV_8_0_1: &str = "INAV 8.0.1 (ae47bcba01) MATEKF405";
+    const INAV_9_1_0: &str = "INAV 9.1.0 (e519b69b02) MATEKF405";
+    const INAV_10_0_0: &str = "INAV 10.0.0 (f1cd5c6f68) MATEKF405";
+
+    fn fmt(field: &str, flags: i32, revision: &str) -> String {
+        format_flag_field_for_firmware(field, flags, revision).expect("flag field")
+    }
+
+    #[test]
+    fn test_extract_inav_version() {
+        assert_eq!(extract_inav_version(INAV_8_0_1), Some((8, 0, 1)));
+        assert_eq!(extract_inav_version("iNav 7.1.2"), Some((7, 1, 2)));
+        assert_eq!(
+            extract_inav_version("INAV 10.0.0-rc2 (f1cd5c6f68) T"),
+            Some((10, 0, 0))
+        );
+        assert_eq!(extract_inav_version("INAV"), None);
+        assert_eq!(extract_inav_version("INAV 7.1 (sha) T"), None);
+        assert_eq!(extract_inav_version("Betaflight 4.5.1 (sha) T"), None);
+        assert_eq!(extract_inav_version(""), None);
+    }
+
+    #[test]
+    fn test_inav_box_mode_names_by_version() {
+        // flightModeFlags holds boxId_e bits: bit 0 ARM, 1 ANGLE, 2 HORIZON.
+        for rev in [INAV_6_1_1, INAV_7_1_2, INAV_8_0_1, INAV_10_0_0] {
+            assert_eq!(fmt("flightModeFlags", 0, rev), "0");
+            assert_eq!(fmt("flightModeFlags", 1, rev), "ARM");
+            assert_eq!(fmt("flightModeFlags", 0b111, rev), "ARM|ANGLE|HORIZON");
+            // Bits 3, 4, 8, 9 differ from the Betaflight names (BARO, GPS_HOME, ...).
+            assert_eq!(fmt("flightModeFlags", 1 << 3, rev), "NAVALTHOLD");
+            assert_eq!(fmt("flightModeFlags", 1 << 4, rev), "HEADINGHOLD");
+            assert_eq!(fmt("flightModeFlags", 1 << 8, rev), "NAVRTH");
+            assert_eq!(fmt("flightModeFlags", 1 << 9, rev), "NAVPOSHOLD");
+            assert_eq!(fmt("flightModeFlags", 1 << 29, rev), "CAMERA1");
+        }
+        // Bit 23: KILLSWITCH in 6.1.1 and 7.1.2, unused from 8.0.0.
+        assert_eq!(fmt("flightModeFlags", 1 << 23, INAV_6_1_1), "KILLSWITCH");
+        assert_eq!(fmt("flightModeFlags", 1 << 23, INAV_7_1_2), "KILLSWITCH");
+        assert_eq!(fmt("flightModeFlags", 1 << 23, INAV_8_0_1), "0");
+        assert_eq!(fmt("flightModeFlags", 1 << 23, INAV_10_0_0), "0");
+    }
+
+    #[test]
+    fn test_inav_box_mode_high_bit_32() {
+        // Bit 31 is BOXCAMERA3 = 31; i32 wraps negative for a set high bit.
+        assert_eq!(fmt("flightModeFlags", i32::MIN, INAV_8_0_1), "CAMERA3");
+        // All 32 bits set: 32 names in 6.1.1 (KILLSWITCH defined), 31 from 8.0.0.
+        assert_eq!(
+            fmt("flightModeFlags", -1, INAV_6_1_1).split('|').count(),
+            32
+        );
+        assert_eq!(
+            fmt("flightModeFlags", -1, INAV_8_0_1).split('|').count(),
+            31
+        );
+        assert!(fmt("flightModeFlags", -1, INAV_8_0_1).ends_with("|CAMERA3"));
+        // Raw unsigned form for an unverified version, not a negative number.
+        assert_eq!(
+            fmt("flightModeFlags", i32::MIN, "INAV 5.1.0 (sha) T"),
+            "2147483648"
+        );
+    }
+
+    #[test]
+    fn test_inav_flight_mode_flags2_names() {
+        // flightModeFlags2 bit n is boxId_e n + 32: OSDALT1 = 32, GIMBALHTRK = 59.
+        assert_eq!(fmt("flightModeFlags2", 1, INAV_8_0_1), "OSDALT1");
+        assert_eq!(fmt("flightModeFlags2", 1 << 3, INAV_8_0_1), "NAVCOURSEHOLD");
+        assert_eq!(fmt("flightModeFlags2", 1 << 27, INAV_8_0_1), "GIMBALHTRK");
+        // Box ids 51..=54 (bits 19..=22) arrive in 7.0.0, ANGLEHOLD (55, bit 23) in 7.1.0.
+        assert_eq!(fmt("flightModeFlags2", 1 << 21, INAV_7_0_0), "MIXERPROFILE");
+        assert_eq!(fmt("flightModeFlags2", 1 << 23, INAV_7_0_0), "0");
+        assert_eq!(fmt("flightModeFlags2", 1 << 23, INAV_7_1_2), "ANGLEHOLD");
+        // Box ids 56..=59 (gimbal) arrive in 8.0.0; 60..=63 in 10.0.0.
+        assert_eq!(fmt("flightModeFlags2", 1 << 24, INAV_7_1_2), "0");
+        assert_eq!(fmt("flightModeFlags2", 1 << 24, INAV_9_1_0), "GIMBALTLOCK");
+        assert_eq!(fmt("flightModeFlags2", 1 << 28, INAV_9_1_0), "0");
+        assert_eq!(fmt("flightModeFlags2", 1 << 28, INAV_10_0_0), "AUTOSPEED");
+        assert_eq!(
+            fmt("flightModeFlags2", i32::MIN, INAV_10_0_0),
+            "THRUSTREVERSE"
+        );
+        assert_eq!(fmt("flightModeFlags2", i32::MIN, INAV_9_1_0), "0");
+    }
+
+    #[test]
+    fn test_inav_active_flight_mode_names() {
+        assert_eq!(fmt("activeFlightModeFlags", 1, INAV_8_0_1), "ANGLE_MODE");
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 2, INAV_8_0_1),
+            "HEADING_MODE"
+        );
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 9, INAV_8_0_1),
+            "FAILSAFE_MODE"
+        );
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 16, INAV_8_0_1),
+            "SOARING_MODE"
+        );
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 18, INAV_9_1_0),
+            "NAV_FW_AUTOLAND"
+        );
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 19, INAV_9_1_0),
+            "NAV_SEND_TO"
+        );
+        // Bit 19 does not exist before 8.0.0; bits 17 and 18 not before 7.1.0.
+        assert_eq!(fmt("activeFlightModeFlags", 1 << 19, INAV_7_1_2), "0");
+        assert_eq!(fmt("activeFlightModeFlags", 1 << 17, INAV_7_0_0), "0");
+        assert_eq!(
+            fmt("activeFlightModeFlags", 1 << 17, INAV_7_1_2),
+            "ANGLEHOLD_MODE"
+        );
+        // Bits above the enum (20..=31) stay unnamed.
+        assert_eq!(fmt("activeFlightModeFlags", i32::MIN, INAV_10_0_0), "0");
+    }
+
+    #[test]
+    fn test_inav_state_flag_names() {
+        assert_eq!(
+            fmt("stateFlags", 0b1111, INAV_8_0_1),
+            "GPS_FIX_HOME|GPS_FIX|CALIBRATE_MAG|SMALL_ANGLE"
+        );
+        assert_eq!(fmt("stateFlags", 1 << 4, INAV_8_0_1), "FIXED_WING_LEGACY");
+        assert_eq!(fmt("stateFlags", 1 << 17, INAV_6_1_1), "AIRPLANE");
+        assert_eq!(fmt("stateFlags", 1 << 26, INAV_6_1_1), "LANDING_DETECTED");
+        // Bit 10 from 8.0.0, bit 27 from 7.0.0, bit 28 from 7.1.0.
+        assert_eq!(fmt("stateFlags", 1 << 10, INAV_7_1_2), "0");
+        assert_eq!(fmt("stateFlags", 1 << 10, INAV_8_0_1), "GPS_ESTIMATED_FIX");
+        assert_eq!(fmt("stateFlags", 1 << 27, INAV_6_1_1), "0");
+        assert_eq!(
+            fmt("stateFlags", 1 << 27, INAV_7_0_0),
+            "IN_FLIGHT_EMERG_REARM"
+        );
+        assert_eq!(fmt("stateFlags", 1 << 28, INAV_7_0_0), "0");
+        assert_eq!(fmt("stateFlags", 1 << 28, INAV_7_1_2), "TAILSITTER");
+        // Bits 29..=31 are not defined in any verified version.
+        assert_eq!(fmt("stateFlags", i32::MIN, INAV_10_0_0), "0");
+    }
+
+    #[test]
+    fn test_inav_unverified_version_prints_raw() {
+        for rev in [
+            "INAV 5.1.0 (sha) T", // older than the first verified version
+            "INAV 1.9.1 (sha) T",
+            "INAV (sha) T", // no version
+            "INAV",
+        ] {
+            assert_eq!(fmt("flightModeFlags", 5, rev), "5", "{rev}");
+            assert_eq!(fmt("flightModeFlags2", 5, rev), "5", "{rev}");
+            assert_eq!(fmt("activeFlightModeFlags", 5, rev), "5", "{rev}");
+            assert_eq!(fmt("stateFlags", 5, rev), "5", "{rev}");
+        }
+        // The first verified version is named.
+        assert_eq!(fmt("flightModeFlags", 1, "INAV 6.0.0 (sha) T"), "ARM");
+    }
+
+    #[test]
+    fn test_flag_field_non_inav_unchanged() {
+        for rev in [
+            "Betaflight 4.5.1 (77d01ba3b) AT32F435M",
+            "EmuFlight 0.4.3 (sha) T",
+            "",
+            "Cleanflight 2.3.0",
+        ] {
+            // Same text as the Betaflight-name formatters.
+            for flags in [0, 1, 4, 8, 32, 1 << 10, 1 << 11, 1 << 12, i32::MIN, -1] {
+                assert_eq!(
+                    format_flag_field_for_firmware("flightModeFlags", flags, rev),
+                    Some(format_flight_mode_flags(flags)),
+                    "{rev} {flags}"
+                );
+                assert_eq!(
+                    format_flag_field_for_firmware("stateFlags", flags, rev),
+                    Some(format_state_flags(flags)),
+                    "{rev} {flags}"
+                );
+            }
+            // INAV-only fields are not formatted for other firmware.
+            assert_eq!(
+                format_flag_field_for_firmware("flightModeFlags2", 1, rev),
+                None
+            );
+            assert_eq!(
+                format_flag_field_for_firmware("activeFlightModeFlags", 1, rev),
+                None
+            );
+        }
+        assert_eq!(fmt("flightModeFlags", 4, "Betaflight 4.5.1 (sha) T"), "MAG");
+        // Unrelated field names are not claimed.
+        assert_eq!(
+            format_flag_field_for_firmware("failsafePhase", 1, INAV_8_0_1),
+            None
+        );
     }
 }

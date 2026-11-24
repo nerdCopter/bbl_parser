@@ -78,6 +78,7 @@
 //! - [`convert_vbat_to_volts`] - Convert raw voltage to volts
 //! - [`format_flight_mode_flags`] - Format flight mode as human-readable text
 //! - [`format_state_flags`] - Format state flags as human-readable text
+//! - [`format_flag_field_for_firmware`] - Format a flag field with the INAV or Betaflight names
 //! - [`format_failsafe_phase`] - Format failsafe phase as text
 
 // Module declarations

@@ -5,7 +5,7 @@
 
 use crate::conversion::*;
 #[cfg(feature = "csv")]
-use crate::firmware_tables::{FIELD_FAILSAFE_PHASE, FIELD_FLIGHT_MODE_FLAGS, FIELD_STATE_FLAGS};
+use crate::firmware_tables::FIELD_FAILSAFE_PHASE;
 use crate::types::*;
 #[cfg(feature = "csv")]
 use anyhow::Context;
@@ -488,14 +488,15 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
                     .or_else(|| latest_s_frame_data.get(lookup_name).copied())
                     .unwrap_or(0);
 
-                let formatted = if lookup_name == FIELD_FLIGHT_MODE_FLAGS {
-                    format_flight_mode_flags(raw_value)
-                } else if lookup_name == FIELD_STATE_FLAGS {
-                    format_state_flags(raw_value)
-                } else if lookup_name == FIELD_FAILSAFE_PHASE {
+                let formatted = if lookup_name == FIELD_FAILSAFE_PHASE {
                     format_failsafe_phase_for_firmware(raw_value, &log.header.firmware_revision)
                 } else {
-                    raw_value.to_string()
+                    format_flag_field_for_firmware(
+                        lookup_name,
+                        raw_value,
+                        &log.header.firmware_revision,
+                    )
+                    .unwrap_or_else(|| raw_value.to_string())
                 };
                 write!(writer, "{formatted}")?;
             } else {
