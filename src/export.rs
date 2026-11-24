@@ -394,6 +394,24 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
         .with_context(|| format!("Failed to create flight data CSV file: {output_path:?}"))?;
     let mut writer = BufWriter::new(file);
 
+    export_flight_data_to_writer(log, &mut writer)?;
+
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
+
+    Ok(())
+}
+
+/// Write the flight data (I, P, S frames) of `log` as CSV to any writer.
+///
+/// Produces exactly the bytes of the main `.csv` file written by
+/// [`export_to_csv`], so a caller can stream to stdout or memory instead of a
+/// file. No filtering heuristics are applied, and the writer is not flushed:
+/// the caller must flush a buffered writer. Nothing is written when the log
+/// has no I/P frames.
+#[cfg(feature = "csv")]
+pub fn export_flight_data_to_writer<W: Write>(log: &BBLLog, writer: &mut W) -> Result<()> {
     // Build optimized field mapping
     let csv_map = CsvFieldMap::new(&log.header);
     let field_names: Vec<String> = csv_map
@@ -511,10 +529,6 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
         }
         writeln!(writer)?;
     }
-
-    writer
-        .flush()
-        .with_context(|| format!("Failed to flush flight data CSV file: {output_path:?}"))?;
 
     Ok(())
 }
@@ -1180,6 +1194,70 @@ mod tests {
             report.skip_reason.is_none(),
             "forced export must not carry a skip_reason"
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "csv")]
+    fn csv_test_log() -> BBLLog {
+        use std::collections::HashMap;
+        let mut log = BBLLog::new(2, 3);
+        log.header.i_frame_def = FrameDefinition::from_field_names(vec![
+            "loopIteration".into(),
+            "time".into(),
+            "vbatLatest".into(),
+            "amperageLatest".into(),
+            "gyroADC[0]".into(),
+        ]);
+        for (n, t) in [(0u32, 1000u64), (1, 2000), (2, 3000)] {
+            let mut data: HashMap<String, i32> = HashMap::new();
+            data.insert("loopIteration".into(), n as i32);
+            data.insert("time".into(), t as i32);
+            data.insert("vbatLatest".into(), 1600 + n as i32);
+            data.insert("amperageLatest".into(), 250 * n as i32);
+            data.insert("gyroADC[0]".into(), -7 * n as i32);
+            log.frames.push(DecodedFrame {
+                frame_type: if n == 0 { 'I' } else { 'P' },
+                timestamp_us: t,
+                loop_iteration: n,
+                data,
+            });
+        }
+        log
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_writer_output_is_byte_equal_to_file_output() -> Result<()> {
+        let log = csv_test_log();
+        let temp_dir = TempDir::new()?;
+        let input_path = temp_dir.path().join("in.bbl");
+        let export_opts = ExportOptions {
+            csv: true,
+            output_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            force_export: true,
+            ..ExportOptions::default()
+        };
+
+        let report = export_to_csv(&log, &input_path, &export_opts, None)?;
+        let file_bytes = std::fs::read(report.csv_path.expect("csv written"))?;
+
+        let mut mem: Vec<u8> = Vec::new();
+        export_flight_data_to_writer(&log, &mut mem)?;
+
+        assert!(!mem.is_empty());
+        assert_eq!(mem, file_bytes);
+        let text = String::from_utf8(mem)?;
+        assert_eq!(text.lines().count(), 4, "header plus 3 data rows");
+        assert!(text.starts_with("loopIteration, time (us), vbatLatest (V), amperageLatest (A)"));
+        Ok(())
+    }
+
+    #[cfg(feature = "csv")]
+    #[test]
+    fn test_writer_writes_nothing_without_main_frames() -> Result<()> {
+        let mut mem: Vec<u8> = Vec::new();
+        export_flight_data_to_writer(&BBLLog::new(1, 1), &mut mem)?;
+        assert!(mem.is_empty());
         Ok(())
     }
 }

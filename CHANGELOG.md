@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`--index <NUM>` CLI flag**: process only log NUM (1-based) of a multi-log file, as in `blackbox_decode --index`. The log keeps its own number in the output suffix (`--index 2` writes `.02.csv`). `0`, negative and non-numeric values are rejected (upstream silently treats them as "all logs"); an out-of-range value reports upstream's `Couldn't load log #N from this file, because there are only M logs in total.` and does not stop other input files
+- **`--stdout` CLI flag**: write the flight-data CSV to stdout. Version line and status output go to stderr. Requires one input file; a multi-log file also needs `--index` and otherwise prints upstream's log listing. No headers, GPX or event files are written; conflicts with `--debug`, `--gpx`, `--gps`, `--event`, `--output-dir`
+- **`--limits` CLI flag**: print min, max and range of each I-frame field after each log's statistics, in the `blackbox_decode --limits` table layout. As upstream, the export still runs
+- **Library API (additive)**: `export_flight_data_to_writer` (CSV to any `Write`, byte-identical to the `.csv` file); module `selection` (`find_log_offsets`, `log_entries`, `format_log_table`, `select_log`, `LogSelectError`, `LOG_START_MARKER`); module `limits` (`compute_field_limits`, `format_field_limits`, `FieldLimit`). `ExportOptions` is unchanged
+
 ## [1.1.1] - 2026-09-17
 
 ### Fixed

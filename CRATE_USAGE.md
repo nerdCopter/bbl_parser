@@ -179,6 +179,32 @@ This creates two files per flight:
 - Single flight: No suffix (e.g., `flight.csv`)
 - Multiple flights: Zero-padded 2-digit suffix (e.g., `flight.01.csv`, `flight.02.csv`, `flight.03.csv`)
 
+### Writing CSV to any writer
+
+`export_flight_data_to_writer` (requires the `csv` feature) writes the main flight-data CSV to any
+`std::io::Write`, with the same bytes `export_to_csv` puts in the `.csv` file. It applies no
+filtering and does not flush; flush a buffered writer yourself.
+
+```rust,no_run
+# #[cfg(feature = "csv")]
+# {
+use bbl_parser::{export_flight_data_to_writer, parse_bbl_file_all_logs, select_log, ExportOptions};
+use std::path::Path;
+
+let logs = parse_bbl_file_all_logs(Path::new("flight.BBL"), ExportOptions::default(), false).unwrap();
+let idx = select_log(2, logs.len()).unwrap(); // 1-based log number -> 0-based position
+let mut out = std::io::stdout().lock();
+export_flight_data_to_writer(&logs[idx], &mut out).unwrap();
+# }
+```
+
+### Log selection and field limits
+
+- `find_log_offsets`, `log_entries`, `format_log_table`: locate the logs of a multi-log file.
+- `select_log(requested, total)`: validate a 1-based log number (`LogSelectError` on 0 or out of range).
+- `compute_field_limits(&log)` / `format_field_limits(&limits)`: per-field min/max of the I-frame
+  fields over all I and P frames, in the `blackbox_decode --limits` layout.
+
 ### GPX Export
 
 Export GPS data to GPX format for mapping applications:
