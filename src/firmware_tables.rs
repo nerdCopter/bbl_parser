@@ -153,6 +153,9 @@ pub const EVENT_NAME_LOG_END: &str = "Log clean end";
 /// null byte (`blackboxWriteString("End of log"); blackboxWrite(0);`), 11 bytes.
 /// INAV (`bbc055369`) writes `End of log (disarm reason:%d)` and a null byte.
 pub const END_OF_LOG_MESSAGE: &[u8] = b"End of log";
+/// INAV text between `End of log` and the null byte starts with this prefix and
+/// ends with `)`.
+pub const END_OF_LOG_INAV_PREFIX: &[u8] = b"End of log (disarm reason:";
 /// Payload length that blackbox_decode (`parser.c`, `END_OF_LOG_MESSAGE_LEN`)
 /// reads and checks: the text plus its null byte.
 pub const END_OF_LOG_MESSAGE_LEN: usize = END_OF_LOG_MESSAGE.len() + 1;

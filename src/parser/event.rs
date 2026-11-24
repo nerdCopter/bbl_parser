@@ -162,11 +162,13 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
                     Err(_) => break,
                 }
             }
-            if terminated && payload.starts_with(END_OF_LOG_MESSAGE) {
+            let is_end_message = payload == END_OF_LOG_MESSAGE
+                || (payload.starts_with(END_OF_LOG_INAV_PREFIX) && payload.ends_with(b")"));
+            if terminated && is_end_message {
                 stream.end_here();
                 EVENT_NAME_LOG_END.to_string()
             } else {
-                stream.set_position(start + END_OF_LOG_MESSAGE_LEN);
+                stream.set_position((start + END_OF_LOG_MESSAGE_LEN).min(stream.end_position()));
                 format!("Unknown event type: {}", event_type)
             }
         }
@@ -319,5 +321,18 @@ mod tests {
         let frame = parse_e_frame(&mut stream, false).unwrap();
         assert_eq!(frame.event_name, "Unknown event type: 255");
         assert!(stream.eof);
+        assert_eq!(stream.pos, data.len(), "skip must stay inside the stream");
+    }
+
+    #[test]
+    fn log_end_missing_null_does_not_swallow_next_frame() {
+        // Text without its null byte, then a disarm frame whose payload is 0.
+        let mut data = vec![EVENT_LOG_END];
+        data.extend_from_slice(b"End of log");
+        data.extend_from_slice(&[b'E', EVENT_DISARM, 0x00, b'I']);
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Unknown event type: 255");
+        assert!(!stream.eof, "an invalid end must not end the stream");
     }
 }
