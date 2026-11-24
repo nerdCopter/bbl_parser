@@ -156,8 +156,11 @@ pub fn format_failsafe_phase_for_firmware(phase: i32, firmware_revision: &str) -
 }
 
 /// True when the firmware revision header names INAV ("INAV" or "iNav")
+///
+/// Uses [`crate::export::firmware_prefix_for_revision`], so a revision that
+/// also names EmuFlight or Betaflight is classified as that vendor first.
 pub fn is_inav_firmware(firmware_revision: &str) -> bool {
-    firmware_revision.to_ascii_lowercase().contains("inav")
+    crate::export::firmware_prefix_for_revision(firmware_revision) == Some("INAV_")
 }
 
 fn phase_name_or_raw(phase: i32, names: &[&str]) -> String {

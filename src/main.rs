@@ -1259,6 +1259,7 @@ mod tests {
         for fw in [
             "Betaflight 4.5.1 (abc) STM32F7X2",
             "EmuFlight 0.4.3 (abc) STM32F4",
+            "Betaflight 4.5.1 (INAV-compatible build)",
             "",
         ] {
             for phase in -1..=9 {
