@@ -580,13 +580,8 @@ pub fn parse_frames(
             Err(_) => break,
         }
 
-        // Safety limits to prevent hanging
-        if stats.total_frames > 1000000 || stats.failed_frames > 10000 {
-            if debug {
-                println!("Hit safety limit - stopping frame parsing");
-            }
-            break;
-        }
+        // No frame-count cutoff: every iteration consumes at least one byte, so the
+        // loop ends at end of data. blackbox_decode also parses to end of data.
     }
 
     stats.total_bytes = binary_data.len() as u64;
@@ -884,4 +879,53 @@ fn skip_frame(stream: &mut BBLDataStream, frame_type: char, debug: bool) -> Resu
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{BBLHeader, FieldDefinition};
+
+    /// Frames past the former 1,000,000-frame cutoff must still be parsed.
+    const FRAME_COUNT: u32 = 1_000_010;
+
+    fn two_field_header() -> BBLHeader {
+        let field = |name: &str| FieldDefinition {
+            name: name.to_string(),
+            signed: false,
+            predictor: 0, // PREDICT_ZERO
+            encoding: 1,  // ENCODING_UNSIGNED_VB
+        };
+        let mut header = BBLHeader::default();
+        header.i_frame_def.fields = vec![field("loopIteration"), field("time")];
+        header.i_frame_def.field_names = vec!["loopIteration".to_string(), "time".to_string()];
+        header.i_frame_def.count = 2;
+        header
+    }
+
+    #[test]
+    fn parses_past_one_million_frames() {
+        // Each frame: 'I', loopIteration=1, time=1 (valid: loop > 0).
+        let mut data = Vec::with_capacity(FRAME_COUNT as usize * 3);
+        for _ in 0..FRAME_COUNT {
+            data.extend_from_slice(&[b'I', 1, 1]);
+        }
+        let (stats, ..) =
+            parse_frames(&data, &two_field_header(), false, &ExportOptions::default()).unwrap();
+        assert_eq!(stats.i_frames, FRAME_COUNT);
+        assert_eq!(stats.total_frames, FRAME_COUNT);
+    }
+
+    #[test]
+    fn parses_past_ten_thousand_unknown_bytes() {
+        // Unknown frame-type bytes count as failures but must not stop parsing.
+        let mut data = vec![0xFFu8; 10_001];
+        for _ in 0..3 {
+            data.extend_from_slice(&[b'I', 1, 1]);
+        }
+        let (stats, ..) =
+            parse_frames(&data, &two_field_header(), false, &ExportOptions::default()).unwrap();
+        assert_eq!(stats.failed_frames, 10_001);
+        assert_eq!(stats.i_frames, 3);
+    }
 }
