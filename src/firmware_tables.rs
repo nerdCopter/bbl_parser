@@ -101,6 +101,23 @@ pub const FAILSAFE_PHASE_NAMES: [&str; 8] = [
     "AUTOPILOT",                   // FAILSAFE_AUTOPILOT
 ];
 
+/// Names for each INAV `failsafePhase` value, indexed by value.
+///
+/// Mirrors `failsafePhase_e` in INAV `src/main/flight/failsafe.h` without the
+/// `FAILSAFE_` prefix (identical in INAV 6.1.1 through master). The order
+/// differs from Betaflight and EmuFlight. blackbox_decode has no INAV table,
+/// so this has no upstream decoder parity target.
+pub const INAV_FAILSAFE_PHASE_NAMES: [&str; 8] = [
+    "IDLE",               // 0
+    "RX_LOSS_DETECTED",   // 1
+    "RX_LOSS_IDLE",       // 2
+    "RETURN_TO_HOME",     // 3
+    "LANDING",            // 4
+    "LANDED",             // 5
+    "RX_LOSS_MONITORING", // 6
+    "RX_LOSS_RECOVERED",  // 7
+];
+
 // ============================================================================
 // Event type ids (reserved for a later change)
 // ============================================================================

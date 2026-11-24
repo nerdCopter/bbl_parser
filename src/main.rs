@@ -24,7 +24,7 @@ use bbl_parser::types::BBLLog;
 #[cfg(test)]
 use bbl_parser::conversion::{
     convert_amperage_to_amps, convert_vbat_to_volts, format_failsafe_phase,
-    format_flight_mode_flags, format_state_flags,
+    format_failsafe_phase_for_firmware, format_flight_mode_flags, format_state_flags,
 };
 #[cfg(test)]
 use bbl_parser::types::{BBLHeader, DecodedFrame, FrameDefinition, FrameStats};
@@ -1226,5 +1226,56 @@ mod tests {
         assert_eq!(format_failsafe_phase(99), "99");
         assert_eq!(format_failsafe_phase(-1), "-1");
         assert_eq!(format_failsafe_phase(i32::MAX), "2147483647");
+    }
+
+    #[test]
+    fn test_format_failsafe_phase_inav() {
+        // Expected strings are failsafePhase_e in INAV src/main/flight/failsafe.h
+        let expected = [
+            "IDLE",
+            "RX_LOSS_DETECTED",
+            "RX_LOSS_IDLE",
+            "RETURN_TO_HOME",
+            "LANDING",
+            "LANDED",
+            "RX_LOSS_MONITORING",
+            "RX_LOSS_RECOVERED",
+        ];
+        for fw in ["INAV 7.1.2 (abc) STM32F7X2", "iNav 6.1.1 (abc) STM32F4"] {
+            for (phase, name) in expected.iter().enumerate() {
+                assert_eq!(format_failsafe_phase_for_firmware(phase as i32, fw), *name);
+            }
+            assert_eq!(format_failsafe_phase_for_firmware(8, fw), "8");
+            assert_eq!(format_failsafe_phase_for_firmware(-1, fw), "-1");
+            assert_eq!(
+                format_failsafe_phase_for_firmware(i32::MAX, fw),
+                "2147483647"
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_failsafe_phase_non_inav_unchanged() {
+        for fw in [
+            "Betaflight 4.5.1 (abc) STM32F7X2",
+            "EmuFlight 0.4.3 (abc) STM32F4",
+            "Betaflight 4.5.1 (INAV-compatible build)",
+            "",
+        ] {
+            for phase in -1..=9 {
+                assert_eq!(
+                    format_failsafe_phase_for_firmware(phase, fw),
+                    format_failsafe_phase(phase)
+                );
+            }
+        }
+        assert_eq!(
+            format_failsafe_phase_for_firmware(2, "Betaflight 4.5.1"),
+            "LANDING"
+        );
+        assert_eq!(
+            format_failsafe_phase_for_firmware(3, "EmuFlight 0.4.3"),
+            "LANDED"
+        );
     }
 }
