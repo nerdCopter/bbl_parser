@@ -4,6 +4,7 @@
 //! including CSV, GPX, and Event files.
 
 use crate::conversion::*;
+use crate::firmware_profile::{Vendor, VENDORS};
 #[cfg(feature = "csv")]
 use crate::firmware_tables::FIELD_FAILSAFE_PHASE;
 use crate::types::*;
@@ -104,26 +105,8 @@ fn sanitize_base_name_override(base_name_override: Option<&str>) -> Option<&str>
 /// Return a human-readable vendor name for a known filename prefix.
 /// Falls back to `"Unknown"` for unrecognised prefixes.
 pub fn vendor_name_for_prefix(prefix: &str) -> &'static str {
-    match prefix {
-        "EMUF_" => "EmuFlight",
-        "BTFL_" => "Betaflight",
-        "INAV_" => "iNav",
-        "QUIC_" => "Quicksilver",
-        _ => "Unknown",
-    }
+    Vendor::from_file_prefix(prefix).display_name()
 }
-
-/// Known firmware vendor filename prefixes mapped to their revision keywords.
-/// To add a new firmware: append `("PREFIX_", "keyword")` where keyword is a
-/// lowercase substring of that firmware's `H Firmware revision:` header value.
-/// For forks that share a base firmware's revision string, add an entry here
-/// for filename detection and add a corresponding entry to `FORK_REVISION_MAP`.
-const KNOWN_FIRMWARE_PREFIXES: &[(&str, &str)] = &[
-    ("EMUF_", "emuflight"),
-    ("BTFL_", "betaflight"),
-    ("INAV_", "inav"),
-    ("QUIC_", "quicksilver"), // Quicksilver; see FORK_REVISION_MAP for rename exemption
-];
 
 /// Fork firmware prefixes that intentionally report another vendor's revision string.
 /// Sessions in files with these prefixes are NOT renamed even when the revision string
@@ -139,21 +122,16 @@ const FORK_REVISION_MAP: &[(&str, &str)] = &[
 
 /// Return the canonical filename prefix for a firmware revision string (e.g. `"BTFL_"`),
 /// or `None` if the vendor is not recognised.
+/// The vendor is the first word of the revision (see [`Vendor::detect`]).
 pub fn firmware_prefix_for_revision(revision: &str) -> Option<&'static str> {
-    let rev_lower = revision.trim().to_lowercase();
-    for &(prefix, keyword) in KNOWN_FIRMWARE_PREFIXES {
-        if rev_lower.contains(keyword) {
-            return Some(prefix);
-        }
-    }
-    None
+    Vendor::detect(revision).file_prefix()
 }
 
 fn detect_bbl_filename_prefix(stem: &str) -> Option<&'static str> {
-    KNOWN_FIRMWARE_PREFIXES
+    VENDORS
         .iter()
-        .find(|&&(prefix, _)| stem.starts_with(prefix))
-        .map(|&(prefix, _)| prefix)
+        .find(|info| stem.starts_with(info.file_prefix))
+        .map(|info| info.file_prefix)
 }
 
 /// Compute a corrected base name for a session whose firmware vendor differs from
