@@ -493,7 +493,7 @@ fn export_flight_data_to_csv(log: &BBLLog, output_path: &Path) -> Result<()> {
                 } else if lookup_name == FIELD_STATE_FLAGS {
                     format_state_flags(raw_value)
                 } else if lookup_name == FIELD_FAILSAFE_PHASE {
-                    format_failsafe_phase(raw_value)
+                    format_failsafe_phase_for_firmware(raw_value, &log.header.firmware_revision)
                 } else {
                     raw_value.to_string()
                 };

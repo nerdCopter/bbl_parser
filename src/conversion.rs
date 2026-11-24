@@ -3,7 +3,9 @@
 //! Contains all firmware-aware conversion functions for voltage, GPS data,
 //! and flag formatting to maintain compatibility across firmware versions.
 
-use crate::firmware_tables::{FAILSAFE_PHASE_NAMES, FLIGHT_MODE_FLAG_NAMES, STATE_FLAG_NAMES};
+use crate::firmware_tables::{
+    FAILSAFE_PHASE_NAMES, FLIGHT_MODE_FLAG_NAMES, INAV_FAILSAFE_PHASE_NAMES, STATE_FLAG_NAMES,
+};
 use semver::Version;
 
 /// Convert raw vbat value to volts with firmware-aware scaling
@@ -132,14 +134,36 @@ pub fn format_state_flags(flags: i32) -> String {
     format_flag_names(flags, &STATE_FLAG_NAMES)
 }
 
-/// Format failsafe phase for CSV output
+/// Format failsafe phase for CSV output (Betaflight/EmuFlight numbering)
 ///
 /// Names come from [`FAILSAFE_PHASE_NAMES`]. A value with no name prints as a
-/// raw integer, like blackbox_decode.
+/// raw integer, like blackbox_decode. For INAV logs use
+/// [`format_failsafe_phase_for_firmware`].
 pub fn format_failsafe_phase(phase: i32) -> String {
+    phase_name_or_raw(phase, &FAILSAFE_PHASE_NAMES)
+}
+
+/// Format failsafe phase for CSV output, choosing the name table by firmware
+///
+/// INAV logs use [`INAV_FAILSAFE_PHASE_NAMES`]; every other firmware uses
+/// [`FAILSAFE_PHASE_NAMES`]. A value with no name prints as a raw integer.
+pub fn format_failsafe_phase_for_firmware(phase: i32, firmware_revision: &str) -> String {
+    if is_inav_firmware(firmware_revision) {
+        phase_name_or_raw(phase, &INAV_FAILSAFE_PHASE_NAMES)
+    } else {
+        format_failsafe_phase(phase)
+    }
+}
+
+/// True when the firmware revision header names INAV ("INAV" or "iNav")
+pub fn is_inav_firmware(firmware_revision: &str) -> bool {
+    firmware_revision.to_ascii_lowercase().contains("inav")
+}
+
+fn phase_name_or_raw(phase: i32, names: &[&str]) -> String {
     usize::try_from(phase)
         .ok()
-        .and_then(|index| FAILSAFE_PHASE_NAMES.get(index))
+        .and_then(|index| names.get(index))
         .map_or_else(|| phase.to_string(), |name| (*name).to_string())
 }
 
