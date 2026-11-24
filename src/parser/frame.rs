@@ -716,8 +716,10 @@ pub fn parse_frame_data(
             ENCODING_TAG8_8SVB => {
                 // Count how many consecutive fields use this encoding
                 let mut group_count = 1;
-                for j in i + 1..i + 8.min(frame_def.fields.len() - i) {
-                    if frame_def.fields[j].encoding != ENCODING_TAG8_8SVB {
+                // `i < fields.len()` here, so `i + 1 <= end` and the slice is valid.
+                let end = (i + 8).min(frame_def.fields.len());
+                for next_field in &frame_def.fields[i + 1..end] {
+                    if next_field.encoding != ENCODING_TAG8_8SVB {
                         break;
                     }
                     group_count += 1;
