@@ -145,3 +145,16 @@ pub const EVENT_LOG_END: u8 = 255;
 pub const EVENT_NAME_DISARM: &str = "Disarm";
 /// Event name printed by blackbox_decode for `FLIGHT_LOG_EVENT_FLIGHTMODE`.
 pub const EVENT_NAME_FLIGHT_MODE: &str = "Flight mode";
+/// Event name printed by blackbox_decode for a valid `FLIGHT_LOG_EVENT_LOG_END`.
+pub const EVENT_NAME_LOG_END: &str = "Log clean end";
+
+/// Text that starts the `FLIGHT_LOG_EVENT_LOG_END` payload. Betaflight
+/// (`60abbac05`) and EmuFlight (`30eff58a0`) write exactly this text and a
+/// null byte (`blackboxWriteString("End of log"); blackboxWrite(0);`), 11 bytes.
+/// INAV (`bbc055369`) writes `End of log (disarm reason:%d)` and a null byte.
+pub const END_OF_LOG_MESSAGE: &[u8] = b"End of log";
+/// Payload length that blackbox_decode (`parser.c`, `END_OF_LOG_MESSAGE_LEN`)
+/// reads and checks: the text plus its null byte.
+pub const END_OF_LOG_MESSAGE_LEN: usize = END_OF_LOG_MESSAGE.len() + 1;
+/// Upper bound for the null-terminated end-of-log payload (INAV suffix).
+pub const END_OF_LOG_MAX_LEN: usize = 64;

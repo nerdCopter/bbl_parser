@@ -144,8 +144,31 @@ pub fn parse_e_frame(stream: &mut BBLDataStream, debug: bool) -> Result<EventFra
             )
         }
         EVENT_LOG_END => {
-            // FLIGHT_LOG_EVENT_LOG_END
-            "Log end".to_string()
+            // FLIGHT_LOG_EVENT_LOG_END: the payload is the text "End of log" and a
+            // null byte (INAV appends " (disarm reason:N)" before the null byte).
+            // blackbox_decode reads END_OF_LOG_MESSAGE_LEN bytes and, when they match,
+            // stops reading the log; otherwise the bytes are consumed and the event
+            // is not a real end of log.
+            let start = stream.pos;
+            let mut payload = Vec::new();
+            let mut terminated = false;
+            while payload.len() < END_OF_LOG_MAX_LEN {
+                match stream.read_byte() {
+                    Ok(0) => {
+                        terminated = true;
+                        break;
+                    }
+                    Ok(b) => payload.push(b),
+                    Err(_) => break,
+                }
+            }
+            if terminated && payload.starts_with(END_OF_LOG_MESSAGE) {
+                stream.end_here();
+                EVENT_NAME_LOG_END.to_string()
+            } else {
+                stream.set_position(start + END_OF_LOG_MESSAGE_LEN);
+                format!("Unknown event type: {}", event_type)
+            }
         }
         _ => {
             // Unknown event type - read a few bytes as data
@@ -236,5 +259,65 @@ mod tests {
         let mut stream = BBLDataStream::new(&data);
         let frame = parse_e_frame(&mut stream, false).unwrap();
         assert_eq!(frame.event_name, "Disarm - Reason: 0");
+    }
+
+    // Payload follows blackbox.c blackboxLogEvent: "End of log" and a null byte.
+    // blackbox_decode (parser.c) names a valid end "Log clean end" and stops reading.
+
+    #[test]
+    fn log_end_consumes_message_and_stops_stream() {
+        let mut data = vec![EVENT_LOG_END];
+        data.extend_from_slice(b"End of log\0");
+        data.extend_from_slice(&[0xFF, 0xFF]);
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Log clean end");
+        assert_eq!(stream.pos, 12);
+        assert!(stream.eof, "valid end of log must end the stream");
+    }
+
+    #[test]
+    fn log_end_accepts_inav_suffix() {
+        let mut data = vec![EVENT_LOG_END];
+        data.extend_from_slice(b"End of log (disarm reason:4)\0");
+        data.push(0xFF);
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Log clean end");
+        assert_eq!(stream.pos, data.len() - 1);
+        assert!(stream.eof);
+    }
+
+    #[test]
+    fn log_end_missing_null_is_not_a_clean_end() {
+        // Text present, null byte missing: stream ends before the terminator.
+        let mut data = vec![EVENT_LOG_END];
+        data.extend_from_slice(b"End of log");
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Unknown event type: 255");
+    }
+
+    #[test]
+    fn log_end_wrong_text_consumes_message_length_and_continues() {
+        // Same as blackbox_decode: 11 bytes are consumed, the event is dropped,
+        // and parsing continues after them.
+        let mut data = vec![EVENT_LOG_END];
+        data.extend_from_slice(b"Xnd of log\0");
+        data.extend_from_slice(&[b'I', 0x01]);
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Unknown event type: 255");
+        assert_eq!(stream.pos, 12);
+        assert!(!stream.eof);
+    }
+
+    #[test]
+    fn log_end_truncated_payload_does_not_panic() {
+        let data = [EVENT_LOG_END, b'E', b'n'];
+        let mut stream = BBLDataStream::new(&data);
+        let frame = parse_e_frame(&mut stream, false).unwrap();
+        assert_eq!(frame.event_name, "Unknown event type: 255");
+        assert!(stream.eof);
     }
 }
