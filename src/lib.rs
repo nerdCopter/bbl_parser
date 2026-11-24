@@ -73,6 +73,11 @@
 //! - [`calculate_range`] - Calculate gyro axis range (max - min) for scale-independent analysis
 //! - [`calculate_variance`] - DEPRECATED: Statistical helper (no longer used; kept for backward compatibility)
 //!
+//! ## Selection and Limits
+//! - [`find_log_offsets`], [`log_entries`], [`select_log`] - Locate and choose one log of a multi-log file (1-based)
+//! - [`compute_field_limits`], [`format_field_limits`] - Per-field min/max of a log
+//! - `export_flight_data_to_writer` - Write the flight-data CSV to any `Write` (requires the `csv` feature)
+//!
 //! ## Conversion Utilities
 //! - [`convert_amperage_to_amps`] - Convert raw amperage to amps
 //! - [`convert_vbat_to_volts`] - Convert raw voltage to volts
@@ -86,7 +91,9 @@ pub mod error;
 pub mod export;
 pub mod filters;
 pub mod firmware_tables;
+pub mod limits;
 pub mod parser;
+pub mod selection;
 pub mod types;
 
 // Re-export everything from modules for convenience
@@ -100,7 +107,11 @@ pub use export::*;
 #[allow(ambiguous_glob_reexports)]
 pub use filters::*;
 #[allow(ambiguous_glob_reexports)]
+pub use limits::*;
+#[allow(ambiguous_glob_reexports)]
 pub use parser::*;
+#[allow(ambiguous_glob_reexports)]
+pub use selection::*;
 #[allow(ambiguous_glob_reexports)]
 pub use types::*;
 

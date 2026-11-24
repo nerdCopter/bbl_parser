@@ -49,6 +49,11 @@ cargo build --release
 # Useful options
 ./target/release/bbl_parser logs/*.BBL --output-dir ./output
 ./target/release/bbl_parser --force-export logs/*.BBL
+
+# One log of a multi-log file (1-based), CSV to stdout, field limits
+./target/release/bbl_parser --index 2 flight.BBL
+./target/release/bbl_parser --index 2 --stdout flight.BBL > log2.csv
+./target/release/bbl_parser --limits flight.BBL
 ```
 
 ## CLI options
@@ -72,6 +77,9 @@ Options:
       --gpx               Export GPS data (G and H frames) to GPX XML files
       --gps               Alias for --gpx: Export GPS data to GPX XML files
       --event             Export event data (E frames) to JSONL files
+      --index <NUM>       Process only log NUM (1-based) of a multi-log file
+      --stdout            Write the CSV to stdout instead of a file (one log of one file)
+      --limits            Print the min, max and range of each field after the log statistics
   -F, --force-export      Force export of all logs, bypassing smart filtering
   -h, --help              Print help (see more with '--help')
 ```
@@ -83,6 +91,8 @@ Options:
 - Events: JSON Lines `[.XX].event` (CLI)
 
 Filenames are clean for single-log files and numbered for multi-log files (e.g., `.01.csv`, `.02.csv`).
+
+`--index <NUM>` keeps the number of the chosen log in the file name (`--index 2` writes `.02.csv`). With `--stdout`, only the flight-data CSV goes to stdout; the version line and all status text go to stderr, and no headers, GPX or event files are written. `--stdout` needs one input file, and a multi-log file also needs `--index`. `--stdout` cannot be combined with `--debug`, `--gpx`, `--gps`, `--event` or `--output-dir`. `--limits` prints the table after each log's statistics (to stderr when `--stdout` is set); the export still runs.
 
 ## Smart export filtering
 

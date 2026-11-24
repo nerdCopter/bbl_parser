@@ -4,12 +4,17 @@ use glob::{glob_with, MatchOptions};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // Import export functions from crate library
 use bbl_parser::export::{
-    corrected_session_base_name, export_to_csv, export_to_event, export_to_gpx,
-    firmware_prefix_for_revision, vendor_name_for_prefix,
+    corrected_session_base_name, export_flight_data_to_writer, export_to_csv, export_to_event,
+    export_to_gpx, firmware_prefix_for_revision, vendor_name_for_prefix,
 };
+
+// Import log selection and field-limit helpers from crate library
+use bbl_parser::limits::{compute_field_limits, format_field_limits};
+use bbl_parser::selection::{find_log_offsets, format_log_table, log_entries, select_log};
 
 // Import parser functions from crate library - using crate's unified implementations
 use bbl_parser::parser::parse_single_log;
@@ -42,6 +47,32 @@ const VERSION_STR: &str = concat!(
     env!("VERGEN_GIT_COMMIT_DATE", "unknown"),
     ")"
 );
+
+/// When set, human-readable status output goes to stderr so stdout carries only CSV data.
+static STATUS_TO_STDERR: AtomicBool = AtomicBool::new(false);
+
+/// `println!` for status output: stdout normally, stderr in `--stdout` mode.
+macro_rules! status {
+    ($($arg:tt)*) => {
+        if STATUS_TO_STDERR.load(Ordering::Relaxed) {
+            eprintln!($($arg)*)
+        } else {
+            println!($($arg)*)
+        }
+    };
+}
+
+/// CLI-only run options that are not part of the library `ExportOptions`.
+#[derive(Debug, Clone, Default)]
+struct CliOptions {
+    debug: bool,
+    /// 1-based log to process (`--index`); `None` processes every log.
+    log_index: Option<usize>,
+    /// Write the CSV to stdout instead of files (`--stdout`).
+    to_stdout: bool,
+    /// Print per-field min/max after each log's statistics (`--limits`).
+    limits: bool,
+}
 
 /// Maximum recursion depth to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
@@ -321,6 +352,32 @@ fn build_command() -> Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("index")
+                .long("index")
+                .value_name("NUM")
+                .help("Process only log NUM (1-based) of a multi-log file")
+                .value_parser(clap::value_parser!(u64).range(1..)),
+        )
+        .arg(
+            Arg::new("stdout")
+                .long("stdout")
+                .help("Write the CSV to stdout instead of a file (one log of one file)")
+                .long_help(
+                    "Write the CSV to stdout instead of a file. Requires exactly one input\n\
+                    file; a multi-log file also needs --index. Status output goes to stderr.\n\
+                    No headers, GPX or event files are written. Cannot be combined with\n\
+                    --debug, --gpx, --gps, --event or --output-dir.",
+                )
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with_all(["debug", "gpx", "gps", "event", "output-dir"]),
+        )
+        .arg(
+            Arg::new("limits")
+                .long("limits")
+                .help("Print the min, max and range of each field after the log statistics")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("force-export")
                 .short('F')
                 .long("force-export")
@@ -338,11 +395,23 @@ fn build_command() -> Command {
 }
 
 fn main() -> Result<()> {
-    // Print version at start of every execution context
-    println!("{} {}", env!("CARGO_PKG_NAME"), VERSION_STR);
-    println!();
-
-    let matches = build_command().get_matches();
+    // Print version at start of every execution context. In --stdout mode it
+    // goes to stderr so stdout carries only CSV data.
+    let matches = match build_command().try_get_matches() {
+        Ok(m) => m,
+        Err(e) => {
+            if e.use_stderr() {
+                eprintln!("{} {}\n", env!("CARGO_PKG_NAME"), VERSION_STR);
+            } else {
+                println!("{} {}\n", env!("CARGO_PKG_NAME"), VERSION_STR);
+            }
+            e.exit()
+        }
+    };
+    let to_stdout = matches.get_flag("stdout");
+    STATUS_TO_STDERR.store(to_stdout, Ordering::Relaxed);
+    status!("{} {}", env!("CARGO_PKG_NAME"), VERSION_STR);
+    status!();
 
     // Exit if only --version/-V requested
     if matches.get_flag("version") {
@@ -354,6 +423,12 @@ fn main() -> Result<()> {
     let export_event = matches.get_flag("event");
     let force_export = matches.get_flag("force-export");
     let output_dir = matches.get_one::<String>("output-dir").cloned();
+    let cli_options = CliOptions {
+        debug,
+        log_index: matches.get_one::<u64>("index").map(|&n| n as usize),
+        to_stdout,
+        limits: matches.get_flag("limits"),
+    };
 
     // Check if no files were provided and show help
     let file_patterns: Vec<&String> = match matches.get_many::<String>("files") {
@@ -454,19 +529,24 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    if cli_options.to_stdout && valid_paths.len() > 1 {
+        eprintln!("You can only decode one log at a time if you're printing to stdout");
+        std::process::exit(1);
+    }
+
     // Process files
     for (index, path) in valid_paths.iter().enumerate() {
         if index > 0 {
-            println!();
+            status!();
         }
 
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        println!("Processing: {filename}");
+        status!("Processing: {filename}");
 
-        match parse_bbl_file_streaming(path, debug, &export_options) {
+        match parse_bbl_file_streaming(path, &cli_options, &export_options) {
             Ok(processed_logs) => {
                 if debug {
                     println!(
@@ -656,39 +736,41 @@ fn display_log_info(log: &BBLLog) {
     let stats = &log.stats;
     let header = &log.header;
 
-    println!(
+    status!(
         "\nLog {} of {}, frames: {}",
-        log.log_number, log.total_logs, stats.total_frames
+        log.log_number,
+        log.total_logs,
+        stats.total_frames
     );
 
     // Display firmware info
     if !header.firmware_revision.is_empty() {
-        println!("Firmware: {}", header.firmware_revision);
+        status!("Firmware: {}", header.firmware_revision);
     }
     if !header.board_info.is_empty() {
-        println!("Board: {}", header.board_info);
+        status!("Board: {}", header.board_info);
     }
     if !header.craft_name.is_empty() {
-        println!("Craft: {}", header.craft_name);
+        status!("Craft: {}", header.craft_name);
     }
 
     // Display statistics
-    println!("\nStatistics");
-    println!("Looptime        {:4} avg", header.looptime);
-    println!("I frames   {:6}", stats.i_frames);
-    println!("P frames   {:6}", stats.p_frames);
+    status!("\nStatistics");
+    status!("Looptime        {:4} avg", header.looptime);
+    status!("I frames   {:6}", stats.i_frames);
+    status!("P frames   {:6}", stats.p_frames);
     if stats.h_frames > 0 {
-        println!("H frames   {:6}", stats.h_frames);
+        status!("H frames   {:6}", stats.h_frames);
     }
     if stats.g_frames > 0 {
-        println!("G frames   {:6}", stats.g_frames);
+        status!("G frames   {:6}", stats.g_frames);
     }
     if stats.e_frames > 0 {
-        println!("E frames   {:6}", stats.e_frames);
+        status!("E frames   {:6}", stats.e_frames);
     }
     // Always show S frames for blackbox_decode.c compatibility
-    println!("S frames   {:6}", stats.s_frames);
-    println!("Frames     {:6}", stats.total_frames);
+    status!("S frames   {:6}", stats.s_frames);
+    status!("Frames     {:6}", stats.total_frames);
 
     // Display timing if available
     if stats.start_time_us > 0 && stats.end_time_us > stats.start_time_us {
@@ -701,33 +783,36 @@ fn display_log_info(log: &BBLLog) {
         let seconds = total_seconds % 60.0;
 
         if minutes > 0 {
-            println!(
+            status!(
                 "Duration   {:5}ms ({:02}m{:04.1}s)",
-                duration_ms, minutes, seconds
+                duration_ms,
+                minutes,
+                seconds
             );
         } else {
-            println!("Duration   {:5}ms ({:04.1}s)", duration_ms, seconds);
+            status!("Duration   {:5}ms ({:04.1}s)", duration_ms, seconds);
         }
     }
 
     // Display data version and missing iterations
     if header.data_version > 0 {
-        println!("Data ver   {:6}", header.data_version);
+        status!("Data ver   {:6}", header.data_version);
     }
     if stats.missing_iterations > 0 {
-        println!("Missing    {:6} iterations", stats.missing_iterations);
+        status!("Missing    {:6} iterations", stats.missing_iterations);
     }
 }
 
 fn parse_bbl_file_streaming(
     file_path: &Path,
-    debug: bool,
+    cli: &CliOptions,
     export_options: &ExportOptions,
 ) -> Result<usize> {
+    let debug = cli.debug;
     if debug {
-        println!("=== STREAMING BBL FILE PROCESSING ===");
+        status!("=== STREAMING BBL FILE PROCESSING ===");
         let metadata = std::fs::metadata(file_path)?;
-        println!(
+        status!(
             "File size: {} bytes ({:.2} MB)",
             metadata.len(),
             metadata.len() as f64 / 1024.0 / 1024.0
@@ -737,32 +822,38 @@ fn parse_bbl_file_streaming(
     let file_data = std::fs::read(file_path)?;
 
     // Look for multiple logs by searching for log start markers
-    let log_start_marker = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
-    let mut log_positions = Vec::new();
-
-    // Find all log start positions
-    for i in 0..file_data.len() {
-        if i + log_start_marker.len() <= file_data.len()
-            && &file_data[i..i + log_start_marker.len()] == log_start_marker
-        {
-            log_positions.push(i);
-        }
-    }
+    let log_positions = find_log_offsets(&file_data);
 
     if log_positions.is_empty() {
         return Err(anyhow::anyhow!("No blackbox log headers found in file"));
     }
 
+    // Resolve --index / --stdout into the single log to process, if any
+    let selected_log: Option<usize> = match cli.log_index {
+        Some(requested) => Some(select_log(requested, log_positions.len())?),
+        None if cli.to_stdout && log_positions.len() > 1 => {
+            return Err(anyhow::anyhow!(
+                "This file contains multiple flight logs, please choose one with the --index argument:\n\n{}",
+                format_log_table(&log_entries(&log_positions, file_data.len()))
+            ));
+        }
+        None if cli.to_stdout => Some(0),
+        None => None,
+    };
+
     if debug {
-        println!("Found {} log(s) in file", log_positions.len());
+        status!("Found {} log(s) in file", log_positions.len());
     }
 
     let mut processed_logs = 0;
     let mut session_firmware: Vec<(usize, String)> = Vec::new();
 
     for (log_index, &start_pos) in log_positions.iter().enumerate() {
+        if selected_log.is_some_and(|s| s != log_index) {
+            continue;
+        }
         if debug {
-            println!(
+            status!(
                 "Processing log {} starting at position {}",
                 log_index + 1,
                 start_pos
@@ -791,15 +882,19 @@ fn parse_bbl_file_streaming(
         // Display log info immediately
         display_log_info(&log);
 
+        if cli.limits {
+            status!("{}", format_field_limits(&compute_field_limits(&log)));
+        }
+
         // Check if we should skip exports for this log
         let (should_skip, reason) = should_skip_export(&log, export_options.force_export);
         if should_skip {
-            println!("Skipping exports for this log: {}", reason);
+            status!("Skipping exports for this log: {}", reason);
             processed_logs += 1;
 
             // Add separator between logs for clarity
-            if log_index + 1 < log_positions.len() {
-                println!();
+            if selected_log.is_none() && log_index + 1 < log_positions.len() {
+                status!();
             }
             continue;
         }
@@ -807,6 +902,15 @@ fn parse_bbl_file_streaming(
         // Correct the output prefix when this session's firmware vendor differs from the BBL filename
         let base_name_override =
             corrected_session_base_name(file_path, &log.header.firmware_revision);
+
+        // --stdout: stream the flight-data CSV to stdout; no other files are written
+        if cli.to_stdout {
+            let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+            export_flight_data_to_writer(&log, &mut out)?;
+            std::io::Write::flush(&mut out)?;
+            processed_logs += 1;
+            continue;
+        }
 
         // Export CSV immediately while data is hot in cache
         if export_options.csv {
@@ -818,10 +922,10 @@ fn parse_bbl_file_streaming(
             ) {
                 Ok(report) => {
                     if let Some(headers_path) = report.headers_path {
-                        println!("Exported headers to: {}", headers_path.display());
+                        status!("Exported headers to: {}", headers_path.display());
                     }
                     if let Some(csv_path) = report.csv_path {
-                        println!("Exported flight data to: {}", csv_path.display());
+                        status!("Exported flight data to: {}", csv_path.display());
                     }
                 }
                 Err(e) => {
@@ -851,7 +955,7 @@ fn parse_bbl_file_streaming(
             ) {
                 Ok(report) => {
                     if let Some(gpx_path) = report.gpx_path {
-                        println!("Exported GPS data to: {}", gpx_path.display());
+                        status!("Exported GPS data to: {}", gpx_path.display());
                     }
                 }
                 Err(e) => {
@@ -879,7 +983,7 @@ fn parse_bbl_file_streaming(
             ) {
                 Ok(report) => {
                     if let Some(event_path) = report.event_path {
-                        println!("Exported event data to: {}", event_path.display());
+                        status!("Exported event data to: {}", event_path.display());
                     }
                 }
                 Err(e) => {
@@ -898,15 +1002,15 @@ fn parse_bbl_file_streaming(
         processed_logs += 1;
 
         // Add separator between logs for clarity
-        if log_index + 1 < log_positions.len() {
-            println!();
+        if selected_log.is_none() && log_index + 1 < log_positions.len() {
+            status!();
         }
 
         // Log goes out of scope here, memory is freed immediately
     }
 
     // Warn when sessions within a single BBL file span multiple firmware vendors
-    if log_positions.len() > 1 {
+    if selected_log.is_none() && log_positions.len() > 1 {
         print_firmware_transition_warning(file_path, &session_firmware);
     }
 
@@ -945,19 +1049,22 @@ fn print_firmware_transition_warning(file_path: &Path, session_firmware: &[(usiz
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    println!("\nWARNING: Firmware transition detected in {filename}");
+    status!("\nWARNING: Firmware transition detected in {filename}");
     for (first, last, prefix, revision) in &groups {
         let vendor_name = vendor_name_for_prefix(prefix.as_str());
         if first == last {
-            println!("  Session {:03}: {} ({})", first, vendor_name, revision);
+            status!("  Session {:03}: {} ({})", first, vendor_name, revision);
         } else {
-            println!(
+            status!(
                 "  Sessions {:03}-{:03}: {} ({})",
-                first, last, vendor_name, revision
+                first,
+                last,
+                vendor_name,
+                revision
             );
         }
     }
-    println!("  The flash was not erased before reflashing. Consider excluding earlier sessions.");
+    status!("  The flash was not erased before reflashing. Consider excluding earlier sessions.");
 }
 
 #[cfg(test)]
